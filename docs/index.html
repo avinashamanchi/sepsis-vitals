@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sepsis Vitals · LMIC Research Dashboard</title>
+  <meta name="description" content="Static research and deployment dashboard for vitals-only sepsis prediction in low-resource hospitals.">
+  <style>
+    :root {
+      --bg: #f7f4ee;
+      --ink: #17201b;
+      --muted: #5d665f;
+      --line: #d8d0c3;
+      --panel: #fffdfa;
+      --soft: #ece6db;
+      --green: #176b56;
+      --blue: #24699e;
+      --gold: #98680d;
+      --red: #9d3725;
+      --purple: #5752a3;
+      --shadow: 0 18px 50px rgba(38, 31, 20, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        linear-gradient(180deg, #fbfaf6 0, var(--bg) 420px),
+        var(--bg);
+      letter-spacing: 0;
+    }
+    button, input, select { font: inherit; }
+    .shell { max-width: 1220px; margin: 0 auto; padding: 24px; }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 10px 0 22px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 220px; }
+    .mark {
+      width: 42px;
+      height: 42px;
+      border-radius: 8px;
+      background: var(--green);
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      box-shadow: var(--shadow);
+    }
+    .brand h1 { margin: 0; font-size: 21px; line-height: 1.1; }
+    .brand p { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+    .nav { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .nav button, .icon-btn {
+      border: 1px solid var(--line);
+      background: rgba(255, 253, 250, 0.78);
+      color: var(--ink);
+      border-radius: 8px;
+      padding: 8px 11px;
+      cursor: pointer;
+      min-height: 36px;
+    }
+    .nav button[aria-selected="true"] {
+      background: var(--ink);
+      color: #fff;
+      border-color: var(--ink);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.16fr) minmax(320px, 0.84fr);
+      gap: 18px;
+      align-items: stretch;
+      margin-bottom: 18px;
+    }
+    .statement, .console, .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+    .statement { padding: 24px; }
+    .statement h2 {
+      margin: 0;
+      font-size: clamp(28px, 4.5vw, 56px);
+      line-height: 0.98;
+      max-width: 860px;
+    }
+    .statement .thesis {
+      margin: 18px 0 0;
+      max-width: 780px;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.55;
+    }
+    .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
+    .chip {
+      padding: 6px 9px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--soft);
+      color: #3f463f;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .metric-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      gap: 10px;
+      margin-top: 22px;
+    }
+    .metric {
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbf8f1;
+    }
+    .metric b { display: block; font-size: 23px; line-height: 1; }
+    .metric span { display: block; color: var(--muted); font-size: 12px; margin-top: 6px; line-height: 1.35; }
+
+    .console { padding: 18px; }
+    .console-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .console-head h3 { margin: 0; font-size: 17px; }
+    .status-dot { display: inline-flex; align-items: center; gap: 6px; color: var(--green); font-size: 12px; }
+    .status-dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+    .patient-list { display: grid; gap: 9px; margin-top: 14px; }
+    .patient {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbf8f1;
+      cursor: pointer;
+      text-align: left;
+    }
+    .patient.active { border-color: var(--green); outline: 2px solid rgba(23,107,86,0.12); }
+    .patient strong { display: block; font-size: 14px; }
+    .patient small { color: var(--muted); }
+    .risk {
+      min-width: 70px;
+      text-align: center;
+      border-radius: 6px;
+      padding: 7px 8px;
+      font-weight: 800;
+      font-size: 12px;
+    }
+    .risk.high { background: #ffe7df; color: var(--red); }
+    .risk.medium { background: #fff2ce; color: #80560c; }
+    .risk.low { background: #e2f3ec; color: var(--green); }
+    .driver {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fffdf8;
+    }
+    .driver h4 { margin: 0 0 6px; font-size: 14px; }
+    .driver p { margin: 0; color: var(--muted); line-height: 1.45; font-size: 13px; }
+    .action-row { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 12px; }
+    .action {
+      border: 0;
+      border-radius: 8px;
+      min-height: 42px;
+      color: #fff;
+      cursor: pointer;
+      font-weight: 750;
+    }
+    .action.ack { background: var(--blue); }
+    .action.esc { background: var(--red); }
+    .audit { margin-top: 10px; font-size: 12px; color: var(--muted); min-height: 18px; }
+
+    .section-title {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 14px;
+      margin: 26px 0 12px;
+    }
+    .section-title h2 { margin: 0; font-size: 26px; }
+    .section-title p { margin: 0; color: var(--muted); max-width: 660px; line-height: 1.45; }
+    .phase-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .phase-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      min-height: 230px;
+      display: flex;
+      flex-direction: column;
+      gap: 11px;
+    }
+    .phase-card h3 { margin: 0; font-size: 18px; }
+    .phase-card .meta { color: var(--muted); font-size: 12px; }
+    .phase-card ul { margin: 0; padding-left: 18px; color: #3d463f; font-size: 13px; line-height: 1.55; }
+    .phase-card.dataset { border-top: 5px solid var(--green); }
+    .phase-card.model { border-top: 5px solid var(--blue); }
+    .phase-card.validation { border-top: 5px solid var(--gold); }
+    .phase-card.scale { border-top: 5px solid var(--red); }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+    }
+    .side {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      position: sticky;
+      top: 16px;
+    }
+    .side button {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      text-align: left;
+      padding: 11px 10px;
+      border-radius: 7px;
+      cursor: pointer;
+      color: var(--ink);
+    }
+    .side button.active { background: var(--soft); color: var(--green); font-weight: 800; }
+    .detail { padding: 18px; }
+    .detail-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .detail h3 { margin: 0; font-size: 22px; }
+    .detail .duration { color: var(--muted); font-size: 13px; white-space: nowrap; }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .task-box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbf8f1;
+      padding: 14px;
+    }
+    .task-box h4 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; color: var(--muted); }
+    .task-box ul { margin: 0; padding-left: 18px; line-height: 1.55; font-size: 13px; }
+    .tags { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+    .tag { border-radius: 6px; padding: 6px 8px; font-size: 12px; border: 1px solid var(--line); background: #fff; }
+    .tag.risk { color: var(--red); background: #fff0eb; }
+    .tag.gate { color: var(--green); background: #eaf5ed; }
+    .tag.out { color: var(--blue); background: #e9f2fb; }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+    }
+    .flow-step {
+      position: relative;
+      min-height: 150px;
+      padding: 14px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .flow-step b { display: block; font-size: 15px; margin-bottom: 8px; }
+    .flow-step p { margin: 0; color: var(--muted); line-height: 1.4; font-size: 13px; }
+    .flow-step .num { color: var(--green); font-weight: 900; font-size: 12px; margin-bottom: 8px; }
+
+    .table-panel {
+      overflow-x: auto;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    table { width: 100%; border-collapse: collapse; min-width: 760px; }
+    th, td { padding: 12px; border-bottom: 1px solid var(--line); text-align: left; font-size: 13px; vertical-align: top; }
+    th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+    tr:last-child td { border-bottom: 0; }
+    .footer {
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+      margin-top: 30px;
+      padding: 20px 0 6px;
+      font-size: 13px;
+    }
+
+    @media (max-width: 980px) {
+      .hero, .workspace { grid-template-columns: 1fr; }
+      .phase-grid, .flow, .metric-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .side { position: static; }
+    }
+    @media (max-width: 640px) {
+      .shell { padding: 16px; }
+      .topbar, .section-title, .detail-head { display: block; }
+      .nav { justify-content: flex-start; margin-top: 14px; }
+      .phase-grid, .flow, .metric-row, .detail-grid { grid-template-columns: 1fr; }
+      .statement { padding: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark">SV</div>
+        <div>
+          <h1>Sepsis Vitals</h1>
+          <p>Offline sepsis prediction for low-resource hospitals</p>
+        </div>
+      </div>
+      <nav class="nav" aria-label="Dashboard sections">
+        <button type="button" aria-selected="true" data-scroll="roadmap">Roadmap</button>
+        <button type="button" data-scroll="pipeline">Data pipeline</button>
+        <button type="button" data-scroll="console">Alert console</button>
+        <button type="button" data-scroll="release">Release</button>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <div class="statement">
+        <h2>Vitals-only sepsis prediction for clinics without ICU data infrastructure.</h2>
+        <p class="thesis">A gradient-boosted model trained on six basic vitals aims for AUROC >= 0.82 four hours before clinical recognition, with no labs, imaging, continuous monitoring, or cloud dependency.</p>
+        <div class="chips" aria-label="Core feature set">
+          <span class="chip">Temperature</span>
+          <span class="chip">Heart rate</span>
+          <span class="chip">Respiratory rate</span>
+          <span class="chip">Systolic BP</span>
+          <span class="chip">SpO2</span>
+          <span class="chip">GCS</span>
+        </div>
+        <div class="metric-row">
+          <div class="metric"><b>10k+</b><span>target retrospective episodes</span></div>
+          <div class="metric"><b>8k</b><span>minimum labeled gate</span></div>
+          <div class="metric"><b>&lt;100ms</b><span>Raspberry Pi 4 inference gate</span></div>
+          <div class="metric"><b>5 sites</b><span>V1 deployment success</span></div>
+        </div>
+      </div>
+
+      <aside class="console" id="console">
+        <div class="console-head">
+          <h3>Nurse alert console</h3>
+          <span class="status-dot">Offline mode</span>
+        </div>
+        <div class="patient-list" id="patientList"></div>
+        <div class="driver" id="driverPanel"></div>
+        <div class="action-row">
+          <button type="button" class="action ack" id="ackBtn">Acknowledge</button>
+          <button type="button" class="action esc" id="escBtn">Escalate</button>
+        </div>
+        <div class="audit" id="auditLine">No alert action recorded.</div>
+      </aside>
+    </section>
+
+    <section id="roadmap">
+      <div class="section-title">
+        <h2>Project Phases</h2>
+        <p>Hard-coded research roadmap from dataset construction through open-source deployment, with gates designed to prevent the project from drifting into an ICU-only model.</p>
+      </div>
+      <div class="phase-grid">
+        <article class="phase-card dataset">
+          <span class="meta">Data · Months 2-6</span>
+          <h3>Dataset construction</h3>
+          <ul>
+            <li>3 years of partner-site vitals and outcomes</li>
+            <li>Sepsis-3 informed clinician adjudication</li>
+            <li>MIMIC filtered to six-vital subset for pre-training</li>
+            <li>Gate: >=8,000 labeled episodes</li>
+          </ul>
+        </article>
+        <article class="phase-card model">
+          <span class="meta">ML · Months 4-10</span>
+          <h3>Model development</h3>
+          <ul>
+            <li>Logistic regression baseline</li>
+            <li>XGBoost / LightGBM primary model</li>
+            <li>qSOFA sensitivity +10pp target</li>
+            <li>Calibrated risk tiers and SHAP drivers</li>
+          </ul>
+        </article>
+        <article class="phase-card validation">
+          <span class="meta">Validation · Months 9-15</span>
+          <h3>Clinical validation</h3>
+          <ul>
+            <li>Prospective pilot at 2 hospitals</li>
+            <li>Silent mode before alert mode</li>
+            <li>Track antibiotic timing and mortality</li>
+            <li>Gate: alert fatigue below 20%</li>
+          </ul>
+        </article>
+        <article class="phase-card scale">
+          <span class="meta">Deployment · Months 13-18</span>
+          <h3>Scale & open-source</h3>
+          <ul>
+            <li>Docker container for Raspberry Pi 4</li>
+            <li>CSV, tablet, and monitor input modes</li>
+            <li>English, Swahili, French UI strings</li>
+            <li>MIT code, model card, implementation guide</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-title">
+        <h2>Phase Detail</h2>
+        <p>Each phase is written as an execution board: tasks, risks, gates, and outputs are visible without needing a backend.</p>
+      </div>
+      <div class="workspace">
+        <aside class="side" id="phaseNav"></aside>
+        <article class="panel detail" id="phaseDetail"></article>
+      </div>
+    </section>
+
+    <section id="pipeline">
+      <div class="section-title">
+        <h2>Data Pipeline</h2>
+        <p>Designed for prospective LMIC validation first, with public ICU datasets used only for tooling, pre-training, and stress testing.</p>
+      </div>
+      <div class="flow">
+        <div class="flow-step"><div class="num">01</div><b>Site extract</b><p>Paper abstraction, EMR export, OpenMRS table, CSV, tablet form, or monitor dump.</p></div>
+        <div class="flow-step"><div class="num">02</div><b>De-identify</b><p>Remove direct identifiers, date-shift where required, and keep site-owned linkages local.</p></div>
+        <div class="flow-step"><div class="num">03</div><b>Adjudicate</b><p>Clinicians review suspected infection, organ dysfunction, and ambiguous cases.</p></div>
+        <div class="flow-step"><div class="num">04</div><b>Engineer</b><p>Missingness, qSOFA, partial SIRS, shock index, deltas, rolling vitals.</p></div>
+        <div class="flow-step"><div class="num">05</div><b>Validate</b><p>Temporal and site holdout splits, calibration, fairness, and prospective pilot metrics.</p></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-title">
+        <h2>Hard-Coded Study Gates</h2>
+        <p>These gates are intentionally strict because the dataset, not the model architecture, is the project’s make-or-break risk.</p>
+      </div>
+      <div class="table-panel">
+        <table>
+          <thead><tr><th>Area</th><th>Gate</th><th>Why it matters</th><th>Failure response</th></tr></thead>
+          <tbody>
+            <tr><td>Dataset</td><td>>=8,000 labeled episodes, <30% missing core vitals</td><td>Enough signal for site-aware validation.</td><td>Extend abstraction or reduce scope to better-recorded departments.</td></tr>
+            <tr><td>Labels</td><td>200 clinician review hours budgeted</td><td>Sepsis labels need clinical adjudication when labs are sparse.</td><td>Use staged labels and sensitivity analysis.</td></tr>
+            <tr><td>Model</td><td>AUROC >= 0.82 and qSOFA sensitivity +10pp</td><td>Model must beat deployable clinical baselines.</td><td>Analyze missingness, horizon, and label noise before adding complexity.</td></tr>
+            <tr><td>Validation</td><td>Prospective sensitivity >=0.78, alert fatigue <20%</td><td>Clinical usefulness depends on workflow adoption.</td><td>Tune thresholds by site and restart silent-mode monitoring.</td></tr>
+            <tr><td>Deployment</td><td>Runs offline on Raspberry Pi 4</td><td>Cloud dependency breaks the low-resource premise.</td><td>Reduce feature set, quantize, or ship simpler model fallback.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="release">
+      <div class="section-title">
+        <h2>Open-Source Release Package</h2>
+        <p>Everything needed for a public repo and GitHub Pages: static dashboard, Python feature tooling, data contract, model plan, and deployment notes.</p>
+      </div>
+      <div class="phase-grid">
+        <article class="phase-card">
+          <h3>Repository</h3>
+          <ul><li>MIT license</li><li>Python package in src/</li><li>Tests for features and site QA</li><li>GitHub Pages served from docs/</li></ul>
+        </article>
+        <article class="phase-card">
+          <h3>Implementation guide</h3>
+          <ul><li>CSV/tablet input</li><li>Offline-first Flask target</li><li>Pi 4 and Orange Pi hardware notes</li><li>USB model update path</li></ul>
+        </article>
+        <article class="phase-card">
+          <h3>Model card</h3>
+          <ul><li>Training data limitations</li><li>Known failure modes</li><li>Missingness behavior</li><li>Subgroup performance table</li></ul>
+        </article>
+        <article class="phase-card">
+          <h3>Policy brief</h3>
+          <ul><li>WHO AFRO toolkit framing</li><li>PATH / MSF partnership path</li><li>Maintenance every 6 months</li><li>v2 NIH R01 proposal</li></ul>
+        </article>
+      </div>
+    </section>
+
+    <footer class="footer">
+      Sepsis Vitals is a research prototype. It is not a medical device and must not direct care without ethics approval, local clinical governance, and prospective validation.
+    </footer>
+  </main>
+
+  <script>
+    const phases = [
+      {
+        key: "dataset",
+        title: "Dataset construction",
+        duration: "Data · Months 2-6",
+        tasks: [
+          { label: "Retrospective data collection", items: [
+            "Extract 3 years of patient vitals from partner hospital EMRs or paper charts",
+            "Target fields: temp, HR, RR, SBP, DBP, SpO2, GCS, age, sex, site, timestamps",
+            "Label outcomes using Sepsis-3 informed clinician adjudication",
+            "Collect demographics and comorbidities needed for subgroup analysis",
+            "Sample target: 10,000+ patient episodes"
+          ]},
+          { label: "Data pipeline", items: [
+            "Build de-identification pipeline with site-owned linkage keys",
+            "Create missingness report per vital, department, and site",
+            "Create train/validation/test splits stratified by site and time",
+            "Augment with MIMIC filtered to six-vital subset for pre-training",
+            "Complete secure data sharing agreements for each country"
+          ]}
+        ],
+        risks: ["Paper records may require manual abstraction budget", "Outcome labeling needs ~200 clinician review hours"],
+        gates: [">=8,000 labeled episodes", "<30% missing core vitals", "IRB approval in hand"],
+        outputs: ["De-identified dataset", "Adjudication guide", "Data dictionary", "Feature-ready parquet/CSV extracts"]
+      },
+      {
+        key: "model",
+        title: "Model development",
+        duration: "ML · Months 4-10",
+        tasks: [
+          { label: "Model architecture", items: [
+            "Baseline: logistic regression on six raw vitals",
+            "Primary: XGBoost / LightGBM on engineered vitals-only features",
+            "Explore: LSTM on rolling 3-reading windows if repeat vitals are dense enough",
+            "Constraint: final model runs in <100 ms on Raspberry Pi 4",
+            "Export model artifact for offline deployment and edge packaging"
+          ]},
+          { label: "Evaluation framework", items: [
+            "Primary metric: AUROC at 4-hour early warning horizon",
+            "Secondary: sensitivity at 90% specificity",
+            "Subgroups: pediatric vs adult, HIV, pregnancy, site, sex",
+            "Fairness audit: performance parity across hospitals and demographics",
+            "Calibration: Brier score, reliability curves, and threshold stability"
+          ]}
+        ],
+        risks: ["Class imbalance around sepsis-positive cases", "Temporal leakage if future observations enter features"],
+        gates: ["AUROC >= 0.82 on held-out test set", "qSOFA sensitivity +10pp at matched specificity"],
+        outputs: ["Model weights", "Evaluation report", "Calibration curves", "Pre-print draft"]
+      },
+      {
+        key: "validation",
+        title: "Clinical validation",
+        duration: "Validation · Months 9-15",
+        tasks: [
+          { label: "Pilot study design", items: [
+            "Prospective observational study at 2 partner hospitals",
+            "Silent mode first; alert-only mode after safety review",
+            "Track time-to-antibiotic, mortality, escalation, and alert fatigue",
+            "Sample size: 500 prospective cases for pilot validation",
+            "Primary endpoint: sensitivity/specificity on prospective cases"
+          ]},
+          { label: "Deployment prep", items: [
+            "Build nurse-facing screen: patient, risk tier, top driver, last reading",
+            "Train clinical staff in 2-hour site sessions",
+            "Let nurses flag false positives and missed clinical concern",
+            "Define escalation protocol with physician leads",
+            "Monitor false positive drift weekly"
+          ]}
+        ],
+        risks: ["Alert fatigue if false positives exceed site tolerance", "Staff adoption may need a 60-day ramp"],
+        gates: ["Prospective sensitivity >=0.78", "Alert fatigue <20%", "Ethics approval for interventional phase"],
+        outputs: ["Validation manuscript", "Clinical protocol", "Trained model v2"]
+      },
+      {
+        key: "scale",
+        title: "Scale & open-source",
+        duration: "Deployment · Months 13-18",
+        tasks: [
+          { label: "Technical packaging", items: [
+            "Docker container auto-runs on Pi 4 with 1GB RAM target",
+            "Offline-first: no internet after initial setup",
+            "CSV, bedside-monitor, and manual tablet input paths",
+            "USB or low-bandwidth model update mechanism",
+            "English, Swahili, and French UI strings"
+          ]},
+          { label: "Open-source release", items: [
+            "MIT license for code; CC-BY only for fully anonymized release datasets",
+            "Full model card with limitations and failure modes",
+            "Implementation guide for district hospital IT staff",
+            "Submit package to WHO AFRO digital health toolkit",
+            "Apply for PATH / MSF rollout partnerships"
+          ]}
+        ],
+        risks: ["Raspberry Pi supply chain may require Orange Pi fallback", "Model drift monitoring must be funded every 6 months"],
+        gates: ["Successful deployment at 5+ sites", "Public repo with early community adoption"],
+        outputs: ["Open-source package", "Implementation guide", "Policy brief", "v2 funding proposal"]
+      }
+    ];
+
+    const patients = [
+      { id: "UG-KBL-024", name: "Amina N.", age: 36, risk: "High", last: "4 min ago", driver: "Respiratory rate 31 and SBP 86 are driving the alert.", missing: "All core vitals present" },
+      { id: "KE-MSA-117", name: "Daniel O.", age: 58, risk: "Medium", last: "18 min ago", driver: "SpO2 91 with rising heart rate increased risk tier.", missing: "GCS missing" },
+      { id: "TZ-MBY-203", name: "Neema K.", age: 9, risk: "Low", last: "22 min ago", driver: "Age-adjusted vitals remain below escalation threshold.", missing: "Temperature missing" }
+    ];
+
+    let activePhase = phases[0].key;
+    let activePatient = patients[0].id;
+
+    function renderPatients() {
+      const list = document.getElementById("patientList");
+      list.innerHTML = patients.map((p) => `
+        <button type="button" class="patient ${p.id === activePatient ? "active" : ""}" data-patient="${p.id}">
+          <span><strong>${p.name}</strong><small>${p.id} · age ${p.age} · ${p.last}</small></span>
+          <span class="risk ${p.risk.toLowerCase()}">${p.risk}</span>
+        </button>
+      `).join("");
+      list.querySelectorAll("button").forEach((button) => {
+        button.addEventListener("click", () => {
+          activePatient = button.dataset.patient;
+          renderPatients();
+          renderDriver();
+        });
+      });
+    }
+
+    function renderDriver() {
+      const patient = patients.find((p) => p.id === activePatient);
+      document.getElementById("driverPanel").innerHTML = `
+        <h4>${patient.risk} risk · ${patient.name}</h4>
+        <p>${patient.driver}</p>
+        <p style="margin-top:6px">${patient.missing}</p>
+      `;
+    }
+
+    function renderPhaseNav() {
+      const nav = document.getElementById("phaseNav");
+      nav.innerHTML = phases.map((phase) => `
+        <button type="button" class="${phase.key === activePhase ? "active" : ""}" data-phase="${phase.key}">
+          ${phase.title}<br><small>${phase.duration}</small>
+        </button>
+      `).join("");
+      nav.querySelectorAll("button").forEach((button) => {
+        button.addEventListener("click", () => {
+          activePhase = button.dataset.phase;
+          renderPhaseNav();
+          renderPhaseDetail();
+        });
+      });
+    }
+
+    function renderPhaseDetail() {
+      const phase = phases.find((p) => p.key === activePhase);
+      document.getElementById("phaseDetail").innerHTML = `
+        <div class="detail-head">
+          <div><h3>${phase.title}</h3><p style="margin:6px 0 0;color:var(--muted)">${phase.duration}</p></div>
+          <span class="duration">${phase.outputs[0]}</span>
+        </div>
+        <div class="detail-grid">
+          ${phase.tasks.map((task) => `
+            <div class="task-box">
+              <h4>${task.label}</h4>
+              <ul>${task.items.map((item) => `<li>${item}</li>`).join("")}</ul>
+            </div>
+          `).join("")}
+        </div>
+        <div class="tags">
+          ${phase.risks.map((risk) => `<span class="tag risk">Risk: ${risk}</span>`).join("")}
+          ${phase.gates.map((gate) => `<span class="tag gate">Gate: ${gate}</span>`).join("")}
+          ${phase.outputs.map((out) => `<span class="tag out">${out}</span>`).join("")}
+        </div>
+      `;
+    }
+
+    document.querySelectorAll("[data-scroll]").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll("[data-scroll]").forEach((b) => b.setAttribute("aria-selected", "false"));
+        button.setAttribute("aria-selected", "true");
+        document.getElementById(button.dataset.scroll).scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+
+    document.getElementById("ackBtn").addEventListener("click", () => {
+      const patient = patients.find((p) => p.id === activePatient);
+      document.getElementById("auditLine").textContent = `Acknowledged ${patient.name}; alert remains in local audit log.`;
+    });
+    document.getElementById("escBtn").addEventListener("click", () => {
+      const patient = patients.find((p) => p.id === activePatient);
+      document.getElementById("auditLine").textContent = `Escalated ${patient.name}; physician review requested.`;
+    });
+
+    renderPatients();
+    renderDriver();
+    renderPhaseNav();
+    renderPhaseDetail();
+  </script>
+</body>
+</html>
