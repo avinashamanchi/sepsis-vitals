@@ -296,6 +296,111 @@
     th, td { padding: 12px; border-bottom: 1px solid var(--line); text-align: left; font-size: 13px; vertical-align: top; }
     th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
     tr:last-child td { border-bottom: 0; }
+    .evidence-grid, .tool-grid, .backlog-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .evidence-card, .mini-tool, .backlog-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 15px;
+    }
+    .evidence-card b, .mini-tool h3, .backlog-card h3 { display: block; font-size: 16px; margin-bottom: 8px; }
+    .evidence-card p, .backlog-card p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.48; }
+    .source-link { display: inline-block; margin-top: 10px; color: var(--green); font-size: 12px; font-weight: 750; text-decoration: none; }
+    .source-link:hover { text-decoration: underline; }
+    .lab-layout {
+      display: grid;
+      grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.2fr);
+      gap: 12px;
+      align-items: start;
+    }
+    .scenario-list { display: grid; gap: 8px; }
+    .scenario-list button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbf8f1;
+      color: var(--ink);
+      padding: 11px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .scenario-list button.active { border-color: var(--green); background: #eaf5ed; }
+    .score-output {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 9px;
+    }
+    .score-box {
+      min-height: 116px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fbf8f1;
+    }
+    .score-box b { display: block; font-size: 22px; }
+    .score-box span { color: var(--muted); font-size: 12px; line-height: 1.35; }
+    .vital-strip { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 12px; }
+    .vital-pill { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; background: #fff; font-size: 12px; }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin: 10px 0 12px;
+    }
+    label { color: var(--muted); font-size: 12px; line-height: 1.4; }
+    input[type="range"] { width: 100%; accent-color: var(--green); }
+    .readiness-output {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 9px;
+    }
+    .readiness-box { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #fbf8f1; }
+    .readiness-box b { display: block; font-size: 22px; }
+    .readiness-box span { color: var(--muted); font-size: 12px; }
+    .monitor {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+    }
+    .thresholds { display: grid; gap: 8px; }
+    .thresholds button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbf8f1;
+      color: var(--ink);
+      padding: 10px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .thresholds button.active { border-color: var(--blue); background: #e9f2fb; }
+    .bars { display: grid; gap: 12px; }
+    .bar-row { display: grid; grid-template-columns: 150px 1fr 52px; gap: 10px; align-items: center; font-size: 13px; }
+    .bar-track { height: 12px; border-radius: 12px; background: var(--soft); overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: inherit; background: var(--blue); }
+    .bar-fill.warn { background: var(--gold); }
+    .bar-fill.risk { background: var(--red); }
+    .source-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      padding: 0;
+      margin: 0;
+      list-style: none;
+    }
+    .source-list li {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .source-list a { color: var(--green); font-weight: 760; text-decoration: none; }
+    .source-list a:hover { text-decoration: underline; }
     .footer {
       color: var(--muted);
       border-top: 1px solid var(--line);
@@ -305,15 +410,15 @@
     }
 
     @media (max-width: 980px) {
-      .hero, .workspace { grid-template-columns: 1fr; }
-      .phase-grid, .flow, .metric-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .hero, .workspace, .lab-layout, .monitor { grid-template-columns: 1fr; }
+      .phase-grid, .flow, .metric-row, .evidence-grid, .tool-grid, .backlog-grid, .source-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .side { position: static; }
     }
     @media (max-width: 640px) {
       .shell { padding: 16px; }
       .topbar, .section-title, .detail-head { display: block; }
       .nav { justify-content: flex-start; margin-top: 14px; }
-      .phase-grid, .flow, .metric-row, .detail-grid { grid-template-columns: 1fr; }
+      .phase-grid, .flow, .metric-row, .detail-grid, .evidence-grid, .tool-grid, .backlog-grid, .score-output, .form-grid, .readiness-output, .source-list { grid-template-columns: 1fr; }
       .statement { padding: 18px; }
     }
   </style>
@@ -330,8 +435,11 @@
       </div>
       <nav class="nav" aria-label="Dashboard sections">
         <button type="button" aria-selected="true" data-scroll="roadmap">Roadmap</button>
+        <button type="button" data-scroll="evidence">Evidence</button>
+        <button type="button" data-scroll="tools">Tools</button>
         <button type="button" data-scroll="pipeline">Data pipeline</button>
         <button type="button" data-scroll="console">Alert console</button>
+        <button type="button" data-scroll="validation-monitor">Validation</button>
         <button type="button" data-scroll="release">Release</button>
       </nav>
     </header>
@@ -462,6 +570,112 @@
           </tbody>
         </table>
       </div>
+    </section>
+
+    <section id="evidence">
+      <div class="section-title">
+        <h2>Evidence map</h2>
+        <p>Research anchors translated into concrete product surfaces: burden framing, clinical action timing, pediatric scope, low-resource comparators, and alert fatigue risk.</p>
+      </div>
+      <div class="evidence-grid">
+        <article class="evidence-card">
+          <b>WHO burden</b>
+          <p>Sepsis has global mortality weight and highest rates in LMICs, so the page now keeps burden, children, maternal risk, HIV/TB/malaria context, and infection prevention in the foreground.</p>
+          <a class="source-link" href="https://www.who.int/news-room/fact-sheets/detail/sepsis">WHO fact sheet</a>
+        </article>
+        <article class="evidence-card">
+          <b>SSC 2026</b>
+          <p>The adult guideline update reinforces immediate treatment and resuscitation. The UI now separates prediction from clinical action and maps alerts to escalation workflow, not autonomous care.</p>
+          <a class="source-link" href="https://www.sccm.org/clinical-resources/guidelines/guidelines/surviving-sepsis-campaign-international-guidelines-for-management-of-sepsis-and-septic-shock-2026">SSC adult guidelines</a>
+        </article>
+        <article class="evidence-card">
+          <b>NEWS2</b>
+          <p>NEWS2 uses bedside physiology, making it a serious comparator for a vitals-only model. The score lab now includes a NEWS2-style comparator alongside qSOFA and partial SIRS.</p>
+          <a class="source-link" href="https://www.rcp.ac.uk/resources/national-early-warning-score-news-2/">RCP NEWS2</a>
+        </article>
+        <article class="evidence-card">
+          <b>UVA score</b>
+          <p>UVA was built from sub-Saharan African cohorts using accessible clinical features, so it is now treated as the local-context baseline to beat rather than an afterthought.</p>
+          <a class="source-link" href="https://gh.bmj.com/content/2/2/e000344">BMJ Global Health UVA</a>
+        </article>
+        <article class="evidence-card">
+          <b>Phoenix pediatric criteria</b>
+          <p>Pediatric sepsis needs a separate pathway. The UI now flags pediatric scope as a dedicated research layer because Phoenix is not meant to replace early screening.</p>
+          <a class="source-link" href="https://jamanetwork.com/journals/jama/fullarticle/2814297">JAMA Phoenix criteria</a>
+        </article>
+        <article class="evidence-card">
+          <b>Epic external validation</b>
+          <p>External validation and alert burden can break sepsis ML even in rich EHR settings. The validation monitor now shows alert-rate pressure next to AUROC and sensitivity.</p>
+          <a class="source-link" href="https://jamanetwork.com/journals/jamainternalmedicine/fullarticle/2781307">JAMA Internal Medicine</a>
+        </article>
+      </div>
+    </section>
+
+    <section id="tools">
+      <div class="section-title">
+        <h2>Score comparator lab</h2>
+        <p>Static but interactive scoring sandbox for explaining why the model must beat deployable clinical rules, not just produce a bigger AUROC.</p>
+      </div>
+      <div class="panel detail lab-layout">
+        <div>
+          <h3 style="margin-top:0">Patient scenario</h3>
+          <div class="scenario-list" id="scenarioList"></div>
+        </div>
+        <div>
+          <div class="score-output" id="scoreOutput"></div>
+          <div class="vital-strip" id="vitalStrip"></div>
+          <p style="color:var(--muted);font-size:12px;line-height:1.45;margin-bottom:0">These scores are for research planning and UI prototyping only. Final thresholds must be calibrated on partner-site validation data.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-title">
+        <h2>Site readiness calculator</h2>
+        <p>Quick planning tool for Phase 1: will a site produce enough plausible rows, and how much clinician review time does the labeling plan imply?</p>
+      </div>
+      <div class="panel detail">
+        <div class="form-grid">
+          <label>Episodes available <input id="episodesInput" type="range" min="1000" max="20000" step="500" value="10000"></label>
+          <label>Core vital missingness <input id="missingInput" type="range" min="0" max="70" step="5" value="30"></label>
+          <label>Review minutes per case <input id="reviewInput" type="range" min="2" max="20" step="1" value="8"></label>
+        </div>
+        <div class="readiness-output" id="readinessOutput"></div>
+      </div>
+    </section>
+
+    <section id="validation-monitor">
+      <div class="section-title">
+        <h2>Prospective validation monitor</h2>
+        <p>A dashboard sketch for the pilot: threshold tuning should show clinical sensitivity and alert fatigue together, or the model will be optimized for the wrong audience.</p>
+      </div>
+      <div class="panel detail monitor">
+        <div class="thresholds" id="thresholdList"></div>
+        <div class="bars" id="thresholdBars"></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-title">
+        <h2>Implementation backlog</h2>
+        <p>Concrete features to build into the website and eventual field app as we move past the first 5%.</p>
+      </div>
+      <div class="backlog-grid">
+        <article class="backlog-card"><h3>Data intake wizard</h3><p>CSV upload, column mapping, units check, impossible-value warnings, and a downloadable site readiness report.</p></article>
+        <article class="backlog-card"><h3>Adjudication queue</h3><p>Clinician review screen for suspected infection, organ dysfunction evidence, uncertainty, and label provenance.</p></article>
+        <article class="backlog-card"><h3>Model evaluation room</h3><p>AUROC/AUPRC, calibration, threshold operating points, qSOFA/NEWS2/UVA comparison, and subgroup cards.</p></article>
+        <article class="backlog-card"><h3>Offline deployment console</h3><p>Pi health, last sync, model version, audit log export, language pack, and USB update status.</p></article>
+        <article class="backlog-card"><h3>Clinical workflow sim</h3><p>Silent mode versus alert mode, time-to-antibiotic timeline, nurse actions, physician escalation, and false-positive feedback.</p></article>
+        <article class="backlog-card"><h3>Model card generator</h3><p>Auto-generate limitations, feature inventory, validation splits, cohort table, known failure modes, and publication appendix text.</p></article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-title">
+        <h2>Source shelf</h2>
+        <p>Primary references behind the newest UI modules, kept visible so the dashboard stays research-led instead of becoming generic health-tech theatre.</p>
+      </div>
+      <ul class="source-list" id="sourceList"></ul>
     </section>
 
     <section id="release">
@@ -600,8 +814,31 @@
       { id: "TZ-MBY-203", name: "Neema K.", age: 9, risk: "Low", last: "22 min ago", driver: "Age-adjusted vitals remain below escalation threshold.", missing: "Temperature missing" }
     ];
 
+    const scenarios = [
+      { key: "adult-shock", name: "Adult suspected septic shock", note: "High-risk adult triage case", vitals: { temp: 39.1, hr: 126, rr: 31, sbp: 86, spo2: 88, gcs: 13, age: 44 } },
+      { key: "ward-hypoxia", name: "Ward hypoxia with sparse charting", note: "Medium-risk missingness case", vitals: { temp: 37.8, hr: 108, rr: 24, sbp: 104, spo2: 91, gcs: 15, age: 67 } },
+      { key: "pediatric-pneumonia", name: "Pediatric pneumonia concern", note: "Shows why children need a separate pathway", vitals: { temp: 38.9, hr: 132, rr: 34, sbp: 92, spo2: 90, gcs: 14, age: 7 } }
+    ];
+
+    const thresholdProfiles = [
+      { key: "sensitive", label: "Sensitive threshold", sensitivity: 86, specificity: 72, ppv: 19, alerts: 28 },
+      { key: "balanced", label: "Balanced threshold", sensitivity: 79, specificity: 84, ppv: 29, alerts: 17 },
+      { key: "strict", label: "Strict threshold", sensitivity: 66, specificity: 92, ppv: 41, alerts: 9 }
+    ];
+
+    const sourceList = [
+      { name: "WHO sepsis fact sheet", url: "https://www.who.int/news-room/fact-sheets/detail/sepsis", why: "Burden, high-risk groups, and early treatment framing." },
+      { name: "SSC adult sepsis guidelines 2026", url: "https://www.sccm.org/clinical-resources/guidelines/guidelines/surviving-sepsis-campaign-international-guidelines-for-management-of-sepsis-and-septic-shock-2026", why: "Immediate care, fluids, cultures, antimicrobial timing." },
+      { name: "Phoenix pediatric sepsis criteria", url: "https://jamanetwork.com/journals/jama/fullarticle/2814297", why: "Pediatric criteria and the early-screening caveat." },
+      { name: "Royal College of Physicians NEWS2", url: "https://www.rcp.ac.uk/resources/national-early-warning-score-news-2/", why: "Vital-sign early warning comparator." },
+      { name: "Universal Vital Assessment score", url: "https://gh.bmj.com/content/2/2/e000344", why: "Sub-Saharan Africa vital-sign mortality baseline." },
+      { name: "Epic Sepsis Model external validation", url: "https://jamanetwork.com/journals/jamainternalmedicine/fullarticle/2781307", why: "External validation and alert fatigue caution." }
+    ];
+
     let activePhase = phases[0].key;
     let activePatient = patients[0].id;
+    let activeScenario = scenarios[0].key;
+    let activeThreshold = thresholdProfiles[1].key;
 
     function renderPatients() {
       const list = document.getElementById("patientList");
@@ -668,6 +905,103 @@
       `;
     }
 
+    function renderScoreLab() {
+      const list = document.getElementById("scenarioList");
+      list.innerHTML = scenarios.map((scenario) => `
+        <button type="button" class="${scenario.key === activeScenario ? "active" : ""}" data-scenario="${scenario.key}">
+          <strong>${scenario.name}</strong><br><small>${scenario.note}</small>
+        </button>
+      `).join("");
+      list.querySelectorAll("button").forEach((button) => {
+        button.addEventListener("click", () => {
+          activeScenario = button.dataset.scenario;
+          renderScoreLab();
+        });
+      });
+
+      const scenario = scenarios.find((item) => item.key === activeScenario);
+      const scores = calculateScores(scenario.vitals);
+      document.getElementById("scoreOutput").innerHTML = `
+        <div class="score-box"><b>${scores.qsofa}/3</b><span>qSOFA ${scores.qsofa >= 2 ? "positive" : "negative"}</span></div>
+        <div class="score-box"><b>${scores.sirs}/3</b><span>Partial SIRS without WBC</span></div>
+        <div class="score-box"><b>${scores.news2}</b><span>NEWS2-style bedside acuity</span></div>
+        <div class="score-box"><b>${scores.uva}</b><span>UVA score style LMIC baseline</span></div>
+      `;
+      document.getElementById("vitalStrip").innerHTML = Object.entries(scenario.vitals).map(([key, value]) => (
+        `<span class="vital-pill">${key.toUpperCase()}: ${value}</span>`
+      )).join("");
+    }
+
+    function calculateScores(v) {
+      const qsofa = Number(v.rr >= 22) + Number(v.sbp <= 100) + Number(v.gcs < 15);
+      const sirs = Number(v.temp >= 38.3 || v.temp < 36) + Number(v.hr >= 90) + Number(v.rr >= 20);
+      const news2 = scoreNEWS2(v);
+      const uva = Number(v.temp < 36 || v.temp > 38.5) + Number(v.hr >= 120) + Number(v.rr >= 30) + Number(v.sbp < 90) + Number(v.spo2 < 92) + Number(v.gcs < 15);
+      return { qsofa, sirs, news2, uva };
+    }
+
+    function scoreNEWS2(v) {
+      let score = 0;
+      score += v.rr <= 8 ? 3 : v.rr <= 11 ? 1 : v.rr <= 20 ? 0 : v.rr <= 24 ? 2 : 3;
+      score += v.spo2 <= 91 ? 3 : v.spo2 <= 93 ? 2 : v.spo2 <= 95 ? 1 : 0;
+      score += v.sbp <= 90 ? 3 : v.sbp <= 100 ? 2 : v.sbp <= 110 ? 1 : v.sbp <= 219 ? 0 : 3;
+      score += v.hr <= 40 ? 3 : v.hr <= 50 ? 1 : v.hr <= 90 ? 0 : v.hr <= 110 ? 1 : v.hr <= 130 ? 2 : 3;
+      score += v.temp <= 35 ? 3 : v.temp <= 36 ? 1 : v.temp <= 38 ? 0 : v.temp <= 39 ? 1 : 2;
+      score += v.gcs < 15 ? 3 : 0;
+      return score;
+    }
+
+    function calculateReadiness() {
+      const episodes = Number(document.getElementById("episodesInput").value);
+      const missing = Number(document.getElementById("missingInput").value);
+      const review = Number(document.getElementById("reviewInput").value);
+      const usable = Math.round(episodes * (1 - missing / 100));
+      const adjudicated = Math.round(usable * 0.82);
+      const hours = Math.round((adjudicated * review) / 60);
+      const gate = adjudicated >= 8000 && missing < 30 ? "Phase 1 ready" : "Needs derisking";
+      document.getElementById("readinessOutput").innerHTML = `
+        <div class="readiness-box"><b>${episodes.toLocaleString()}</b><span>available episodes</span></div>
+        <div class="readiness-box"><b>${adjudicated.toLocaleString()}</b><span>likely labeled episodes after missingness</span></div>
+        <div class="readiness-box"><b>${hours}</b><span>clinician review hours · ${gate}</span></div>
+      `;
+    }
+
+    function renderValidationMonitor() {
+      const list = document.getElementById("thresholdList");
+      list.innerHTML = thresholdProfiles.map((profile) => `
+        <button type="button" class="${profile.key === activeThreshold ? "active" : ""}" data-threshold="${profile.key}">
+          <strong>${profile.label}</strong><br><small>${profile.alerts} alerts per 100 encounters</small>
+        </button>
+      `).join("");
+      list.querySelectorAll("button").forEach((button) => {
+        button.addEventListener("click", () => {
+          activeThreshold = button.dataset.threshold;
+          renderValidationMonitor();
+        });
+      });
+
+      const profile = thresholdProfiles.find((item) => item.key === activeThreshold);
+      const rows = [
+        ["Sensitivity", profile.sensitivity, ""],
+        ["Specificity", profile.specificity, ""],
+        ["PPV", profile.ppv, "warn"],
+        ["Alerts / 100", profile.alerts, "risk"]
+      ];
+      document.getElementById("thresholdBars").innerHTML = rows.map(([label, value, tone]) => `
+        <div class="bar-row">
+          <span>${label}</span>
+          <div class="bar-track"><div class="bar-fill ${tone}" style="width:${Math.min(value, 100)}%"></div></div>
+          <strong>${value}${label === "Alerts / 100" ? "" : "%"}</strong>
+        </div>
+      `).join("");
+    }
+
+    function renderSources() {
+      document.getElementById("sourceList").innerHTML = sourceList.map((source) => `
+        <li><a href="${source.url}">${source.name}</a><br>${source.why}</li>
+      `).join("");
+    }
+
     document.querySelectorAll("[data-scroll]").forEach((button) => {
       button.addEventListener("click", () => {
         document.querySelectorAll("[data-scroll]").forEach((b) => b.setAttribute("aria-selected", "false"));
@@ -685,10 +1019,18 @@
       document.getElementById("auditLine").textContent = `Escalated ${patient.name}; physician review requested.`;
     });
 
+    ["episodesInput", "missingInput", "reviewInput"].forEach((id) => {
+      document.getElementById(id).addEventListener("input", calculateReadiness);
+    });
+
     renderPatients();
     renderDriver();
     renderPhaseNav();
     renderPhaseDetail();
+    renderScoreLab();
+    calculateReadiness();
+    renderValidationMonitor();
+    renderSources();
   </script>
 </body>
 </html>

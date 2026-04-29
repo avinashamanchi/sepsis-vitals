@@ -27,8 +27,33 @@ def test_pages_site_is_static_and_github_pages_friendly():
 
     assert "<script>" in html
     assert "const phases =" in html
-    assert "http://" not in html
-    assert "https://" not in html
+    assert "cdn." not in html
+    assert "unpkg." not in html
+    assert "localhost" not in html
+
+
+def test_pages_site_contains_research_backed_next_layer():
+    html = SITE.read_text()
+
+    required = [
+        "Evidence map",
+        "Score comparator lab",
+        "Site readiness calculator",
+        "Prospective validation monitor",
+        "Implementation backlog",
+        "WHO burden",
+        "SSC 2026",
+        "NEWS2",
+        "UVA score",
+        "Phoenix pediatric criteria",
+        "Epic external validation",
+        "sourceList",
+        "calculateReadiness",
+        "renderScoreLab",
+    ]
+
+    for text in required:
+        assert text in html
 
 
 def test_github_pages_workflow_deploys_docs_directory():

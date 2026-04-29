@@ -53,6 +53,16 @@ repo is pushed to GitHub, enable Pages with source set to GitHub Actions, then
 push to `main`. The workflow in `.github/workflows/pages.yml` deploys the
 static dashboard.
 
+## Current UI Modules
+
+- Research roadmap and phase detail board.
+- Nurse alert console prototype.
+- Evidence map with source links.
+- Score comparator lab for qSOFA, partial SIRS, NEWS2-style, and UVA-style scores.
+- Site readiness calculator for missingness and adjudication workload.
+- Prospective validation threshold monitor.
+- Implementation backlog and source shelf.
+
 ## Minimal Use
 
 ```python
