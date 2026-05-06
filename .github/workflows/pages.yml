@@ -1,8 +1,18 @@
+<<<<<<< HEAD
 name: Deploy GitHub Pages
 
 on:
   push:
     branches: ["main"]
+=======
+name: Deploy Dashboard to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+>>>>>>> phase-0-expansion
   workflow_dispatch:
 
 permissions:
@@ -16,10 +26,15 @@ concurrency:
 
 jobs:
   deploy:
+<<<<<<< HEAD
+=======
+    name: Deploy static dashboard
+>>>>>>> phase-0-expansion
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+<<<<<<< HEAD
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,5 +48,20 @@ jobs:
           path: docs
 
       - name: Deploy
+=======
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/
+
+      - name: Deploy to GitHub Pages
+>>>>>>> phase-0-expansion
         id: deployment
         uses: actions/deploy-pages@v4

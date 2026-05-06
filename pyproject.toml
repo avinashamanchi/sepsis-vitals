@@ -1,9 +1,14 @@
 [build-system]
+<<<<<<< HEAD
 requires = ["setuptools>=61"]
+=======
+requires = ["setuptools>=68", "wheel"]
+>>>>>>> phase-0-expansion
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "sepsis-vitals"
+<<<<<<< HEAD
 version = "0.1.0"
 description = "Vitals-only sepsis prediction tooling for low-resource hospital research."
 requires-python = ">=3.9"
@@ -20,3 +25,53 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+=======
+version = "0.2.0"
+description = "Vitals-only sepsis prediction tooling for low-resource hospitals"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.25",
+    "anthropic>=0.25",
+]
+
+[project.optional-dependencies]
+api = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.0",
+    "cryptography>=42.0",
+    "python-dotenv>=1.0",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",    # for FastAPI test client
+    "ruff>=0.4",
+    "mypy>=1.9",
+    "pandas-stubs",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "S", "B"]
+ignore  = ["S101"]   # allow assert in tests
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+ignore_missing_imports = true
+>>>>>>> phase-0-expansion

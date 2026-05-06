@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -6,3 +7,50 @@ dist/
 build/
 *.egg-info/
 .DS_Store
+=======
+# ── Secrets & credentials (CRITICAL — never commit these) ──
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+credentials/
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.so
+.venv/
+venv/
+env/
+
+# ── Testing & coverage ──
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ── Data (partner data never committed) ──
+data/
+*.csv
+*.parquet
+*.feather
+!examples/*.csv
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+>>>>>>> phase-0-expansion
