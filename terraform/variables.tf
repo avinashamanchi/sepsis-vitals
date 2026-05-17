@@ -1,0 +1,9 @@
+variable "aws_region"         { default = "us-east-1" }
+variable "environment"        { default = "production" }
+variable "vpc_cidr"           { default = "10.0.0.0/16" }
+variable "db_instance_class"  { default = "db.t4g.medium" }
+variable "api_cpu"            { default = 512 }
+variable "api_memory"         { default = 1024 }
+variable "api_desired_count"  { default = 2 }
+variable "image_tag"          { default = "latest" }
+variable "acm_certificate_arn" { description = "ACM cert ARN for HTTPS" }
