@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#04080f">
+<meta name="description" content="Sepsis Vitals — Simple, transparent per-bed pricing that scales with your hospital.">
+<title>Sepsis Vitals — Pricing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;-webkit-tap-highlight-color:transparent}
+
+:root{
+  --bg0:#04080f;--bg1:#080f1a;--bg2:#0d1623;--bg3:#111d2e;--bg4:#162338;
+  --b1:#1e3050;--b2:#2a4470;
+  --green:#00ff9d;--green-dim:#00cc7a;--green-glow:rgba(0,255,157,.12);
+  --amber:#ffb830;--amber-glow:rgba(255,184,48,.12);
+  --red:#ff3b5c;--red-glow:rgba(255,59,92,.14);
+  --blue:#38b4ff;--blue-glow:rgba(56,180,255,.12);
+  --purple:#b86fff;
+  --text0:#e8f4ff;--text1:#8ba8cc;--text2:#4a6080;--text3:#2a3f58;
+  --mono:'JetBrains Mono',monospace;--ui:'Syne',sans-serif;
+  --r:4px;--rl:8px;
+}
+
+body{background:var(--bg0);color:var(--text0);font-family:var(--mono);font-size:14px;line-height:1.7;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.03) 2px,rgba(0,0,0,.03) 4px);pointer-events:none;z-index:9999}
+
+a{color:var(--green);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* Nav */
+.nav{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(4,8,15,.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--b1);padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between}
+.nav-logo{font-family:var(--ui);font-weight:800;font-size:15px;letter-spacing:.06em;display:flex;align-items:center;gap:10px}
+.nav-logo span{color:var(--green)}
+.nav-logo svg{width:28px;height:28px}
+.nav-links{display:flex;gap:24px;align-items:center}
+.nav-links a{color:var(--text1);font-size:12px;letter-spacing:.04em;transition:color .15s}
+.nav-links a:hover{color:var(--green);text-decoration:none}
+.nav-links a.active{color:var(--green)}
+.nav-cta{background:var(--green);color:#000!important;font-family:var(--mono);font-weight:700;font-size:12px;padding:8px 18px;border-radius:var(--r);border:none;cursor:pointer;transition:all .15s}
+.nav-cta:hover{background:var(--green-dim);box-shadow:0 0 20px rgba(0,255,157,.25);text-decoration:none;color:#000!important}
+@media(max-width:640px){.nav-links a:not(.nav-cta){display:none}}
+
+/* Sections */
+section{padding:80px 24px}
+.section-inner{max-width:1100px;margin:0 auto}
+.section-label{font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--green);margin-bottom:12px;text-align:center}
+.section-title{font-family:var(--ui);font-size:clamp(24px,4vw,36px);font-weight:700;margin-bottom:16px;letter-spacing:-.01em;text-align:center}
+.section-desc{font-size:14px;color:var(--text1);max-width:600px;margin:0 auto 40px;line-height:1.7;text-align:center}
+
+/* Hero Header */
+.pricing-hero{padding:120px 24px 60px;text-align:center;position:relative;overflow:hidden}
+.pricing-hero::before{content:'';position:absolute;top:40%;left:50%;width:900px;height:900px;transform:translate(-50%,-50%);background:radial-gradient(circle,rgba(0,255,157,.05) 0%,transparent 70%);pointer-events:none}
+.pricing-hero h1{font-family:var(--ui);font-size:clamp(32px,5vw,48px);font-weight:800;line-height:1.15;margin-bottom:16px;letter-spacing:-.02em;position:relative;z-index:1}
+.pricing-hero h1 em{font-style:normal;color:var(--green);text-shadow:0 0 40px rgba(0,255,157,.3)}
+.pricing-hero p{font-size:clamp(13px,2vw,16px);color:var(--text1);max-width:560px;margin:0 auto 32px;line-height:1.7;position:relative;z-index:1}
+
+/* Toggle */
+.toggle-wrap{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:48px;position:relative;z-index:1}
+.toggle-label{font-size:13px;color:var(--text2);cursor:pointer;transition:color .2s}
+.toggle-label.active{color:var(--text0)}
+.toggle-track{width:52px;height:28px;background:var(--bg3);border:1px solid var(--b1);border-radius:14px;cursor:pointer;position:relative;transition:background .2s}
+.toggle-thumb{position:absolute;top:3px;left:3px;width:20px;height:20px;background:var(--green);border-radius:50%;transition:transform .25s cubic-bezier(.4,0,.2,1);box-shadow:0 0 8px rgba(0,255,157,.4)}
+.toggle-track.annual .toggle-thumb{transform:translateX(24px)}
+.save-badge{font-size:10px;font-weight:700;letter-spacing:.06em;background:var(--green-glow);color:var(--green);border:1px solid rgba(0,255,157,.2);border-radius:99px;padding:3px 10px;opacity:0;transform:translateX(-4px);transition:all .25s}
+.save-badge.show{opacity:1;transform:translateX(0)}
+
+/* Pricing Cards */
+.pricing-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;max-width:1100px;margin:0 auto;align-items:start}
+@media(max-width:900px){.pricing-grid{grid-template-columns:1fr;max-width:420px}}
+
+.price-card{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--rl);padding:32px 28px;position:relative;transition:transform .2s,border-color .2s}
+.price-card:hover{transform:translateY(-3px)}
+.price-card.featured{border-color:var(--green);box-shadow:0 0 30px rgba(0,255,157,.08),0 0 80px rgba(0,255,157,.04)}
+.price-card.featured::before{content:'';position:absolute;inset:-1px;border-radius:var(--rl);background:linear-gradient(180deg,rgba(0,255,157,.12) 0%,transparent 40%);pointer-events:none;z-index:0}
+
+.popular-badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--green);color:#000;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.08em;padding:4px 14px;border-radius:99px;white-space:nowrap}
+
+.card-content{position:relative;z-index:1}
+.tier-name{font-family:var(--ui);font-size:18px;font-weight:700;margin-bottom:4px}
+.price-row{display:flex;align-items:baseline;gap:4px;margin:16px 0 6px}
+.price-amount{font-family:var(--ui);font-size:40px;font-weight:800;line-height:1;transition:opacity .3s}
+.price-unit{font-size:12px;color:var(--text2)}
+.price-note{font-size:11px;color:var(--text2);margin-bottom:20px;min-height:16px}
+.price-divider{height:1px;background:var(--b1);margin:20px 0}
+.feature-list{list-style:none;padding:0;margin:0 0 28px}
+.feature-list li{font-size:12px;color:var(--text1);padding:5px 0;padding-left:22px;position:relative;line-height:1.5}
+.feature-list li::before{content:'';position:absolute;left:0;top:9px;width:12px;height:12px;border-radius:50%;background:var(--green-glow);border:1px solid rgba(0,255,157,.3)}
+.feature-list li::after{content:'';position:absolute;left:4px;top:12px;width:4px;height:6px;border:solid var(--green);border-width:0 1.5px 1.5px 0;transform:rotate(45deg)}
+.feature-list li.highlight{color:var(--text0);font-weight:500}
+
+.btn-outline-green{display:block;width:100%;text-align:center;background:transparent;color:var(--green);font-family:var(--mono);font-weight:700;font-size:13px;padding:13px 24px;border-radius:var(--r);border:1px solid var(--green);cursor:pointer;transition:all .15s}
+.btn-outline-green:hover{background:var(--green-glow);box-shadow:0 0 20px rgba(0,255,157,.15);text-decoration:none}
+
+.btn-filled-green{display:block;width:100%;text-align:center;background:var(--green);color:#000;font-family:var(--mono);font-weight:700;font-size:13px;padding:13px 24px;border-radius:var(--r);border:none;cursor:pointer;transition:all .15s}
+.btn-filled-green:hover{background:var(--green-dim);box-shadow:0 0 30px rgba(0,255,157,.3);transform:translateY(-1px);text-decoration:none;color:#000}
+
+.btn-outline-blue{display:block;width:100%;text-align:center;background:transparent;color:var(--blue);font-family:var(--mono);font-weight:700;font-size:13px;padding:13px 24px;border-radius:var(--r);border:1px solid var(--blue);cursor:pointer;transition:all .15s}
+.btn-outline-blue:hover{background:var(--blue-glow);box-shadow:0 0 20px rgba(56,180,255,.15);text-decoration:none}
+
+/* Feature Matrix */
+.matrix-section{background:var(--bg1)}
+.matrix-wrap{max-width:1100px;margin:0 auto;overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--b1);border-radius:var(--rl)}
+.matrix-table{width:100%;border-collapse:collapse;min-width:700px;font-size:12px}
+.matrix-table thead{position:sticky;top:56px;z-index:10}
+.matrix-table th{background:var(--bg3);padding:14px 16px;text-align:left;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text2);border-bottom:1px solid var(--b1)}
+.matrix-table th:first-child{width:40%}
+.matrix-table th:not(:first-child){text-align:center;width:20%}
+.matrix-table td{padding:11px 16px;border-bottom:1px solid rgba(30,48,80,.4)}
+.matrix-table td:not(:first-child){text-align:center}
+.matrix-table tr:nth-child(even) td{background:rgba(13,22,35,.5)}
+.matrix-table tr:last-child td{border-bottom:none}
+.matrix-table .section-row td{background:var(--bg3);font-family:var(--ui);font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--green);padding:10px 16px;border-bottom:1px solid var(--b1)}
+.matrix-check{color:var(--green);font-weight:700;font-size:14px}
+.matrix-dash{color:var(--text3);font-size:14px}
+.matrix-text{color:var(--text1);font-size:11px}
+
+/* ROI Calculator */
+.roi-section{background:var(--bg0)}
+.roi-grid{display:grid;grid-template-columns:1fr 1fr;gap:32px;max-width:1100px;margin:0 auto}
+@media(max-width:800px){.roi-grid{grid-template-columns:1fr}}
+.roi-inputs{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--rl);padding:28px}
+.roi-outputs{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--rl);padding:28px}
+
+.roi-field{margin-bottom:24px}
+.roi-field:last-child{margin-bottom:0}
+.roi-field label{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:var(--text1);letter-spacing:.04em;margin-bottom:8px}
+.roi-field label span{font-weight:700;color:var(--green);font-size:13px}
+.roi-slider{width:100%;height:6px;-webkit-appearance:none;appearance:none;background:var(--bg4);border-radius:3px;outline:none;cursor:pointer}
+.roi-slider::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:var(--green);cursor:pointer;box-shadow:0 0 8px rgba(0,255,157,.4);border:2px solid var(--bg0)}
+.roi-slider::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:var(--green);cursor:pointer;box-shadow:0 0 8px rgba(0,255,157,.4);border:2px solid var(--bg0)}
+
+.roi-output-card{background:var(--bg3);border:1px solid var(--b1);border-radius:var(--r);padding:16px;margin-bottom:12px}
+.roi-output-card:last-child{margin-bottom:0}
+.roi-output-label{font-size:10px;color:var(--text2);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}
+.roi-output-value{font-family:var(--ui);font-size:28px;font-weight:800;line-height:1.2}
+.roi-output-value.green{color:var(--green)}
+.roi-output-value.amber{color:var(--amber)}
+.roi-output-value.blue{color:var(--blue)}
+.roi-output-value.red{color:var(--red)}
+.roi-output-sub{font-size:10px;color:var(--text2);margin-top:2px}
+
+.roi-chart{margin-top:20px;background:var(--bg3);border:1px solid var(--b1);border-radius:var(--r);padding:20px}
+.roi-chart-title{font-size:10px;color:var(--text2);letter-spacing:.08em;text-transform:uppercase;margin-bottom:16px}
+.roi-bar-row{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.roi-bar-row:last-child{margin-bottom:0}
+.roi-bar-label{font-size:11px;color:var(--text1);width:80px;flex-shrink:0;text-align:right}
+.roi-bar-track{flex:1;height:28px;background:var(--bg4);border-radius:var(--r);overflow:hidden;position:relative}
+.roi-bar-fill{height:100%;border-radius:var(--r);transition:width .6s cubic-bezier(.4,0,.2,1);display:flex;align-items:center;justify-content:flex-end;padding-right:10px;font-size:10px;font-weight:700;min-width:fit-content}
+.roi-bar-fill.cost-bar{background:linear-gradient(90deg,rgba(255,59,92,.3),rgba(255,59,92,.6));color:var(--red)}
+.roi-bar-fill.savings-bar{background:linear-gradient(90deg,rgba(0,255,157,.2),rgba(0,255,157,.5));color:var(--green)}
+
+/* FAQ */
+.faq-section{background:var(--bg1)}
+.faq-list{max-width:760px;margin:0 auto}
+.faq-item{border:1px solid var(--b1);border-radius:var(--rl);margin-bottom:8px;overflow:hidden;transition:border-color .2s}
+.faq-item.open{border-color:rgba(0,255,157,.2)}
+.faq-question{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;cursor:pointer;background:var(--bg2);transition:background .15s;gap:12px}
+.faq-question:hover{background:var(--bg3)}
+.faq-question h3{font-family:var(--ui);font-size:14px;font-weight:600;line-height:1.4}
+.faq-chevron{width:20px;height:20px;flex-shrink:0;color:var(--text2);transition:transform .25s,color .25s}
+.faq-item.open .faq-chevron{transform:rotate(180deg);color:var(--green)}
+.faq-answer{padding:0 20px;max-height:0;overflow:hidden;transition:max-height .35s cubic-bezier(.4,0,.2,1),padding .35s}
+.faq-answer-inner{padding:4px 0 20px;font-size:13px;color:var(--text1);line-height:1.7}
+
+/* Trust / Compliance */
+.trust-section{background:var(--bg0)}
+.trust-grid{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;max-width:900px;margin:0 auto}
+.trust-badge{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--rl);padding:20px 24px;text-align:center;min-width:140px;flex:1;max-width:180px;transition:border-color .2s,transform .2s}
+.trust-badge:hover{border-color:var(--green);transform:translateY(-2px)}
+.trust-badge-icon{font-size:28px;margin-bottom:10px;display:block}
+.trust-badge-name{font-family:var(--ui);font-size:12px;font-weight:700;letter-spacing:.06em;margin-bottom:2px}
+.trust-badge-desc{font-size:10px;color:var(--text2);line-height:1.4}
+
+/* CTA */
+.cta-section{text-align:center;padding:80px 24px;background:linear-gradient(180deg,var(--bg0) 0%,var(--bg2) 50%,var(--bg0) 100%);position:relative}
+.cta-section::before{content:'';position:absolute;top:50%;left:50%;width:600px;height:600px;transform:translate(-50%,-50%);background:radial-gradient(circle,rgba(0,255,157,.06) 0%,transparent 70%);pointer-events:none}
+.cta-section h2{font-family:var(--ui);font-size:clamp(24px,4vw,36px);font-weight:700;margin-bottom:12px;position:relative;z-index:1}
+.cta-section p{color:var(--text1);margin-bottom:28px;font-size:14px;position:relative;z-index:1}
+.cta-buttons{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;position:relative;z-index:1}
+.btn-primary{background:var(--green);color:#000;font-family:var(--mono);font-weight:700;font-size:14px;padding:14px 32px;border-radius:var(--r);border:none;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:8px}
+.btn-primary:hover{background:var(--green-dim);box-shadow:0 0 30px rgba(0,255,157,.3);transform:translateY(-1px);text-decoration:none;color:#000}
+.btn-secondary{background:transparent;color:var(--text0);font-family:var(--mono);font-size:14px;padding:14px 32px;border-radius:var(--r);border:1px solid var(--b2);cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:8px}
+.btn-secondary:hover{border-color:var(--green);color:var(--green);text-decoration:none}
+
+/* Footer */
+footer{border-top:1px solid var(--b1);padding:32px 24px;text-align:center}
+.footer-inner{max-width:960px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px}
+.footer-copy{font-size:11px;color:var(--text2)}
+.footer-links{display:flex;gap:20px}
+.footer-links a{font-size:11px;color:var(--text2)}
+.footer-links a:hover{color:var(--green)}
+
+/* Animations */
+@keyframes fadein{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+.fade-in{animation:fadein .6s ease both}
+.fade-in-d1{animation-delay:.1s}
+.fade-in-d2{animation-delay:.2s}
+.fade-in-d3{animation-delay:.3s}
+</style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav class="nav">
+  <div class="nav-logo">
+    <svg viewBox="0 0 32 32" fill="none">
+      <circle cx="16" cy="16" r="15" stroke="#1e3050" stroke-width="1"/>
+      <path d="M4 16 L8 8 L13 20 L17 11 L21 17 L26 14" stroke="#00ff9d" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    SEPSIS<span>vitals</span>
+  </div>
+  <div class="nav-links">
+    <a href="index.html">Home</a>
+    <a href="explorer.html">NHANES Data</a>
+    <a href="pricing.html" class="active">Pricing</a>
+    <a href="dashboard.html" class="nav-cta">Dashboard</a>
+  </div>
+</nav>
+
+<!-- ============================================ -->
+<!-- 1. HEADER                                    -->
+<!-- ============================================ -->
+<section class="pricing-hero">
+  <div class="section-label fade-in">Pricing</div>
+  <h1 class="fade-in fade-in-d1">Simple, <em>Transparent</em> Pricing</h1>
+  <p class="fade-in fade-in-d2">Per-bed pricing that scales with your hospital. Start free, upgrade when you're ready.</p>
+
+  <div class="toggle-wrap fade-in fade-in-d3">
+    <span class="toggle-label active" id="lbl-monthly">Monthly</span>
+    <div class="toggle-track" id="billing-toggle" role="switch" aria-checked="false" tabindex="0">
+      <div class="toggle-thumb"></div>
+    </div>
+    <span class="toggle-label" id="lbl-annual">Annual</span>
+    <span class="save-badge" id="save-badge">Save 20%</span>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- 2. PRICING CARDS                             -->
+  <!-- ============================================ -->
+  <div class="pricing-grid fade-in fade-in-d3">
+
+    <!-- Starter -->
+    <div class="price-card">
+      <div class="card-content">
+        <div class="tier-name">Starter</div>
+        <div class="price-row">
+          <span class="price-amount" data-monthly="15" data-annual="12">$15</span>
+          <span class="price-unit">/bed/month</span>
+        </div>
+        <div class="price-note" data-monthly="Billed monthly" data-annual="$12/bed billed annually">Billed monthly</div>
+        <div class="price-divider"></div>
+        <ul class="feature-list">
+          <li>Up to 50 beds</li>
+          <li class="highlight">5 clinical scoring algorithms</li>
+          <li>qSOFA, SIRS, NEWS2, UVA, Shock Index</li>
+          <li>Basic real-time alerts</li>
+          <li>Mobile-responsive dashboard</li>
+          <li>Email support (48h response)</li>
+          <li>Data retention: 90 days</li>
+        </ul>
+        <a href="#" class="btn-outline-green">Start Free Trial</a>
+      </div>
+    </div>
+
+    <!-- Professional -->
+    <div class="price-card featured">
+      <div class="popular-badge">Most Popular</div>
+      <div class="card-content">
+        <div class="tier-name">Professional</div>
+        <div class="price-row">
+          <span class="price-amount" data-monthly="32" data-annual="26">$32</span>
+          <span class="price-unit">/bed/month</span>
+        </div>
+        <div class="price-note" data-monthly="Billed monthly" data-annual="$26/bed billed annually">Billed monthly</div>
+        <div class="price-divider"></div>
+        <ul class="feature-list">
+          <li class="highlight">Unlimited beds</li>
+          <li>Everything in Starter, plus:</li>
+          <li>NHANES population benchmarking</li>
+          <li class="highlight">AI-powered risk narratives</li>
+          <li>Advanced analytics dashboard</li>
+          <li>Shift handoff reports</li>
+          <li>Alert fatigue monitoring</li>
+          <li>Custom alert thresholds</li>
+          <li>Priority support (4h response)</li>
+          <li>Data retention: 2 years</li>
+          <li>API access</li>
+        </ul>
+        <a href="#" class="btn-filled-green">Start Free Trial</a>
+      </div>
+    </div>
+
+    <!-- Enterprise -->
+    <div class="price-card">
+      <div class="card-content">
+        <div class="tier-name">Enterprise</div>
+        <div class="price-row">
+          <span class="price-amount" data-monthly="50" data-annual="custom">$50</span>
+          <span class="price-unit" data-monthly="/bed/month" data-annual="">/bed/month</span>
+        </div>
+        <div class="price-note" data-monthly="Billed monthly" data-annual="Custom annual pricing">Billed monthly</div>
+        <div class="price-divider"></div>
+        <ul class="feature-list">
+          <li>Everything in Professional, plus:</li>
+          <li class="highlight">SSO/SAML integration</li>
+          <li class="highlight">EHR/HL7 FHIR integration</li>
+          <li>Custom scoring algorithms</li>
+          <li>Dedicated customer success manager</li>
+          <li>99.99% SLA guarantee</li>
+          <li>On-premise deployment option</li>
+          <li>HIPAA BAA included</li>
+          <li>Unlimited data retention</li>
+          <li>24/7 phone support</li>
+          <li>White-label option</li>
+        </ul>
+        <a href="#" class="btn-outline-blue">Contact Sales</a>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ============================================ -->
+<!-- 3. FEATURE COMPARISON MATRIX                 -->
+<!-- ============================================ -->
+<section class="matrix-section">
+  <div class="section-inner">
+    <div class="section-label">Compare Plans</div>
+    <div class="section-title">Full Feature Comparison</div>
+    <div class="section-desc">Everything you need to know, at a glance.</div>
+    <div class="matrix-wrap">
+      <table class="matrix-table">
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th>Starter</th>
+            <th>Professional</th>
+            <th>Enterprise</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Clinical Scoring -->
+          <tr class="section-row"><td colspan="4">Clinical Scoring</td></tr>
+          <tr><td>qSOFA</td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>SIRS</td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>NEWS2</td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>UVA</td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>Shock Index</td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>Custom scoring algorithms</td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+
+          <!-- Analytics -->
+          <tr class="section-row"><td colspan="4">Analytics</td></tr>
+          <tr><td>Basic dashboard</td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>Advanced analytics dashboard</td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>NHANES population benchmarking</td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>AI-powered risk narratives</td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>Shift handoff reports</td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+
+          <!-- Alerts -->
+          <tr class="section-row"><td colspan="4">Alerts</td></tr>
+          <tr><td>Basic real-time alerts</td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>Custom alert thresholds</td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>Alert fatigue monitoring</td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>Escalation workflows</td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+
+          <!-- Integration -->
+          <tr class="section-row"><td colspan="4">Integration</td></tr>
+          <tr><td>API access</td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>EHR/HL7 FHIR integration</td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>SSO/SAML integration</td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>On-premise deployment</td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>White-label option</td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+
+          <!-- Support -->
+          <tr class="section-row"><td colspan="4">Support</td></tr>
+          <tr><td>Email support</td><td><span class="matrix-text">48h response</span></td><td><span class="matrix-text">4h response</span></td><td><span class="matrix-text">1h response</span></td></tr>
+          <tr><td>Phone support</td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-text">24/7</span></td></tr>
+          <tr><td>Dedicated customer success manager</td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>Training included</td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+
+          <!-- Compliance -->
+          <tr class="section-row"><td colspan="4">Compliance</td></tr>
+          <tr><td>HIPAA compliance</td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>HIPAA BAA included</td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-dash">&mdash;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>SOC 2 Type II</td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>SLA guarantee</td><td><span class="matrix-text">99.9%</span></td><td><span class="matrix-text">99.95%</span></td><td><span class="matrix-text">99.99%</span></td></tr>
+
+          <!-- Data -->
+          <tr class="section-row"><td colspan="4">Data</td></tr>
+          <tr><td>Data retention</td><td><span class="matrix-text">90 days</span></td><td><span class="matrix-text">2 years</span></td><td><span class="matrix-text">Unlimited</span></td></tr>
+          <tr><td>Data export</td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td><td><span class="matrix-check">&#10003;</span></td></tr>
+          <tr><td>Bed limit</td><td><span class="matrix-text">50 beds</span></td><td><span class="matrix-text">Unlimited</span></td><td><span class="matrix-text">Unlimited</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================ -->
+<!-- 4. ROI CALCULATOR                            -->
+<!-- ============================================ -->
+<section class="roi-section" id="roi">
+  <div class="section-inner">
+    <div class="section-label">ROI Calculator</div>
+    <div class="section-title">Calculate Your Return on Investment</div>
+    <div class="section-desc">See how Sepsis Vitals pays for itself. Powered by real-world NHANES epidemiology data.</div>
+    <div class="roi-grid">
+      <div class="roi-inputs">
+        <div class="roi-field">
+          <label>Number of beds <span id="val-beds">100</span></label>
+          <input type="range" class="roi-slider" id="slider-beds" min="10" max="500" value="100" step="1">
+        </div>
+        <div class="roi-field">
+          <label>Average sepsis cases per year <span id="val-cases">80</span></label>
+          <input type="range" class="roi-slider" id="slider-cases" min="10" max="500" value="80" step="1">
+        </div>
+        <div class="roi-field">
+          <label>Current mortality rate <span id="val-mortality">16%</span></label>
+          <input type="range" class="roi-slider" id="slider-mortality" min="5" max="40" value="16" step="1">
+        </div>
+        <div class="roi-field">
+          <label>Avg cost per sepsis case <span id="val-cost">$32,421</span></label>
+          <input type="range" class="roi-slider" id="slider-cost" min="10000" max="100000" value="32421" step="100">
+        </div>
+      </div>
+      <div class="roi-outputs">
+        <div class="roi-output-card">
+          <div class="roi-output-label">Annual Subscription Cost</div>
+          <div class="roi-output-value red" id="out-sub-cost">$0</div>
+          <div class="roi-output-sub" id="out-sub-detail">100 beds x $32/bed x 12 months</div>
+        </div>
+        <div class="roi-output-card">
+          <div class="roi-output-label">Projected Lives Saved</div>
+          <div class="roi-output-value green" id="out-lives">0</div>
+          <div class="roi-output-sub">Based on 25% mortality reduction (NHANES)</div>
+        </div>
+        <div class="roi-output-card">
+          <div class="roi-output-label">Projected Annual Cost Savings</div>
+          <div class="roi-output-value green" id="out-savings">$0</div>
+          <div class="roi-output-sub" id="out-savings-detail">Lives saved x avg cost + reduced LOS</div>
+        </div>
+        <div class="roi-output-card">
+          <div class="roi-output-label">Return on Investment</div>
+          <div class="roi-output-value amber" id="out-roi">0%</div>
+          <div class="roi-output-sub" id="out-payback">Payback period: -- months</div>
+        </div>
+
+        <div class="roi-chart">
+          <div class="roi-chart-title">Cost vs. Savings</div>
+          <div class="roi-bar-row">
+            <div class="roi-bar-label">Cost</div>
+            <div class="roi-bar-track">
+              <div class="roi-bar-fill cost-bar" id="bar-cost" style="width:10%">$0</div>
+            </div>
+          </div>
+          <div class="roi-bar-row">
+            <div class="roi-bar-label">Savings</div>
+            <div class="roi-bar-track">
+              <div class="roi-bar-fill savings-bar" id="bar-savings" style="width:10%">$0</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================ -->
+<!-- 5. FAQ                                       -->
+<!-- ============================================ -->
+<section class="faq-section">
+  <div class="section-inner">
+    <div class="section-label">FAQ</div>
+    <div class="section-title">Frequently Asked Questions</div>
+    <div class="section-desc">Everything you need to know about getting started.</div>
+    <div class="faq-list">
+
+      <div class="faq-item">
+        <div class="faq-question" role="button" tabindex="0" aria-expanded="false">
+          <h3>How does per-bed pricing work?</h3>
+          <svg class="faq-chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="5 8 10 13 15 8"/></svg>
+        </div>
+        <div class="faq-answer"><div class="faq-answer-inner">You are billed based on the number of active monitored beds in your facility, not total hospital capacity. A "bed" is any patient station actively streaming vitals to Sepsis Vitals. If you have 200 total beds but only monitor 80 through our system, you pay for 80. Bed counts are measured as a rolling monthly maximum, so occasional spikes during high-census periods are handled gracefully.</div></div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-question" role="button" tabindex="0" aria-expanded="false">
+          <h3>Is there a free trial?</h3>
+          <svg class="faq-chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="5 8 10 13 15 8"/></svg>
+        </div>
+        <div class="faq-answer"><div class="faq-answer-inner">Yes! Every new hospital gets a full 30-day trial with complete Professional-tier access. No credit card required. During the trial you get unlimited beds, AI-powered risk narratives, NHANES benchmarking, advanced analytics, and priority support. At the end of the trial, you can choose the plan that fits your needs or continue with a limited free tier.</div></div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-question" role="button" tabindex="0" aria-expanded="false">
+          <h3>What about HIPAA compliance?</h3>
+          <svg class="faq-chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="5 8 10 13 15 8"/></svg>
+        </div>
+        <div class="faq-answer"><div class="faq-answer-inner">Sepsis Vitals is fully HIPAA compliant across all tiers. We employ AES-256-GCM encryption for all protected health information (PHI) at rest, TLS 1.3 for data in transit, and maintain comprehensive audit trails for every data access event. Enterprise customers receive a signed Business Associate Agreement (BAA). We undergo annual SOC 2 Type II audits and maintain continuous compliance monitoring. All infrastructure is hosted on HIPAA-eligible AWS services.</div></div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-question" role="button" tabindex="0" aria-expanded="false">
+          <h3>Can we integrate with our EHR?</h3>
+          <svg class="faq-chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="5 8 10 13 15 8"/></svg>
+        </div>
+        <div class="faq-answer"><div class="faq-answer-inner">Absolutely. Our Enterprise tier includes full EHR integration via the HL7 FHIR R4 standard. We have pre-built connectors for Epic, Cerner (Oracle Health), MEDITECH, and Allscripts. Integration typically involves mapping vital signs data feeds and configuring alert routing. Our dedicated integration team handles the setup process end-to-end. Professional tier customers can use our REST API for custom integrations.</div></div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-question" role="button" tabindex="0" aria-expanded="false">
+          <h3>What if we need custom scoring algorithms?</h3>
+          <svg class="faq-chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="5 8 10 13 15 8"/></svg>
+        </div>
+        <div class="faq-answer"><div class="faq-answer-inner">Custom scoring algorithms are available on our Enterprise tier. You can work with our clinical engineering team to define custom scoring criteria, thresholds, and alert logic specific to your patient population or institutional protocols. We also support importing validated scoring models from your own research teams. Custom algorithms undergo the same rigorous validation pipeline as our built-in scores.</div></div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-question" role="button" tabindex="0" aria-expanded="false">
+          <h3>How long does implementation take?</h3>
+          <svg class="faq-chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="5 8 10 13 15 8"/></svg>
+        </div>
+        <div class="faq-answer"><div class="faq-answer-inner">A typical implementation takes about 2 weeks from contract signing to go-live. Week 1 covers technical setup: connecting vital signs data feeds, configuring alert thresholds, and setting up user accounts. Week 2 focuses on staff training and a supervised pilot period. Enterprise deployments with EHR integration may take 4-6 weeks. Our fastest deployment was 3 days for a cloud-hosted Starter configuration.</div></div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-question" role="button" tabindex="0" aria-expanded="false">
+          <h3>Is training included?</h3>
+          <svg class="faq-chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="5 8 10 13 15 8"/></svg>
+        </div>
+        <div class="faq-answer"><div class="faq-answer-inner">Yes, training is included for Professional and Enterprise tiers. Professional customers receive virtual onboarding sessions for clinical staff and administrators, along with access to our on-demand training library. Enterprise customers get in-person training at your facility, custom training materials branded to your hospital, and ongoing education sessions for new hires. Starter customers have access to our self-service documentation and community forum.</div></div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-question" role="button" tabindex="0" aria-expanded="false">
+          <h3>What happens to our data if we cancel?</h3>
+          <svg class="faq-chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="5 8 10 13 15 8"/></svg>
+        </div>
+        <div class="faq-answer"><div class="faq-answer-inner">If you cancel your subscription, you have a 90-day data export window during which you can download all of your data in standard formats (CSV, HL7 FHIR JSON, or PDF reports). During this period, your dashboard remains in read-only mode. After 90 days, all data is securely and permanently deleted in accordance with our data retention policy and HIPAA requirements. We will never hold your data hostage or charge for data export.</div></div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============================================ -->
+<!-- 6. TRUST / COMPLIANCE BADGES                 -->
+<!-- ============================================ -->
+<section class="trust-section">
+  <div class="section-inner">
+    <div class="section-label">Compliance</div>
+    <div class="section-title">Trusted by Hospitals Worldwide</div>
+    <div class="section-desc">Built with medical-grade security and regulatory compliance from day one.</div>
+    <div class="trust-grid">
+      <div class="trust-badge">
+        <span class="trust-badge-icon">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none"><path d="M16 2L4 8v8c0 7.18 5.12 13.88 12 16 6.88-2.12 12-8.82 12-16V8L16 2z" stroke="#00ff9d" stroke-width="1.5" fill="rgba(0,255,157,.08)"/><path d="M11 16l3 3 7-7" stroke="#00ff9d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <div class="trust-badge-name">HIPAA</div>
+        <div class="trust-badge-desc">Full compliance with PHI safeguards</div>
+      </div>
+      <div class="trust-badge">
+        <span class="trust-badge-icon">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none"><rect x="4" y="6" width="24" height="20" rx="3" stroke="#38b4ff" stroke-width="1.5" fill="rgba(56,180,255,.08)"/><path d="M4 12h24M12 12v14" stroke="#38b4ff" stroke-width="1.5"/><circle cx="22" cy="20" r="3" stroke="#38b4ff" stroke-width="1.5"/><path d="M22 17v3l2 1" stroke="#38b4ff" stroke-width="1.2" stroke-linecap="round"/></svg>
+        </span>
+        <div class="trust-badge-name">SOC 2 Type II</div>
+        <div class="trust-badge-desc">Annual audit certification</div>
+      </div>
+      <div class="trust-badge">
+        <span class="trust-badge-icon">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none"><rect x="6" y="4" width="20" height="24" rx="2" stroke="#b86fff" stroke-width="1.5" fill="rgba(184,111,255,.08)"/><path d="M10 10h12M10 14h12M10 18h8" stroke="#b86fff" stroke-width="1.2" stroke-linecap="round"/><circle cx="22" cy="22" r="5" stroke="#b86fff" stroke-width="1.5" fill="rgba(184,111,255,.12)"/><path d="M22 20v2l1.5 1" stroke="#b86fff" stroke-width="1.2" stroke-linecap="round"/></svg>
+        </span>
+        <div class="trust-badge-name">IEC 62304</div>
+        <div class="trust-badge-desc">Medical device software lifecycle</div>
+      </div>
+      <div class="trust-badge">
+        <span class="trust-badge-icon">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none"><path d="M16 4L6 10v4l10 14 10-14v-4L16 4z" stroke="#ffb830" stroke-width="1.5" fill="rgba(255,184,48,.08)"/><path d="M12 14l4 4 6-7" stroke="#ffb830" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <div class="trust-badge-name">ISO 14971</div>
+        <div class="trust-badge-desc">Medical device risk management</div>
+      </div>
+      <div class="trust-badge">
+        <span class="trust-badge-icon">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="12" stroke="#38b4ff" stroke-width="1.5" fill="rgba(56,180,255,.08)"/><path d="M16 4a12 12 0 0 1 0 24" stroke="#38b4ff" stroke-width="1.5"/><path d="M16 4c-3 4-4 8-4 12s1 8 4 12M16 4c3 4 4 8 4 12s-1 8-4 12M4 16h24" stroke="#38b4ff" stroke-width="1" opacity=".6"/></svg>
+        </span>
+        <div class="trust-badge-name">GDPR</div>
+        <div class="trust-badge-desc">EU data protection compliance</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================ -->
+<!-- 7. CTA                                       -->
+<!-- ============================================ -->
+<section class="cta-section">
+  <h2>Ready to save lives and reduce costs?</h2>
+  <p>Start your free 30-day trial. No credit card required.</p>
+  <div class="cta-buttons">
+    <a href="#" class="btn-primary">Start Free Trial</a>
+    <a href="#" class="btn-secondary">Schedule a Demo</a>
+  </div>
+</section>
+
+<!-- ============================================ -->
+<!-- 8. FOOTER                                    -->
+<!-- ============================================ -->
+<footer>
+  <div class="footer-inner">
+    <div class="footer-copy">Sepsis Vitals v0.3.0 &mdash; MIT License</div>
+    <div class="footer-links">
+      <a href="https://github.com/avinashamanchi/sepsis-vitals">GitHub</a>
+      <a href="dashboard.html">Dashboard</a>
+      <a href="pricing.html">Pricing</a>
+      <a href="https://github.com/avinashamanchi/sepsis-vitals/blob/main/README.md">Docs</a>
+    </div>
+  </div>
+</footer>
+
+<!-- NHANES Data Module -->
+<script src="data/nhanes.js"></script>
+
+<script>
+(function() {
+  "use strict";
+
+  // ── Billing Toggle ──
+  var isAnnual = false;
+  var toggle = document.getElementById("billing-toggle");
+  var lblMonthly = document.getElementById("lbl-monthly");
+  var lblAnnual = document.getElementById("lbl-annual");
+  var saveBadge = document.getElementById("save-badge");
+  var priceAmounts = document.querySelectorAll(".price-amount");
+  var priceNotes = document.querySelectorAll(".price-note");
+
+  function updatePricing() {
+    priceAmounts.forEach(function(el) {
+      var monthly = el.getAttribute("data-monthly");
+      var annual = el.getAttribute("data-annual");
+      if (isAnnual) {
+        el.textContent = annual === "custom" ? "Custom" : "$" + annual;
+      } else {
+        el.textContent = "$" + monthly;
+      }
+    });
+    priceNotes.forEach(function(el) {
+      var monthly = el.getAttribute("data-monthly");
+      var annual = el.getAttribute("data-annual");
+      el.textContent = isAnnual ? annual : monthly;
+    });
+    // Update the enterprise price unit
+    var entUnit = document.querySelectorAll(".price-unit");
+    entUnit.forEach(function(el) {
+      if (el.hasAttribute("data-monthly")) {
+        el.textContent = isAnnual ? el.getAttribute("data-annual") : el.getAttribute("data-monthly");
+      }
+    });
+    lblMonthly.classList.toggle("active", !isAnnual);
+    lblAnnual.classList.toggle("active", isAnnual);
+    toggle.classList.toggle("annual", isAnnual);
+    toggle.setAttribute("aria-checked", isAnnual ? "true" : "false");
+    saveBadge.classList.toggle("show", isAnnual);
+    // Recalculate ROI
+    calculateROI();
+  }
+
+  toggle.addEventListener("click", function() {
+    isAnnual = !isAnnual;
+    updatePricing();
+  });
+  toggle.addEventListener("keydown", function(e) {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); isAnnual = !isAnnual; updatePricing(); }
+  });
+  lblMonthly.addEventListener("click", function() { if (isAnnual) { isAnnual = false; updatePricing(); } });
+  lblAnnual.addEventListener("click", function() { if (!isAnnual) { isAnnual = true; updatePricing(); } });
+
+  // ── FAQ Accordion ──
+  var faqItems = document.querySelectorAll(".faq-item");
+  faqItems.forEach(function(item) {
+    var question = item.querySelector(".faq-question");
+    var answer = item.querySelector(".faq-answer");
+    var inner = item.querySelector(".faq-answer-inner");
+    question.addEventListener("click", function() {
+      var isOpen = item.classList.contains("open");
+      // Close all
+      faqItems.forEach(function(other) {
+        other.classList.remove("open");
+        other.querySelector(".faq-question").setAttribute("aria-expanded", "false");
+        other.querySelector(".faq-answer").style.maxHeight = "0";
+        other.querySelector(".faq-answer").style.paddingTop = "0";
+        other.querySelector(".faq-answer").style.paddingBottom = "0";
+      });
+      // Open clicked if was closed
+      if (!isOpen) {
+        item.classList.add("open");
+        question.setAttribute("aria-expanded", "true");
+        answer.style.maxHeight = inner.scrollHeight + 24 + "px";
+      }
+    });
+    question.addEventListener("keydown", function(e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); question.click(); }
+    });
+  });
+
+  // ── ROI Calculator ──
+  var sliderBeds = document.getElementById("slider-beds");
+  var sliderCases = document.getElementById("slider-cases");
+  var sliderMortality = document.getElementById("slider-mortality");
+  var sliderCost = document.getElementById("slider-cost");
+  var valBeds = document.getElementById("val-beds");
+  var valCases = document.getElementById("val-cases");
+  var valMortality = document.getElementById("val-mortality");
+  var valCost = document.getElementById("val-cost");
+
+  // Animated counter state
+  var animState = {
+    subCost: 0,
+    lives: 0,
+    savings: 0,
+    roi: 0
+  };
+  var animFrame = null;
+
+  function formatCurrency(n) {
+    return "$" + Math.round(n).toLocaleString("en-US");
+  }
+
+  function calculateROI() {
+    var beds = parseInt(sliderBeds.value);
+    var cases = parseInt(sliderCases.value);
+    var mortalityRate = parseInt(sliderMortality.value) / 100;
+    var costPerCase = parseInt(sliderCost.value);
+
+    // Get NHANES data if available
+    var mortalityReduction = 0.25;
+    var avgLOS = 9.2;
+    if (typeof NHANES !== "undefined" && NHANES.SEPSIS_EPIDEMIOLOGY) {
+      mortalityReduction = NHANES.SEPSIS_EPIDEMIOLOGY.early_detection_mortality_reduction;
+      avgLOS = NHANES.SEPSIS_EPIDEMIOLOGY.avg_los_days;
+    }
+
+    // Price per bed
+    var pricePerBed = isAnnual ? 26 : 32;
+    var annualSubCost = beds * pricePerBed * 12;
+
+    // Lives saved
+    var currentDeaths = cases * mortalityRate;
+    var livesSaved = currentDeaths * mortalityReduction;
+
+    // Cost savings: lives saved * avg cost + reduced LOS savings
+    var directSavings = livesSaved * costPerCase;
+    var losSavings = cases * (avgLOS * 0.15) * 2800; // 15% LOS reduction, $2800/day estimate
+    var totalSavings = directSavings + losSavings;
+
+    // ROI
+    var roiPct = annualSubCost > 0 ? ((totalSavings - annualSubCost) / annualSubCost * 100) : 0;
+    var paybackMonths = totalSavings > 0 ? Math.max(1, Math.ceil(annualSubCost / (totalSavings / 12))) : 0;
+
+    // Animate to target values
+    animateValues({
+      subCost: annualSubCost,
+      lives: livesSaved,
+      savings: totalSavings,
+      roi: roiPct
+    }, beds, pricePerBed, paybackMonths, annualSubCost, totalSavings);
+  }
+
+  function animateValues(targets, beds, pricePerBed, paybackMonths, annualSubCost, totalSavings) {
+    if (animFrame) cancelAnimationFrame(animFrame);
+    var startState = {
+      subCost: animState.subCost,
+      lives: animState.lives,
+      savings: animState.savings,
+      roi: animState.roi
+    };
+    var startTime = performance.now();
+    var duration = 500;
+
+    function step(now) {
+      var t = Math.min(1, (now - startTime) / duration);
+      // Ease out cubic
+      var ease = 1 - Math.pow(1 - t, 3);
+
+      animState.subCost = startState.subCost + (targets.subCost - startState.subCost) * ease;
+      animState.lives = startState.lives + (targets.lives - startState.lives) * ease;
+      animState.savings = startState.savings + (targets.savings - startState.savings) * ease;
+      animState.roi = startState.roi + (targets.roi - startState.roi) * ease;
+
+      document.getElementById("out-sub-cost").textContent = formatCurrency(animState.subCost);
+      document.getElementById("out-sub-detail").textContent = beds + " beds x $" + pricePerBed + "/bed x 12 months";
+      document.getElementById("out-lives").textContent = animState.lives.toFixed(1);
+      document.getElementById("out-savings").textContent = formatCurrency(animState.savings);
+      document.getElementById("out-savings-detail").textContent = "Direct savings + 15% reduced length of stay";
+      document.getElementById("out-roi").textContent = Math.round(animState.roi) + "%";
+      document.getElementById("out-payback").textContent = "Payback period: " + (paybackMonths > 0 ? paybackMonths + (paybackMonths === 1 ? " month" : " months") : "N/A");
+
+      // Update bars
+      var maxVal = Math.max(annualSubCost, totalSavings, 1);
+      document.getElementById("bar-cost").style.width = Math.max(3, (annualSubCost / maxVal) * 100) + "%";
+      document.getElementById("bar-cost").textContent = formatCurrency(animState.subCost);
+      document.getElementById("bar-savings").style.width = Math.max(3, (totalSavings / maxVal) * 100) + "%";
+      document.getElementById("bar-savings").textContent = formatCurrency(animState.savings);
+
+      if (t < 1) {
+        animFrame = requestAnimationFrame(step);
+      }
+    }
+    animFrame = requestAnimationFrame(step);
+  }
+
+  function onSliderInput() {
+    valBeds.textContent = sliderBeds.value;
+    valCases.textContent = sliderCases.value;
+    valMortality.textContent = sliderMortality.value + "%";
+    valCost.textContent = formatCurrency(parseInt(sliderCost.value));
+    calculateROI();
+  }
+
+  sliderBeds.addEventListener("input", onSliderInput);
+  sliderCases.addEventListener("input", onSliderInput);
+  sliderMortality.addEventListener("input", onSliderInput);
+  sliderCost.addEventListener("input", onSliderInput);
+
+  // Initialize
+  calculateROI();
+
+})();
+</script>
+
+</body>
+</html>

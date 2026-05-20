@@ -1,0 +1,1121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#04080f">
+<meta name="description" content="NHANES Population Health Explorer - Interactive visualization of CDC National Health and Nutrition Examination Survey data. Explore vital sign distributions, demographic patterns, and sepsis risk factors.">
+<title>NHANES Population Health Explorer - Sepsis Vitals</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;-webkit-tap-highlight-color:transparent}
+
+:root{
+  --bg0:#04080f;--bg1:#080f1a;--bg2:#0d1623;--bg3:#111d2e;--bg4:#162338;
+  --b1:#1e3050;--b2:#2a4470;
+  --green:#00ff9d;--green-dim:#00cc7a;--green-glow:rgba(0,255,157,.12);
+  --amber:#ffb830;--amber-glow:rgba(255,184,48,.12);
+  --red:#ff3b5c;--red-glow:rgba(255,59,92,.14);
+  --blue:#38b4ff;--blue-glow:rgba(56,180,255,.12);
+  --purple:#b86fff;
+  --text0:#e8f4ff;--text1:#8ba8cc;--text2:#4a6080;--text3:#2a3f58;
+  --mono:'JetBrains Mono',monospace;--ui:'Syne',sans-serif;
+  --r:4px;--rl:8px;
+}
+
+body{background:var(--bg0);color:var(--text0);font-family:var(--mono);font-size:14px;line-height:1.7;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.03) 2px,rgba(0,0,0,.03) 4px);pointer-events:none;z-index:9999}
+
+a{color:var(--green);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* Nav */
+.nav{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(4,8,15,.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--b1);padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between}
+.nav-logo{font-family:var(--ui);font-weight:800;font-size:15px;letter-spacing:.06em;display:flex;align-items:center;gap:10px}
+.nav-logo span{color:var(--green)}
+.nav-logo svg{width:28px;height:28px}
+.nav-links{display:flex;gap:24px;align-items:center}
+.nav-links a{color:var(--text1);font-size:12px;letter-spacing:.04em;transition:color .15s}
+.nav-links a:hover{color:var(--green);text-decoration:none}
+.nav-links a.active{color:var(--green)}
+.nav-cta{background:var(--green)!important;color:#000!important;font-family:var(--mono);font-weight:700;font-size:12px;padding:8px 18px;border-radius:var(--r);border:none;cursor:pointer;transition:all .15s}
+.nav-cta:hover{background:var(--green-dim)!important;box-shadow:0 0 20px rgba(0,255,157,.25);text-decoration:none!important;color:#000!important}
+@media(max-width:640px){.nav-links a:not(.nav-cta){display:none}}
+
+/* Header */
+.page-header{padding:100px 24px 40px;text-align:center;position:relative;overflow:hidden}
+.page-header::before{content:'';position:absolute;top:40%;left:50%;width:900px;height:600px;transform:translate(-50%,-50%);background:radial-gradient(ellipse,rgba(0,255,157,.05) 0%,transparent 70%);pointer-events:none}
+.page-header-inner{max-width:760px;margin:0 auto;position:relative;z-index:1}
+.page-badge{display:inline-flex;align-items:center;gap:8px;background:var(--green-glow);border:1px solid rgba(0,255,157,.2);border-radius:99px;padding:6px 16px;font-size:10px;color:var(--green);letter-spacing:.06em;margin-bottom:20px}
+.page-badge::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse-dot 2s infinite}
+@keyframes pulse-dot{0%,100%{box-shadow:0 0 0 0 rgba(0,255,157,.4)}50%{box-shadow:0 0 0 6px rgba(0,255,157,0)}}
+.page-header h1{font-family:var(--ui);font-size:clamp(26px,5vw,44px);font-weight:800;line-height:1.15;margin-bottom:16px;letter-spacing:-.02em}
+.page-header h1 em{font-style:normal;color:var(--green);text-shadow:0 0 40px rgba(0,255,157,.3)}
+.page-header p{font-size:clamp(12px,1.6vw,14px);color:var(--text1);max-width:620px;margin:0 auto;line-height:1.7}
+
+/* Filter Bar */
+.filter-bar{position:sticky;top:56px;z-index:90;background:rgba(8,15,26,.95);backdrop-filter:blur(12px);border-bottom:1px solid var(--b1);padding:12px 24px}
+.filter-inner{max-width:1100px;margin:0 auto;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.filter-group{display:flex;flex-direction:column;gap:3px}
+.filter-group label{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text2);font-weight:700}
+.filter-group select,.filter-group input{background:var(--bg3);border:1px solid var(--b1);color:var(--text0);font-family:var(--mono);font-size:12px;padding:7px 12px;border-radius:var(--r);outline:none;transition:border-color .15s;min-width:120px}
+.filter-group select:focus,.filter-group input:focus{border-color:var(--green)}
+.toggle-group{display:flex;border:1px solid var(--b1);border-radius:var(--r);overflow:hidden}
+.toggle-btn{background:var(--bg3);border:none;color:var(--text1);font-family:var(--mono);font-size:11px;padding:7px 14px;cursor:pointer;transition:all .15s;border-right:1px solid var(--b1)}
+.toggle-btn:last-child{border-right:none}
+.toggle-btn.active{background:var(--green);color:#000;font-weight:700}
+.toggle-btn:hover:not(.active){background:var(--bg4);color:var(--text0)}
+.btn-apply{background:var(--green);color:#000;font-family:var(--mono);font-weight:700;font-size:12px;padding:7px 20px;border-radius:var(--r);border:none;cursor:pointer;transition:all .15s;align-self:flex-end;margin-top:auto}
+.btn-apply:hover{background:var(--green-dim);box-shadow:0 0 20px rgba(0,255,157,.25)}
+@media(max-width:768px){.filter-inner{flex-direction:column;align-items:stretch}.filter-group{width:100%}.filter-group select,.filter-group input{width:100%}.toggle-group{justify-content:center}}
+
+/* Sections */
+section{padding:48px 24px}
+.section-inner{max-width:1100px;margin:0 auto}
+.section-label{font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--green);margin-bottom:10px}
+.section-title{font-family:var(--ui);font-size:clamp(20px,3.5vw,30px);font-weight:700;margin-bottom:12px;letter-spacing:-.01em}
+.section-desc{font-size:13px;color:var(--text1);max-width:600px;margin-bottom:32px;line-height:1.7}
+
+/* Canvas containers */
+.chart-container{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--rl);padding:24px;margin-bottom:24px;position:relative}
+.chart-container canvas{width:100%;height:auto;display:block}
+.chart-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px}
+.chart-title{font-family:var(--ui);font-size:16px;font-weight:700}
+.chart-subtitle{font-size:11px;color:var(--text2)}
+
+/* Patient overlay input */
+.overlay-input-wrap{display:flex;align-items:center;gap:8px}
+.overlay-input-wrap label{font-size:10px;color:var(--text2);letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+.overlay-input-wrap input{background:var(--bg3);border:1px solid var(--b1);color:var(--green);font-family:var(--mono);font-size:13px;padding:6px 10px;border-radius:var(--r);width:80px;text-align:center;outline:none;transition:border-color .15s}
+.overlay-input-wrap input:focus{border-color:var(--green);box-shadow:0 0 8px rgba(0,255,157,.15)}
+.overlay-result{font-size:11px;color:var(--green);font-weight:500;min-width:80px}
+
+/* Stats grid */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:16px}
+.stat-card{background:var(--bg3);border:1px solid var(--b1);border-radius:var(--r);padding:12px;text-align:center}
+.stat-card .stat-label{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text2);margin-bottom:4px}
+.stat-card .stat-value{font-family:var(--ui);font-size:20px;font-weight:700;color:var(--text0)}
+.stat-card .stat-unit{font-size:9px;color:var(--text2)}
+
+/* Heatmap */
+.heatmap-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.heatmap-table{width:100%;border-collapse:collapse;min-width:400px}
+.heatmap-table th{background:var(--bg3);padding:10px 14px;text-align:center;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text2);border:1px solid var(--b1)}
+.heatmap-table th:first-child{text-align:left}
+.heatmap-table td{padding:10px 14px;text-align:center;border:1px solid var(--b1);font-size:14px;font-weight:600;font-family:var(--ui);transition:all .3s}
+.heatmap-table td:first-child{text-align:left;font-size:12px;font-family:var(--mono);font-weight:400;color:var(--text1)}
+.hm-green{background:rgba(0,255,157,.08);color:var(--green)}
+.hm-amber{background:rgba(255,184,48,.08);color:var(--amber)}
+.hm-red{background:rgba(255,59,92,.1);color:var(--red)}
+
+/* Risk factors */
+.risk-card{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--rl);padding:20px;margin-top:20px}
+.risk-card h4{font-family:var(--ui);font-size:14px;font-weight:600;margin-bottom:8px;color:var(--amber)}
+.risk-card p{font-size:12px;color:var(--text1);margin-bottom:12px;line-height:1.6}
+.risk-card .risk-items{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+.risk-item{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text1)}
+.risk-item .risk-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+
+/* Reference table */
+.ref-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.ref-table{width:100%;border-collapse:collapse;min-width:700px;font-size:12px}
+.ref-table th{background:var(--bg3);padding:10px 12px;text-align:left;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text2);border-bottom:1px solid var(--b1);cursor:pointer;user-select:none;white-space:nowrap;transition:color .15s}
+.ref-table th:hover{color:var(--green)}
+.ref-table th .sort-arrow{margin-left:4px;font-size:8px;opacity:.4}
+.ref-table th.sorted .sort-arrow{opacity:1;color:var(--green)}
+.ref-table td{padding:8px 12px;border-bottom:1px solid rgba(30,48,80,.4);color:var(--text1)}
+.ref-table tr:hover td{background:rgba(0,255,157,.03)}
+.ref-table .vital-name{color:var(--text0);font-weight:500}
+
+.btn-download{background:transparent;border:1px solid var(--b2);color:var(--text0);font-family:var(--mono);font-size:12px;padding:8px 20px;border-radius:var(--r);cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:6px}
+.btn-download:hover{border-color:var(--green);color:var(--green)}
+.btn-download-full{background:transparent;border:1px solid var(--b1);color:var(--text2);font-family:var(--mono);font-size:11px;padding:8px 20px;border-radius:var(--r);cursor:pointer;transition:all .15s;margin-left:12px}
+.btn-download-full:hover{border-color:var(--amber);color:var(--amber)}
+
+/* Lead capture modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(4,8,15,.85);z-index:200;display:none;align-items:center;justify-content:center;padding:24px}
+.modal-overlay.show{display:flex}
+.modal{background:var(--bg2);border:1px solid var(--b1);border-radius:var(--rl);padding:32px;max-width:420px;width:100%;position:relative}
+.modal h3{font-family:var(--ui);font-size:18px;font-weight:700;margin-bottom:8px}
+.modal p{font-size:12px;color:var(--text1);margin-bottom:20px;line-height:1.6}
+.modal input[type="email"]{width:100%;background:var(--bg3);border:1px solid var(--b1);color:var(--text0);font-family:var(--mono);font-size:13px;padding:10px 14px;border-radius:var(--r);outline:none;margin-bottom:12px}
+.modal input[type="email"]:focus{border-color:var(--green)}
+.modal .btn-submit{width:100%;background:var(--green);color:#000;font-family:var(--mono);font-weight:700;font-size:13px;padding:10px;border-radius:var(--r);border:none;cursor:pointer;transition:all .15s}
+.modal .btn-submit:hover{background:var(--green-dim)}
+.modal .btn-close{position:absolute;top:12px;right:14px;background:none;border:none;color:var(--text2);font-size:18px;cursor:pointer;transition:color .15s;line-height:1}
+.modal .btn-close:hover{color:var(--text0)}
+
+/* CTA */
+.cta-section{text-align:center;padding:64px 24px;background:linear-gradient(180deg,var(--bg0) 0%,var(--bg2) 50%,var(--bg0) 100%)}
+.cta-section h2{font-family:var(--ui);font-size:clamp(20px,3.5vw,30px);font-weight:700;margin-bottom:12px}
+.cta-section p{color:var(--text1);margin-bottom:24px;font-size:13px}
+.btn-primary{background:var(--green);color:#000;font-family:var(--mono);font-weight:700;font-size:13px;padding:12px 28px;border-radius:var(--r);border:none;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:8px}
+.btn-primary:hover{background:var(--green-dim);box-shadow:0 0 30px rgba(0,255,157,.3);transform:translateY(-1px);text-decoration:none;color:#000}
+.btn-secondary{background:transparent;color:var(--text0);font-family:var(--mono);font-size:13px;padding:12px 28px;border-radius:var(--r);border:1px solid var(--b2);cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:8px}
+.btn-secondary:hover{border-color:var(--green);color:var(--green);text-decoration:none}
+
+/* Footer */
+footer{border-top:1px solid var(--b1);padding:32px 24px;text-align:center}
+.footer-inner{max-width:960px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px}
+.footer-copy{font-size:11px;color:var(--text2)}
+.footer-links{display:flex;gap:20px}
+.footer-links a{font-size:11px;color:var(--text2)}
+.footer-links a:hover{color:var(--green)}
+
+/* Animations */
+@keyframes fadein{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.fade-in{animation:fadein .5s ease both}
+.fade-in-d1{animation-delay:.1s}
+.fade-in-d2{animation-delay:.2s}
+.fade-in-d3{animation-delay:.3s}
+</style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav class="nav">
+  <div class="nav-logo">
+    <svg viewBox="0 0 32 32" fill="none">
+      <circle cx="16" cy="16" r="15" stroke="#1e3050" stroke-width="1"/>
+      <path d="M4 16 L8 8 L13 20 L17 11 L21 17 L26 14" stroke="#00ff9d" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    SEPSIS<span>vitals</span>
+  </div>
+  <div class="nav-links">
+    <a href="index.html">Home</a>
+    <a href="explorer.html" class="active">NHANES Data</a>
+    <a href="pricing.html">Pricing</a>
+    <a href="dashboard.html" class="nav-cta">Dashboard</a>
+  </div>
+</nav>
+
+<!-- Header -->
+<header class="page-header">
+  <div class="page-header-inner">
+    <div class="page-badge fade-in">CDC NHANES Data &bull; 11 Survey Cycles &bull; 100,000+ Participants</div>
+    <h1 class="fade-in fade-in-d1">NHANES Population<br><em>Health Explorer</em></h1>
+    <p class="fade-in fade-in-d2">Interactive visualization of CDC National Health and Nutrition Examination Survey data (1999&ndash;2023). Explore vital sign distributions, demographic patterns, and sepsis risk factors across the US population.</p>
+  </div>
+</header>
+
+<!-- Filter Bar -->
+<div class="filter-bar" id="filterBar">
+  <div class="filter-inner">
+    <div class="filter-group">
+      <label>Age Range</label>
+      <select id="filterAge">
+        <option value="all">All Ages</option>
+        <option value="18-29">18-29</option>
+        <option value="30-39">30-39</option>
+        <option value="40-49">40-49</option>
+        <option value="50-59">50-59</option>
+        <option value="60-69">60-69</option>
+        <option value="70-79">70-79</option>
+        <option value="80+">80+</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>Sex</label>
+      <div class="toggle-group" id="filterSex">
+        <button class="toggle-btn active" data-val="all">All</button>
+        <button class="toggle-btn" data-val="Male">Male</button>
+        <button class="toggle-btn" data-val="Female">Female</button>
+      </div>
+    </div>
+    <div class="filter-group">
+      <label>Ethnicity</label>
+      <select id="filterEthnicity">
+        <option value="all">All</option>
+        <option value="Non-Hispanic White">Non-Hispanic White</option>
+        <option value="Non-Hispanic Black">Non-Hispanic Black</option>
+        <option value="Mexican-American">Mexican-American</option>
+        <option value="Other Hispanic">Other Hispanic</option>
+        <option value="Asian">Asian</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>Vital Sign</label>
+      <select id="filterVital">
+        <option value="sbp">Systolic BP</option>
+        <option value="dbp">Diastolic BP</option>
+        <option value="hr">Heart Rate</option>
+        <option value="rr">Respiratory Rate</option>
+        <option value="temp">Temperature</option>
+        <option value="spo2">SpO2</option>
+      </select>
+    </div>
+    <button class="btn-apply" id="btnApply">Apply</button>
+  </div>
+</div>
+
+<!-- Distribution Chart -->
+<section id="distributionSection">
+  <div class="section-inner">
+    <div class="section-label">Distribution</div>
+    <div class="section-title">Population Distribution</div>
+    <div class="chart-container">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title" id="distChartTitle">Systolic BP Distribution</div>
+          <div class="chart-subtitle" id="distChartSubtitle">All ages, both sexes</div>
+        </div>
+        <div class="overlay-input-wrap">
+          <label>Patient Value</label>
+          <input type="number" id="patientOverlay" placeholder="120" step="any">
+          <span class="overlay-result" id="overlayResult"></span>
+        </div>
+      </div>
+      <canvas id="distCanvas" width="1060" height="380"></canvas>
+      <div class="stats-grid" id="statsGrid"></div>
+    </div>
+  </div>
+</section>
+
+<!-- Demographic Heatmap -->
+<section id="heatmapSection" style="background:var(--bg1)">
+  <div class="section-inner">
+    <div class="section-label">Demographics</div>
+    <div class="section-title">Vital Signs Across Demographics</div>
+    <div class="section-desc">Mean values for the selected vital sign across age groups and sex. Cells color-coded by clinical risk thresholds.</div>
+    <div class="chart-container">
+      <div class="heatmap-wrap">
+        <table class="heatmap-table" id="heatmapTable">
+          <thead id="heatmapHead"></thead>
+          <tbody id="heatmapBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Trend Over Time Chart -->
+<section id="trendSection">
+  <div class="section-inner">
+    <div class="section-label">Trends</div>
+    <div class="section-title">Population Trends (1999&ndash;2023)</div>
+    <div class="section-desc">How key health metrics have changed across NHANES survey cycles over 24 years.</div>
+    <div class="chart-container">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title" id="trendChartTitle">Mean Systolic BP &amp; Hypertension Prevalence</div>
+          <div class="chart-subtitle">Across 11 NHANES survey cycles</div>
+        </div>
+      </div>
+      <canvas id="trendCanvas" width="1060" height="360"></canvas>
+    </div>
+  </div>
+</section>
+
+<!-- Sepsis Risk Factor Prevalence -->
+<section id="riskSection" style="background:var(--bg1)">
+  <div class="section-inner">
+    <div class="section-label">Risk Factors</div>
+    <div class="section-title">Sepsis Risk Factor Prevalence in US Population</div>
+    <div class="section-desc">Prevalence of key comorbidities that increase sepsis risk, derived from NHANES data.</div>
+    <div class="chart-container">
+      <canvas id="riskCanvas" width="1060" height="340"></canvas>
+    </div>
+    <div class="risk-card">
+      <h4>Sepsis Risk Multipliers</h4>
+      <p>These comorbidities significantly increase the likelihood of developing sepsis. Risk multipliers represent the relative increase in sepsis incidence compared to patients without the condition.</p>
+      <div class="risk-items" id="riskMultipliers"></div>
+    </div>
+  </div>
+</section>
+
+<!-- Reference Range Table -->
+<section id="referenceSection">
+  <div class="section-inner">
+    <div class="section-label">Reference Data</div>
+    <div class="section-title">Clinical Reference Ranges</div>
+    <div class="section-desc">Population-derived reference ranges from NHANES for clinical benchmarking.</div>
+    <div style="margin-bottom:16px;display:flex;align-items:center;flex-wrap:wrap;gap:8px">
+      <button class="btn-download" id="btnDownloadCSV">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 1v10M4 7l4 4 4-4M2 13h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Download CSV
+      </button>
+      <button class="btn-download-full" id="btnDownloadFull">Download full dataset</button>
+    </div>
+    <div class="chart-container" style="padding:0;overflow:hidden">
+      <div class="ref-table-wrap">
+        <table class="ref-table" id="refTable">
+          <thead id="refTableHead"></thead>
+          <tbody id="refTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta-section">
+  <h2>See how these benchmarks power real-time clinical decisions</h2>
+  <p>Population data drives personalized sepsis risk scoring in the Sepsis Vitals dashboard.</p>
+  <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+    <a href="dashboard.html" class="btn-primary">Try the Dashboard &rarr;</a>
+    <a href="pricing.html" class="btn-secondary">View Pricing</a>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="footer-inner">
+    <div class="footer-copy">Sepsis Vitals &mdash; NHANES data sourced from CDC/NCHS</div>
+    <div class="footer-links">
+      <a href="index.html">Home</a>
+      <a href="dashboard.html">Dashboard</a>
+      <a href="pricing.html">Pricing</a>
+    </div>
+  </div>
+</footer>
+
+<!-- Lead Capture Modal -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <button class="btn-close" id="modalClose">&times;</button>
+    <h3>Get the full NHANES dataset</h3>
+    <p>Enter your email to receive the complete processed NHANES dataset with all vital signs, lab values, and demographic breakdowns in CSV format.</p>
+    <input type="email" id="modalEmail" placeholder="you@hospital.org">
+    <button class="btn-submit" id="modalSubmit">Send me the dataset</button>
+  </div>
+</div>
+
+<script src="data/nhanes.js"></script>
+<script>
+(function(){
+"use strict";
+
+/* ── State ── */
+var state = {
+  age: 'all',
+  sex: 'all',
+  ethnicity: 'all',
+  vital: 'sbp',
+  patientValue: null,
+  sortCol: null,
+  sortDir: 1
+};
+
+var VITAL_META = {
+  sbp:  { label: 'Systolic BP', unit: 'mmHg', data: NHANES.BP_SYSTOLIC, decimals: 0, thresholds: { normal: 130, elevated: 140 } },
+  dbp:  { label: 'Diastolic BP', unit: 'mmHg', data: NHANES.BP_DIASTOLIC, decimals: 0, thresholds: { normal: 80, elevated: 90 } },
+  hr:   { label: 'Heart Rate', unit: 'bpm', data: NHANES.HEART_RATE, decimals: 0, thresholds: { normal: 100, elevated: 120 } },
+  rr:   { label: 'Respiratory Rate', unit: '/min', data: NHANES.RESPIRATORY_RATE, decimals: 0, thresholds: { normal: 20, elevated: 24 } },
+  temp: { label: 'Temperature', unit: '\u00B0C', data: NHANES.TEMPERATURE, decimals: 1, thresholds: { normal: 37.2, elevated: 38.0 } },
+  spo2: { label: 'SpO2', unit: '%', data: NHANES.SPO2, decimals: 0, thresholds: { normal: 95, elevated: 92, invert: true } }
+};
+
+/* ── Helpers ── */
+function fmt(v, d) { return d > 0 ? v.toFixed(d) : Math.round(v).toString(); }
+function dpr() { return window.devicePixelRatio || 1; }
+
+function el(tag, cls, parent) {
+  var e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+function getAggregatedDist(vitalKey, ageFilter, sexFilter) {
+  var meta = VITAL_META[vitalKey];
+  var datasets = meta.data;
+  var sexes = sexFilter === 'all' ? ['Male','Female'] : [sexFilter];
+  var ages = ageFilter === 'all' ? NHANES.AGE_GROUPS : [ageFilter];
+  var sumMean = 0, sumSD = 0, sumP5 = 0, sumP25 = 0, sumP50 = 0, sumP75 = 0, sumP95 = 0, count = 0;
+  for (var s = 0; s < sexes.length; s++) {
+    for (var a = 0; a < ages.length; a++) {
+      var d = datasets[sexes[s]] && datasets[sexes[s]][ages[a]];
+      if (d) {
+        sumMean += d.mean; sumSD += d.sd;
+        sumP5 += d.p5; sumP25 += d.p25; sumP50 += d.p50; sumP75 += d.p75; sumP95 += d.p95;
+        count++;
+      }
+    }
+  }
+  if (count === 0) return null;
+  return {
+    mean: sumMean / count, sd: sumSD / count,
+    p5: sumP5 / count, p25: sumP25 / count, p50: sumP50 / count,
+    p75: sumP75 / count, p95: sumP95 / count
+  };
+}
+
+/* ── Setup canvas for HiDPI ── */
+function setupCanvas(canvas, w, h) {
+  var r = dpr();
+  canvas.width = w * r;
+  canvas.height = h * r;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  var ctx = canvas.getContext('2d');
+  ctx.scale(r, r);
+  return ctx;
+}
+
+/* ══════════════════════════════════════════════
+   Distribution Chart
+   ══════════════════════════════════════════════ */
+function drawDistribution() {
+  var canvas = document.getElementById('distCanvas');
+  var container = canvas.parentElement;
+  var w = Math.min(container.clientWidth - 48, 1060);
+  var h = 340;
+  var ctx = setupCanvas(canvas, w, h);
+
+  var meta = VITAL_META[state.vital];
+  var dist = getAggregatedDist(state.vital, state.age, state.sex);
+  if (!dist) return;
+
+  var points = NHANES.generateDistributionCurve(dist, 120);
+  var pad = { top: 20, right: 30, bottom: 50, left: 50 };
+  var cw = w - pad.left - pad.right;
+  var ch = h - pad.top - pad.bottom;
+
+  var xMin = points[0].x, xMax = points[points.length - 1].x;
+  var yMax = 0;
+  for (var i = 0; i < points.length; i++) { if (points[i].y > yMax) yMax = points[i].y; }
+  yMax *= 1.15;
+
+  function xScale(v) { return pad.left + ((v - xMin) / (xMax - xMin)) * cw; }
+  function yScale(v) { return pad.top + ch - (v / yMax) * ch; }
+
+  // Background
+  ctx.fillStyle = '#0d1623';
+  ctx.fillRect(0, 0, w, h);
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(30,48,80,0.4)';
+  ctx.lineWidth = 0.5;
+  var xTicks = 8;
+  for (var i = 0; i <= xTicks; i++) {
+    var xv = xMin + (xMax - xMin) * i / xTicks;
+    var xx = xScale(xv);
+    ctx.beginPath(); ctx.moveTo(xx, pad.top); ctx.lineTo(xx, pad.top + ch); ctx.stroke();
+  }
+  for (var i = 0; i <= 4; i++) {
+    var yy = pad.top + ch * i / 4;
+    ctx.beginPath(); ctx.moveTo(pad.left, yy); ctx.lineTo(pad.left + cw, yy); ctx.stroke();
+  }
+
+  // Area under curve with gradient
+  var grad = ctx.createLinearGradient(0, pad.top, 0, pad.top + ch);
+  grad.addColorStop(0, 'rgba(0,255,157,0.18)');
+  grad.addColorStop(1, 'rgba(0,255,157,0.01)');
+  ctx.beginPath();
+  ctx.moveTo(xScale(points[0].x), yScale(0));
+  for (var i = 0; i < points.length; i++) ctx.lineTo(xScale(points[i].x), yScale(points[i].y));
+  ctx.lineTo(xScale(points[points.length - 1].x), yScale(0));
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Curve line
+  ctx.beginPath();
+  ctx.moveTo(xScale(points[0].x), yScale(points[0].y));
+  for (var i = 1; i < points.length; i++) ctx.lineTo(xScale(points[i].x), yScale(points[i].y));
+  ctx.strokeStyle = '#00ff9d';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Percentile lines
+  var pctLines = [
+    { val: dist.p5, label: 'P5', color: 'rgba(56,180,255,0.6)' },
+    { val: dist.p25, label: 'P25', color: 'rgba(56,180,255,0.5)' },
+    { val: dist.p50, label: 'P50', color: 'rgba(255,184,48,0.8)' },
+    { val: dist.p75, label: 'P75', color: 'rgba(56,180,255,0.5)' },
+    { val: dist.p95, label: 'P95', color: 'rgba(56,180,255,0.6)' }
+  ];
+  for (var i = 0; i < pctLines.length; i++) {
+    var p = pctLines[i];
+    var px = xScale(p.val);
+    if (px < pad.left || px > pad.left + cw) continue;
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = p.color;
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(px, pad.top); ctx.lineTo(px, pad.top + ch); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = p.color;
+    ctx.font = '10px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(p.label, px, pad.top - 4);
+    ctx.fillStyle = '#8ba8cc';
+    ctx.font = '9px "JetBrains Mono", monospace';
+    ctx.fillText(fmt(p.val, meta.decimals), px, pad.top + ch + 28);
+  }
+
+  // X-axis labels
+  ctx.fillStyle = '#4a6080';
+  ctx.font = '10px "JetBrains Mono", monospace';
+  ctx.textAlign = 'center';
+  for (var i = 0; i <= xTicks; i++) {
+    var xv = xMin + (xMax - xMin) * i / xTicks;
+    ctx.fillText(fmt(xv, meta.decimals), xScale(xv), pad.top + ch + 16);
+  }
+
+  // X-axis unit label
+  ctx.fillStyle = '#4a6080';
+  ctx.font = '10px "JetBrains Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(meta.unit, pad.left + cw / 2, h - 4);
+
+  // Y-axis label
+  ctx.save();
+  ctx.translate(12, pad.top + ch / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillStyle = '#4a6080';
+  ctx.font = '10px "JetBrains Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('Density', 0, 0);
+  ctx.restore();
+
+  // Patient overlay
+  var overlayResultEl = document.getElementById('overlayResult');
+  if (state.patientValue !== null && !isNaN(state.patientValue)) {
+    var pv = state.patientValue;
+    var pvx = xScale(pv);
+    if (pvx >= pad.left && pvx <= pad.left + cw) {
+      ctx.setLineDash([]);
+      ctx.strokeStyle = '#00ff9d';
+      ctx.lineWidth = 2.5;
+      ctx.shadowColor = 'rgba(0,255,157,0.5)';
+      ctx.shadowBlur = 8;
+      ctx.beginPath(); ctx.moveTo(pvx, pad.top); ctx.lineTo(pvx, pad.top + ch); ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      var pctile = NHANES.getPercentile(pv, dist);
+      var labelY = pad.top + 16;
+      ctx.fillStyle = 'rgba(4,8,15,0.85)';
+      ctx.fillRect(pvx - 36, labelY - 11, 72, 16);
+      ctx.fillStyle = '#00ff9d';
+      ctx.font = 'bold 12px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(fmt(pv, meta.decimals) + ' (P' + pctile + ')', pvx, labelY);
+
+      var desc = pctile < 5 ? 'Very Low' : pctile < 25 ? 'Low' : pctile < 75 ? 'Normal' : pctile < 95 ? 'High' : 'Very High';
+      overlayResultEl.textContent = 'P' + pctile + ' (' + desc + ')';
+    } else {
+      overlayResultEl.textContent = '';
+    }
+  } else {
+    overlayResultEl.textContent = '';
+  }
+
+  // Update titles
+  var sexLabel = state.sex === 'all' ? 'both sexes' : state.sex;
+  var ageLabel = state.age === 'all' ? 'all ages' : state.age;
+  document.getElementById('distChartTitle').textContent = meta.label + ' Distribution';
+  document.getElementById('distChartSubtitle').textContent = ageLabel + ', ' + sexLabel;
+
+  // Stats cards (DOM-based)
+  var grid = document.getElementById('statsGrid');
+  while (grid.firstChild) grid.removeChild(grid.firstChild);
+  var stats = [
+    { label: 'Mean', value: fmt(dist.mean, meta.decimals), unit: meta.unit },
+    { label: 'SD', value: fmt(dist.sd, meta.decimals), unit: meta.unit },
+    { label: 'P5', value: fmt(dist.p5, meta.decimals), unit: meta.unit },
+    { label: 'P25', value: fmt(dist.p25, meta.decimals), unit: meta.unit },
+    { label: 'P50', value: fmt(dist.p50, meta.decimals), unit: meta.unit },
+    { label: 'P75', value: fmt(dist.p75, meta.decimals), unit: meta.unit },
+    { label: 'P95', value: fmt(dist.p95, meta.decimals), unit: meta.unit }
+  ];
+  for (var i = 0; i < stats.length; i++) {
+    var card = el('div', 'stat-card', grid);
+    var lbl = el('div', 'stat-label', card); lbl.textContent = stats[i].label;
+    var val = el('div', 'stat-value', card); val.textContent = stats[i].value;
+    var unt = el('div', 'stat-unit', card); unt.textContent = stats[i].unit;
+  }
+}
+
+/* ══════════════════════════════════════════════
+   Heatmap
+   ══════════════════════════════════════════════ */
+function drawHeatmap() {
+  var meta = VITAL_META[state.vital];
+  var thead = document.getElementById('heatmapHead');
+  var tbody = document.getElementById('heatmapBody');
+  while (thead.firstChild) thead.removeChild(thead.firstChild);
+  while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+
+  var headerRow = el('tr', '', thead);
+  var th1 = el('th', '', headerRow); th1.textContent = 'Age Group';
+  var th2 = el('th', '', headerRow); th2.textContent = 'Male';
+  var th3 = el('th', '', headerRow); th3.textContent = 'Female';
+
+  var ages = NHANES.AGE_GROUPS;
+  var sexes = ['Male', 'Female'];
+
+  for (var a = 0; a < ages.length; a++) {
+    var tr = el('tr', '', tbody);
+    var tdAge = el('td', '', tr);
+    tdAge.textContent = ages[a];
+    for (var s = 0; s < sexes.length; s++) {
+      var d = meta.data[sexes[s]] && meta.data[sexes[s]][ages[a]];
+      var td = el('td', '', tr);
+      if (d) {
+        var val = d.mean;
+        var cls = 'hm-green';
+        if (meta.thresholds.invert) {
+          if (val < meta.thresholds.elevated) cls = 'hm-red';
+          else if (val < meta.thresholds.normal) cls = 'hm-amber';
+        } else {
+          if (val >= meta.thresholds.elevated) cls = 'hm-red';
+          else if (val >= meta.thresholds.normal) cls = 'hm-amber';
+        }
+        td.className = cls;
+        td.textContent = fmt(val, meta.decimals);
+      } else {
+        td.textContent = '-';
+      }
+    }
+  }
+}
+
+/* ══════════════════════════════════════════════
+   Trend Chart
+   ══════════════════════════════════════════════ */
+function drawTrend() {
+  var canvas = document.getElementById('trendCanvas');
+  var container = canvas.parentElement;
+  var w = Math.min(container.clientWidth - 48, 1060);
+  var h = 320;
+  var ctx = setupCanvas(canvas, w, h);
+  var pad = { top: 30, right: 60, bottom: 55, left: 55 };
+  var cw = w - pad.left - pad.right;
+  var ch = h - pad.top - pad.bottom;
+
+  ctx.fillStyle = '#0d1623';
+  ctx.fillRect(0, 0, w, h);
+
+  var cycles = NHANES.CYCLES;
+  var isBP = (state.vital === 'sbp' || state.vital === 'dbp');
+  var titleEl = document.getElementById('trendChartTitle');
+
+  // Grid helper
+  function drawGrid() {
+    ctx.strokeStyle = 'rgba(30,48,80,0.3)';
+    ctx.lineWidth = 0.5;
+    for (var i = 0; i <= 4; i++) {
+      var yy = pad.top + ch * i / 4;
+      ctx.beginPath(); ctx.moveTo(pad.left, yy); ctx.lineTo(pad.left + cw, yy); ctx.stroke();
+    }
+  }
+
+  function xPos(i) { return pad.left + (i / (cycles.length - 1)) * cw; }
+
+  if (isBP) {
+    titleEl.textContent = 'Mean Systolic BP & Hypertension Prevalence';
+    var vals = [], pcts = [];
+    for (var i = 0; i < cycles.length; i++) {
+      var t = NHANES.BP_TRENDS[cycles[i]];
+      vals.push(t.sbp);
+      pcts.push(t.hypertension_pct * 100);
+    }
+
+    var yMin1 = 120, yMax1 = 128;
+    var yMin2 = 25, yMax2 = 38;
+
+    drawGrid();
+
+    function yPos1(v) { return pad.top + ch - ((v - yMin1) / (yMax1 - yMin1)) * ch; }
+    function yPos2(v) { return pad.top + ch - ((v - yMin2) / (yMax2 - yMin2)) * ch; }
+
+    // SBP line
+    ctx.beginPath();
+    for (var i = 0; i < vals.length; i++) {
+      var x = xPos(i), y = yPos1(vals[i]);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = '#00ff9d'; ctx.lineWidth = 2; ctx.stroke();
+    for (var i = 0; i < vals.length; i++) {
+      ctx.beginPath(); ctx.arc(xPos(i), yPos1(vals[i]), 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#00ff9d'; ctx.fill();
+    }
+
+    // Hypertension line
+    ctx.beginPath();
+    for (var i = 0; i < pcts.length; i++) {
+      var x = xPos(i), y = yPos2(pcts[i]);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = '#ff3b5c'; ctx.lineWidth = 2; ctx.setLineDash([6, 3]); ctx.stroke(); ctx.setLineDash([]);
+    for (var i = 0; i < pcts.length; i++) {
+      ctx.beginPath(); ctx.arc(xPos(i), yPos2(pcts[i]), 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#ff3b5c'; ctx.fill();
+    }
+
+    // Left Y axis (SBP)
+    ctx.fillStyle = '#00ff9d'; ctx.font = '10px "JetBrains Mono", monospace'; ctx.textAlign = 'right';
+    for (var i = 0; i <= 4; i++) {
+      var v = yMin1 + (yMax1 - yMin1) * (4 - i) / 4;
+      ctx.fillText(v.toFixed(0) + ' mmHg', pad.left - 8, pad.top + ch * i / 4 + 4);
+    }
+
+    // Right Y axis (Hypertension %)
+    ctx.fillStyle = '#ff3b5c'; ctx.textAlign = 'left';
+    for (var i = 0; i <= 4; i++) {
+      var v = yMin2 + (yMax2 - yMin2) * (4 - i) / 4;
+      ctx.fillText(v.toFixed(0) + '%', pad.left + cw + 8, pad.top + ch * i / 4 + 4);
+    }
+
+    // Legend
+    ctx.fillStyle = '#00ff9d'; ctx.fillRect(pad.left, h - 16, 14, 2);
+    ctx.fillStyle = '#8ba8cc'; ctx.font = '10px "JetBrains Mono", monospace'; ctx.textAlign = 'left';
+    ctx.fillText('Mean SBP', pad.left + 18, h - 12);
+    ctx.strokeStyle = '#ff3b5c'; ctx.lineWidth = 2; ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(pad.left + 110, h - 15); ctx.lineTo(pad.left + 124, h - 15); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#8ba8cc'; ctx.fillText('Hypertension %', pad.left + 128, h - 12);
+
+  } else {
+    titleEl.textContent = 'Obesity Prevalence Trends (1999-2023)';
+    var overall = [], male = [], female = [];
+    for (var i = 0; i < cycles.length; i++) {
+      var t = NHANES.OBESITY_TRENDS[cycles[i]];
+      overall.push(t.overall * 100); male.push(t.male * 100); female.push(t.female * 100);
+    }
+
+    var yMin = 25, yMax = 48;
+    function yPos(v) { return pad.top + ch - ((v - yMin) / (yMax - yMin)) * ch; }
+
+    drawGrid();
+
+    var series = [
+      { data: overall, color: '#00ff9d', label: 'Overall' },
+      { data: male, color: '#38b4ff', label: 'Male' },
+      { data: female, color: '#b86fff', label: 'Female' }
+    ];
+
+    for (var si = 0; si < series.length; si++) {
+      ctx.beginPath();
+      for (var i = 0; i < series[si].data.length; i++) {
+        var x = xPos(i), y = yPos(series[si].data[i]);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = series[si].color; ctx.lineWidth = 2; ctx.stroke();
+      for (var i = 0; i < series[si].data.length; i++) {
+        ctx.beginPath(); ctx.arc(xPos(i), yPos(series[si].data[i]), 3, 0, Math.PI * 2);
+        ctx.fillStyle = series[si].color; ctx.fill();
+      }
+    }
+
+    // Y axis labels
+    ctx.fillStyle = '#8ba8cc'; ctx.font = '10px "JetBrains Mono", monospace'; ctx.textAlign = 'right';
+    for (var i = 0; i <= 4; i++) {
+      var v = yMin + (yMax - yMin) * (4 - i) / 4;
+      ctx.fillText(v.toFixed(0) + '%', pad.left - 8, pad.top + ch * i / 4 + 4);
+    }
+
+    // Legend
+    for (var si = 0; si < series.length; si++) {
+      var lx = pad.left + si * 100;
+      ctx.fillStyle = series[si].color; ctx.fillRect(lx, h - 16, 14, 2);
+      ctx.fillStyle = '#8ba8cc'; ctx.font = '10px "JetBrains Mono", monospace'; ctx.textAlign = 'left';
+      ctx.fillText(series[si].label, lx + 18, h - 12);
+    }
+  }
+
+  // X-axis labels (cycle names)
+  ctx.fillStyle = '#4a6080'; ctx.font = '9px "JetBrains Mono", monospace'; ctx.textAlign = 'center';
+  for (var i = 0; i < cycles.length; i++) {
+    var x = xPos(i);
+    ctx.save();
+    ctx.translate(x, pad.top + ch + 14);
+    ctx.rotate(-Math.PI / 5);
+    ctx.textAlign = 'right';
+    ctx.fillText(cycles[i], 0, 0);
+    ctx.restore();
+  }
+}
+
+/* ══════════════════════════════════════════════
+   Risk Factor Bar Chart
+   ══════════════════════════════════════════════ */
+function drawRiskBars() {
+  var canvas = document.getElementById('riskCanvas');
+  var container = canvas.parentElement;
+  var w = Math.min(container.clientWidth - 48, 1060);
+  var h = 320;
+  var ctx = setupCanvas(canvas, w, h);
+  var pad = { top: 15, right: 80, bottom: 15, left: 210 };
+  var cw = w - pad.left - pad.right;
+  var ch = h - pad.top - pad.bottom;
+
+  ctx.fillStyle = '#0d1623';
+  ctx.fillRect(0, 0, w, h);
+
+  var factors = Object.keys(NHANES.SEPSIS_RISK_FACTORS);
+  var barH = Math.min(30, (ch - (factors.length - 1) * 8) / factors.length);
+  var gap = (ch - barH * factors.length) / (factors.length - 1);
+  var colors = ['#ff3b5c', '#ffb830', '#00ff9d', '#ff3b5c', '#38b4ff', '#b86fff', '#ffb830'];
+
+  for (var i = 0; i < factors.length; i++) {
+    var f = NHANES.SEPSIS_RISK_FACTORS[factors[i]];
+    var y = pad.top + i * (barH + gap);
+    var barW = f.overall * cw;
+
+    // Bar background
+    ctx.fillStyle = 'rgba(30,48,80,0.2)';
+    ctx.fillRect(pad.left, y, cw, barH);
+
+    // Bar fill
+    var grad = ctx.createLinearGradient(pad.left, 0, pad.left + barW, 0);
+    grad.addColorStop(0, colors[i] + '99');
+    grad.addColorStop(1, colors[i]);
+    ctx.fillStyle = grad;
+    var radius = Math.min(3, barH / 2);
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(pad.left + barW - radius, y);
+    ctx.arcTo(pad.left + barW, y, pad.left + barW, y + radius, radius);
+    ctx.lineTo(pad.left + barW, y + barH - radius);
+    ctx.arcTo(pad.left + barW, y + barH, pad.left + barW - radius, y + barH, radius);
+    ctx.lineTo(pad.left, y + barH);
+    ctx.closePath();
+    ctx.fill();
+
+    // Label (left)
+    ctx.fillStyle = '#e8f4ff'; ctx.font = '11px "JetBrains Mono", monospace';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillText(factors[i], pad.left - 10, y + barH / 2);
+
+    // Percentage (right)
+    ctx.fillStyle = colors[i]; ctx.font = 'bold 12px "JetBrains Mono", monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText((f.overall * 100).toFixed(1) + '%', pad.left + barW + 8, y + barH / 2);
+  }
+  ctx.textBaseline = 'alphabetic';
+
+  // Risk multipliers (DOM-based)
+  var mDiv = document.getElementById('riskMultipliers');
+  while (mDiv.firstChild) mDiv.removeChild(mDiv.firstChild);
+  for (var i = 0; i < factors.length; i++) {
+    var f = NHANES.SEPSIS_RISK_FACTORS[factors[i]];
+    var item = el('div', 'risk-item', mDiv);
+    var dot = el('div', 'risk-dot', item);
+    dot.style.background = colors[i];
+    dot.style.boxShadow = '0 0 6px ' + colors[i] + '44';
+    var span = el('span', '', item);
+    var strong = el('strong', '', span);
+    strong.textContent = factors[i] + ': ';
+    span.appendChild(document.createTextNode(f.sepsis_risk_multiplier + 'x sepsis risk'));
+  }
+}
+
+/* ══════════════════════════════════════════════
+   Reference Table
+   ══════════════════════════════════════════════ */
+function buildRefData() {
+  var rows = [];
+  var vitals = [
+    { key: 'sbp', label: 'Systolic BP', data: NHANES.BP_SYSTOLIC, unit: 'mmHg', dec: 0 },
+    { key: 'dbp', label: 'Diastolic BP', data: NHANES.BP_DIASTOLIC, unit: 'mmHg', dec: 0 },
+    { key: 'hr', label: 'Heart Rate', data: NHANES.HEART_RATE, unit: 'bpm', dec: 0 },
+    { key: 'rr', label: 'Respiratory Rate', data: NHANES.RESPIRATORY_RATE, unit: '/min', dec: 0 },
+    { key: 'temp', label: 'Temperature', data: NHANES.TEMPERATURE, unit: '\u00B0C', dec: 1 },
+    { key: 'spo2', label: 'SpO2', data: NHANES.SPO2, unit: '%', dec: 0 }
+  ];
+  for (var v = 0; v < vitals.length; v++) {
+    var vt = vitals[v];
+    var sexes = ['Male', 'Female'];
+    for (var s = 0; s < sexes.length; s++) {
+      for (var a = 0; a < NHANES.AGE_GROUPS.length; a++) {
+        var d = vt.data[sexes[s]] && vt.data[sexes[s]][NHANES.AGE_GROUPS[a]];
+        if (d) {
+          rows.push({
+            vital: vt.label, vitalKey: vt.key, age: NHANES.AGE_GROUPS[a], sex: sexes[s],
+            p5: d.p5, p25: d.p25, p50: d.p50, p75: d.p75, p95: d.p95,
+            unit: vt.unit, dec: vt.dec
+          });
+        }
+      }
+    }
+  }
+  return rows;
+}
+
+var refData = buildRefData();
+
+function buildRefTableHead() {
+  var thead = document.getElementById('refTableHead');
+  while (thead.firstChild) thead.removeChild(thead.firstChild);
+  var tr = el('tr', '', thead);
+  var cols = [
+    { col: 'vital', label: 'Vital Sign' },
+    { col: 'age', label: 'Age Group' },
+    { col: 'sex', label: 'Sex' },
+    { col: 'p5', label: 'P5' },
+    { col: 'p25', label: 'P25' },
+    { col: 'p50', label: 'P50' },
+    { col: 'p75', label: 'P75' },
+    { col: 'p95', label: 'P95' },
+    { col: 'unit', label: 'Unit' }
+  ];
+  for (var i = 0; i < cols.length; i++) {
+    var th = el('th', '', tr);
+    th.setAttribute('data-col', cols[i].col);
+    th.textContent = cols[i].label + ' ';
+    var arrow = el('span', 'sort-arrow', th);
+    arrow.textContent = '\u25B2';
+  }
+}
+
+function renderRefTable() {
+  var data = refData.slice();
+  if (state.sortCol) {
+    data.sort(function(a, b) {
+      var av = a[state.sortCol], bv = b[state.sortCol];
+      if (typeof av === 'string') return av.localeCompare(bv) * state.sortDir;
+      return (av - bv) * state.sortDir;
+    });
+  }
+
+  var tbody = document.getElementById('refTableBody');
+  while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+
+  for (var i = 0; i < data.length; i++) {
+    var r = data[i];
+    var tr = el('tr', '', tbody);
+    var tdVital = el('td', 'vital-name', tr); tdVital.textContent = r.vital;
+    var tdAge = el('td', '', tr); tdAge.textContent = r.age;
+    var tdSex = el('td', '', tr); tdSex.textContent = r.sex;
+    var tdP5 = el('td', '', tr); tdP5.textContent = fmt(r.p5, r.dec);
+    var tdP25 = el('td', '', tr); tdP25.textContent = fmt(r.p25, r.dec);
+    var tdP50 = el('td', '', tr); tdP50.textContent = fmt(r.p50, r.dec);
+    var tdP75 = el('td', '', tr); tdP75.textContent = fmt(r.p75, r.dec);
+    var tdP95 = el('td', '', tr); tdP95.textContent = fmt(r.p95, r.dec);
+    var tdUnit = el('td', '', tr); tdUnit.textContent = r.unit;
+  }
+}
+
+/* ── CSV Download ── */
+function downloadCSV() {
+  var lines = ['Vital Sign,Age Group,Sex,P5,P25,P50,P75,P95,Unit'];
+  for (var i = 0; i < refData.length; i++) {
+    var r = refData[i];
+    lines.push([r.vital, r.age, r.sex, fmt(r.p5, r.dec), fmt(r.p25, r.dec), fmt(r.p50, r.dec), fmt(r.p75, r.dec), fmt(r.p95, r.dec), r.unit].join(','));
+  }
+  var blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'nhanes_reference_ranges.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/* ══════════════════════════════════════════════
+   Init and Events
+   ══════════════════════════════════════════════ */
+function updateAll() {
+  drawDistribution();
+  drawHeatmap();
+  drawTrend();
+  drawRiskBars();
+  renderRefTable();
+}
+
+// Filter: Apply
+document.getElementById('btnApply').addEventListener('click', function() {
+  state.age = document.getElementById('filterAge').value;
+  state.ethnicity = document.getElementById('filterEthnicity').value;
+  state.vital = document.getElementById('filterVital').value;
+  updateAll();
+});
+
+// Sex toggle
+document.getElementById('filterSex').addEventListener('click', function(e) {
+  if (e.target.classList.contains('toggle-btn')) {
+    var btns = this.querySelectorAll('.toggle-btn');
+    for (var i = 0; i < btns.length; i++) btns[i].classList.remove('active');
+    e.target.classList.add('active');
+    state.sex = e.target.getAttribute('data-val');
+  }
+});
+
+// Patient overlay
+document.getElementById('patientOverlay').addEventListener('input', function() {
+  var v = parseFloat(this.value);
+  state.patientValue = isNaN(v) ? null : v;
+  drawDistribution();
+});
+
+// Table sort
+document.getElementById('refTable').addEventListener('click', function(e) {
+  var th = e.target.closest('th');
+  if (!th) return;
+  var col = th.getAttribute('data-col');
+  if (!col) return;
+  if (state.sortCol === col) {
+    state.sortDir *= -1;
+  } else {
+    state.sortCol = col;
+    state.sortDir = 1;
+  }
+  // Update header visuals
+  var ths = document.getElementById('refTableHead').querySelectorAll('th');
+  for (var i = 0; i < ths.length; i++) {
+    ths[i].classList.remove('sorted');
+    var arrow = ths[i].querySelector('.sort-arrow');
+    if (arrow) arrow.textContent = '\u25B2';
+  }
+  th.classList.add('sorted');
+  var arrow = th.querySelector('.sort-arrow');
+  if (arrow) arrow.textContent = state.sortDir === 1 ? '\u25B2' : '\u25BC';
+  renderRefTable();
+});
+
+// CSV download
+document.getElementById('btnDownloadCSV').addEventListener('click', downloadCSV);
+
+// Full dataset modal
+document.getElementById('btnDownloadFull').addEventListener('click', function() {
+  document.getElementById('modalOverlay').classList.add('show');
+});
+document.getElementById('modalClose').addEventListener('click', function() {
+  document.getElementById('modalOverlay').classList.remove('show');
+});
+document.getElementById('modalOverlay').addEventListener('click', function(e) {
+  if (e.target === this) this.classList.remove('show');
+});
+document.getElementById('modalSubmit').addEventListener('click', function() {
+  var email = document.getElementById('modalEmail').value;
+  if (email && email.indexOf('@') > 0) {
+    this.textContent = 'Sent! Check your inbox.';
+    this.style.background = 'var(--green-dim)';
+    var self = this;
+    setTimeout(function() {
+      document.getElementById('modalOverlay').classList.remove('show');
+      self.textContent = 'Send me the dataset';
+      self.style.background = '';
+      document.getElementById('modalEmail').value = '';
+    }, 2000);
+  } else {
+    var emailInput = document.getElementById('modalEmail');
+    emailInput.style.borderColor = 'var(--red)';
+    setTimeout(function() { emailInput.style.borderColor = ''; }, 1500);
+  }
+});
+
+// Responsive resize
+var resizeTimer;
+window.addEventListener('resize', function() {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(function() {
+    drawDistribution();
+    drawTrend();
+    drawRiskBars();
+  }, 150);
+});
+
+// Build table head once, then initial render
+buildRefTableHead();
+updateAll();
+
+})();
+</script>
+</body>
+</html>

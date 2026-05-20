@@ -984,6 +984,66 @@ textarea:focus{border-color:var(--green)}
       <div class="card"><div class="card-title blue">Network & Headers</div><div id="sec-net"></div></div>
     </div>
 
+    <!-- NHANES Population Benchmarking View -->
+    <div class="view" id="view-nhanes">
+      <div class="ph">
+        <div class="ph-title">NHANES Population Benchmarking</div>
+        <div class="ph-sub">Compare patient vitals against CDC national population data (1999-2023)</div>
+      </div>
+
+      <!-- Patient Comparison -->
+      <div class="card">
+        <div class="card-title green">Patient vs. Population</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+          <div>
+            <label style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text2);display:block;margin-bottom:4px">Age</label>
+            <input type="number" id="nh-age" value="55" min="18" max="100" style="width:100%;background:var(--bg1);border:1px solid var(--b1);border-radius:var(--r);padding:8px;color:var(--text0);font-family:var(--mono);font-size:13px" oninput="renderNHANES()">
+          </div>
+          <div>
+            <label style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text2);display:block;margin-bottom:4px">Sex</label>
+            <select id="nh-sex" style="width:100%;background:var(--bg1);border:1px solid var(--b1);border-radius:var(--r);padding:8px;color:var(--text0);font-family:var(--mono);font-size:13px" onchange="renderNHANES()">
+              <option value="Male">Male</option>
+              <option value="Female">Female</option>
+            </select>
+          </div>
+        </div>
+        <div id="nh-comparison" style="margin-top:12px"></div>
+      </div>
+
+      <!-- Distribution Chart -->
+      <div class="card">
+        <div class="card-title blue">Population Distribution</div>
+        <div style="margin-bottom:10px">
+          <select id="nh-vital-select" style="background:var(--bg1);border:1px solid var(--b1);border-radius:var(--r);padding:8px;color:var(--text0);font-family:var(--mono);font-size:12px" onchange="drawNHDistribution()">
+            <option value="sbp">Systolic Blood Pressure</option>
+            <option value="dbp">Diastolic Blood Pressure</option>
+            <option value="hr">Heart Rate</option>
+            <option value="rr">Respiratory Rate</option>
+            <option value="temp">Temperature</option>
+            <option value="spo2">SpO2</option>
+          </select>
+        </div>
+        <canvas id="nh-dist-canvas" height="200" style="width:100%;border-radius:var(--r)"></canvas>
+        <div id="nh-dist-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:8px;margin-top:12px"></div>
+      </div>
+
+      <!-- Risk Factors -->
+      <div class="card">
+        <div class="card-title amber">Sepsis Risk Factor Prevalence</div>
+        <canvas id="nh-risk-canvas" height="260" style="width:100%;border-radius:var(--r)"></canvas>
+      </div>
+
+      <!-- Demographic Heatmap -->
+      <div class="card">
+        <div class="card-title">SBP Across Demographics</div>
+        <div id="nh-heatmap" style="overflow-x:auto"></div>
+      </div>
+
+      <div style="text-align:center;margin-top:16px">
+        <a href="explorer.html" class="btn primary" style="font-size:12px">Open Full NHANES Explorer</a>
+      </div>
+    </div>
+
   </main>
 
   <!-- Bottom nav (mobile) -->
@@ -1000,7 +1060,7 @@ const I18N = {
     "nav.console":"Nurse Console","nav.ai":"AI Analysis","nav.scores":"Score Lab",
     "nav.he":"Health Econ","nav.evidence":"Evidence","nav.roadmap":"Roadmap",
     "nav.readiness":"Site Readiness","nav.threshold":"Thresholds",
-    "nav.backlog":"Backlog","nav.security":"Security","nav.surveillance":"Surveillance","nav.patients":"Patient Log","nav.trends":"Trends","nav.export":"Export","nav.alerts":"Alert History","nav.calculator":"Calc","nav.protocols":"Protocols",
+    "nav.backlog":"Backlog","nav.security":"Security","nav.surveillance":"Surveillance","nav.patients":"Patient Log","nav.trends":"Trends","nav.export":"Export","nav.alerts":"Alert History","nav.calculator":"Calc","nav.protocols":"Protocols","nav.nhanes":"NHANES Data",
     "auth.title":"Sign In","auth.sub":"Early warning for every patient",
     "auth.email":"Email address","auth.password":"Password",
     "auth.btn":"Sign In","auth.mfa_note":"Enter your 6-digit authenticator code",
@@ -1013,7 +1073,7 @@ const I18N = {
     "nav.console":"Dashibodi ya Muuguzi","nav.ai":"Uchambuzi wa AI","nav.scores":"Majaribio ya Alama",
     "nav.he":"Uchumi wa Afya","nav.evidence":"Ushahidi","nav.roadmap":"Mpango",
     "nav.readiness":"Utayari wa Tovuti","nav.threshold":"Viwango",
-    "nav.backlog":"Orodha ya Kazi","nav.security":"Usalama","nav.surveillance":"Uangalizi","nav.patients":"Kumbukumbu za Wagonjwa","nav.trends":"Mwenendo","nav.export":"Hamisha","nav.alerts":"Historia ya Maonyo","nav.calculator":"Hesabu","nav.protocols":"Itifaki",
+    "nav.backlog":"Orodha ya Kazi","nav.security":"Usalama","nav.surveillance":"Uangalizi","nav.patients":"Kumbukumbu za Wagonjwa","nav.trends":"Mwenendo","nav.export":"Hamisha","nav.alerts":"Historia ya Maonyo","nav.calculator":"Hesabu","nav.protocols":"Itifaki","nav.nhanes":"Data ya NHANES",
     "auth.title":"Ingia","auth.sub":"Onyo la mapema kwa kila mgonjwa",
     "auth.email":"Barua pepe","auth.password":"Nywila",
     "auth.btn":"Ingia","auth.mfa_note":"Weka nambari yako ya uthibitishaji wa tarakimu 6",
@@ -1068,6 +1128,7 @@ const NAV_ITEMS = [
   {id:"alerts",      icon:"🔔", mobile:true, badge:"!", badgeCls:"red"},
   {id:"calculator",  icon:"⚗", mobile:false},
   {id:"protocols",   icon:"📋", mobile:false},
+  {id:"nhanes",      icon:"📊", mobile:false},
 ];
 
 // ── Client-side rate limiter ──────────────────────────────────────
@@ -1219,6 +1280,7 @@ function buildNav(){
     {label:"Research",items:["evidence","roadmap","readiness","threshold"]},
     {label:"Engineering",items:["backlog","security"]},
     {label:"Surveillance",items:["surveillance"]},
+    {label:"Population Data",items:["nhanes"]},
   ];
   let html="";
   sections.forEach(sec=>{
@@ -3383,6 +3445,331 @@ document.addEventListener('DOMContentLoaded', () => {
 
 console.log('[SepsisVitals] Security layers initialised: RateLimiter, KeyVault, PromptGuard, WebhookGuard, SecureStore');
 
+</script>
+<script src="data/nhanes.js"></script>
+<script>
+// NHANES Benchmarking Module
+// Note: All data rendered is from static NHANES population statistics — no user-generated content.
+
+function renderNHANES() {
+  if (typeof NHANES === 'undefined') return;
+  var age = parseInt(document.getElementById('nh-age').value) || 55;
+  var sex = document.getElementById('nh-sex').value || 'Male';
+  var ageGroup = NHANES.getAgeGroup(age);
+
+  var vitals = {};
+  var tempEl = document.getElementById('i-temp');
+  var hrEl = document.getElementById('i-hr');
+  var rrEl = document.getElementById('i-rr');
+  var sbpEl = document.getElementById('i-sbp');
+  var spo2El = document.getElementById('i-spo2');
+  if (tempEl && tempEl.value) vitals.temperature = parseFloat(tempEl.value);
+  if (hrEl && hrEl.value) vitals.heart_rate = parseInt(hrEl.value);
+  if (rrEl && rrEl.value) vitals.resp_rate = parseInt(rrEl.value);
+  if (sbpEl && sbpEl.value) vitals.sbp = parseInt(sbpEl.value);
+  if (spo2El && spo2El.value) vitals.spo2 = parseInt(spo2El.value);
+
+  var benchmarks = NHANES.getCompleteBenchmark(vitals, age, sex);
+  var riskProfile = NHANES.getRiskProfile(age, sex, 'Non-Hispanic White', []);
+
+  var comp = document.getElementById('nh-comparison');
+  if (!comp) return;
+
+  var vitalDefs = [
+    { key: 'sbp', label: 'Systolic BP', unit: 'mmHg', dataset: NHANES.BP_SYSTOLIC },
+    { key: 'heart_rate', label: 'Heart Rate', unit: 'bpm', dataset: NHANES.HEART_RATE },
+    { key: 'resp_rate', label: 'Resp Rate', unit: '/min', dataset: NHANES.RESPIRATORY_RATE },
+    { key: 'temperature', label: 'Temperature', unit: '\u00b0C', dataset: NHANES.TEMPERATURE },
+    { key: 'spo2', label: 'SpO2', unit: '%', dataset: NHANES.SPO2 }
+  ];
+
+  // Build comparison cards using DOM methods
+  comp.textContent = '';
+  var grid = document.createElement('div');
+  grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px';
+
+  vitalDefs.forEach(function(vd) {
+    var dist = vd.dataset[sex] ? vd.dataset[sex][ageGroup] : null;
+    if (!dist) return;
+    var val = vitals[vd.key];
+    var pct = val != null ? NHANES.getPercentile(val, dist) : null;
+    var color = 'var(--text0)', barColor = 'var(--green)';
+    if (pct !== null) {
+      if (pct < 5 || pct > 95) { color = 'var(--red)'; barColor = 'var(--red)'; }
+      else if (pct < 15 || pct > 85) { color = 'var(--amber)'; barColor = 'var(--amber)'; }
+    }
+
+    var card = document.createElement('div');
+    card.style.cssText = 'background:var(--bg1);border:1px solid var(--b1);border-radius:var(--r);padding:12px';
+
+    var lbl = document.createElement('div');
+    lbl.style.cssText = 'font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text2);margin-bottom:6px';
+    lbl.textContent = vd.label;
+    card.appendChild(lbl);
+
+    var valEl = document.createElement('div');
+    valEl.style.cssText = 'font-family:var(--ui);font-size:20px;font-weight:700;color:' + color;
+    valEl.textContent = val != null ? val + ' ' + vd.unit : '\u2014';
+    card.appendChild(valEl);
+
+    if (pct !== null) {
+      var barWrap = document.createElement('div');
+      barWrap.style.cssText = 'margin-top:6px;height:4px;background:var(--bg3);border-radius:2px;overflow:visible;position:relative';
+      var marker = document.createElement('div');
+      marker.style.cssText = 'position:absolute;left:' + pct + '%;top:-2px;width:3px;height:8px;background:' + barColor + ';border-radius:1px';
+      barWrap.appendChild(marker);
+      card.appendChild(barWrap);
+
+      var pctLabel = document.createElement('div');
+      pctLabel.style.cssText = 'font-size:10px;color:var(--text2);margin-top:6px';
+      pctLabel.textContent = pct + 'th percentile for ' + ageGroup + ' ' + sex;
+      card.appendChild(pctLabel);
+    } else {
+      var hint = document.createElement('div');
+      hint.style.cssText = 'font-size:10px;color:var(--text2);margin-top:4px';
+      hint.textContent = 'Enter vitals in Console to compare';
+      card.appendChild(hint);
+    }
+
+    var meanLabel = document.createElement('div');
+    meanLabel.style.cssText = 'font-size:10px;color:var(--text2);margin-top:4px';
+    meanLabel.textContent = 'Pop. mean: ' + dist.mean + ' ' + vd.unit;
+    card.appendChild(meanLabel);
+
+    grid.appendChild(card);
+  });
+  comp.appendChild(grid);
+
+  // Sepsis risk summary
+  var riskBox = document.createElement('div');
+  riskBox.style.cssText = 'margin-top:14px;padding:14px;background:var(--bg1);border:1px solid var(--b1);border-radius:var(--r)';
+  var rTitle = document.createElement('div');
+  rTitle.style.cssText = 'font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text2);margin-bottom:6px';
+  rTitle.textContent = 'Population Sepsis Incidence';
+  riskBox.appendChild(rTitle);
+  var rVal = document.createElement('div');
+  rVal.style.cssText = 'font-family:var(--ui);font-size:18px;font-weight:700;color:var(--amber)';
+  rVal.textContent = riskProfile.populationPrevalence + ' per 100,000';
+  riskBox.appendChild(rVal);
+  var rSub = document.createElement('div');
+  rSub.style.cssText = 'font-size:11px;color:var(--text2);margin-top:4px';
+  rSub.textContent = 'for age group ' + ageGroup + ' \u00b7 Mortality rate: ' + (riskProfile.mortalityRate * 100).toFixed(1) + '%';
+  riskBox.appendChild(rSub);
+  comp.appendChild(riskBox);
+
+  drawNHDistribution();
+  drawNHRiskFactors();
+  drawNHHeatmap();
+}
+
+function drawNHDistribution() {
+  if (typeof NHANES === 'undefined') return;
+  var canvas = document.getElementById('nh-dist-canvas');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = 200 * dpr;
+  ctx.scale(dpr, dpr);
+  var W = rect.width, H = 200;
+
+  var age = parseInt(document.getElementById('nh-age').value) || 55;
+  var sex = document.getElementById('nh-sex').value || 'Male';
+  var vitalKey = document.getElementById('nh-vital-select').value || 'sbp';
+  var ageGroup = NHANES.getAgeGroup(age);
+
+  var dataMap = { sbp: NHANES.BP_SYSTOLIC, dbp: NHANES.BP_DIASTOLIC, hr: NHANES.HEART_RATE, rr: NHANES.RESPIRATORY_RATE, temp: NHANES.TEMPERATURE, spo2: NHANES.SPO2 };
+  var dist = dataMap[vitalKey] ? (dataMap[vitalKey][sex] ? dataMap[vitalKey][sex][ageGroup] : null) : null;
+  if (!dist) { ctx.fillStyle = '#4a6080'; ctx.font = '12px JetBrains Mono'; ctx.fillText('No data', 20, 100); return; }
+
+  var points = NHANES.generateDistributionCurve(dist, 120);
+  var pad = { top: 20, right: 20, bottom: 36, left: 40 };
+  var cW = W - pad.left - pad.right, cH = H - pad.top - pad.bottom;
+
+  ctx.fillStyle = '#080f1a';
+  ctx.fillRect(0, 0, W, H);
+
+  var maxY = 0;
+  points.forEach(function(p) { if (p.y > maxY) maxY = p.y; });
+  var minX = points[0].x, maxX = points[points.length - 1].x;
+
+  function xP(v) { return pad.left + ((v - minX) / (maxX - minX)) * cW; }
+  function yP(v) { return pad.top + cH - (v / maxY) * cH; }
+
+  // Area fill
+  var grad = ctx.createLinearGradient(0, pad.top, 0, H - pad.bottom);
+  grad.addColorStop(0, 'rgba(0,255,157,0.15)');
+  grad.addColorStop(1, 'rgba(0,255,157,0.01)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(xP(points[0].x), H - pad.bottom);
+  points.forEach(function(p) { ctx.lineTo(xP(p.x), yP(p.y)); });
+  ctx.lineTo(xP(points[points.length - 1].x), H - pad.bottom);
+  ctx.closePath();
+  ctx.fill();
+
+  // Curve
+  ctx.strokeStyle = '#00ff9d';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  points.forEach(function(p, i) { ctx[i === 0 ? 'moveTo' : 'lineTo'](xP(p.x), yP(p.y)); });
+  ctx.stroke();
+
+  // Percentile markers
+  var markers = [
+    { val: dist.p5, label: 'P5', color: '#ff3b5c' },
+    { val: dist.p25, label: 'P25', color: '#ffb830' },
+    { val: dist.p50, label: 'P50', color: '#38b4ff' },
+    { val: dist.p75, label: 'P75', color: '#ffb830' },
+    { val: dist.p95, label: 'P95', color: '#ff3b5c' }
+  ];
+  markers.forEach(function(m) {
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = m.color;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(xP(m.val), pad.top);
+    ctx.lineTo(xP(m.val), H - pad.bottom);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = m.color;
+    ctx.font = '9px JetBrains Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText(m.label, xP(m.val), H - pad.bottom + 12);
+    ctx.fillText(String(m.val), xP(m.val), H - pad.bottom + 24);
+  });
+
+  // Stats below
+  var statsEl = document.getElementById('nh-dist-stats');
+  if (statsEl) {
+    var units = { sbp: 'mmHg', dbp: 'mmHg', hr: 'bpm', rr: '/min', temp: '\u00b0C', spo2: '%' };
+    statsEl.textContent = '';
+    ['mean','sd','p5','p25','p50','p75','p95'].forEach(function(k) {
+      var box = document.createElement('div');
+      box.style.cssText = 'background:var(--bg1);border:1px solid var(--b1);border-radius:var(--r);padding:8px;text-align:center';
+      var kLabel = document.createElement('div');
+      kLabel.style.cssText = 'font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:var(--text2)';
+      kLabel.textContent = k.toUpperCase();
+      box.appendChild(kLabel);
+      var kVal = document.createElement('div');
+      kVal.style.cssText = 'font-family:var(--ui);font-size:14px;font-weight:700;color:var(--text0)';
+      kVal.textContent = String(dist[k]);
+      box.appendChild(kVal);
+      var kUnit = document.createElement('div');
+      kUnit.style.cssText = 'font-size:8px;color:var(--text2)';
+      kUnit.textContent = units[vitalKey];
+      box.appendChild(kUnit);
+      statsEl.appendChild(box);
+    });
+  }
+}
+
+function drawNHRiskFactors() {
+  if (typeof NHANES === 'undefined') return;
+  var canvas = document.getElementById('nh-risk-canvas');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = 260 * dpr;
+  ctx.scale(dpr, dpr);
+  var W = rect.width, H = 260;
+
+  ctx.fillStyle = '#080f1a';
+  ctx.fillRect(0, 0, W, H);
+
+  var age = parseInt(document.getElementById('nh-age').value) || 55;
+  var ageGroup = NHANES.getAgeGroup(age);
+  var factors = Object.entries(NHANES.SEPSIS_RISK_FACTORS);
+  var barH = 28, gap = 8, padL = 160, padR = 60, padT = 10;
+  var colors = ['#00ff9d', '#38b4ff', '#ffb830', '#b86fff', '#ff3b5c', '#00ff9d', '#ffb830'];
+
+  factors.forEach(function(entry, i) {
+    var name = entry[0], data = entry[1];
+    var y = padT + i * (barH + gap);
+    var prev = data.by_age[ageGroup] || data.overall;
+    var barW = (W - padL - padR) * prev;
+
+    ctx.fillStyle = '#8ba8cc';
+    ctx.font = '11px JetBrains Mono';
+    ctx.textAlign = 'right';
+    ctx.fillText(name.length > 18 ? name.substring(0, 18) + '\u2026' : name, padL - 10, y + barH / 2 + 4);
+
+    ctx.fillStyle = colors[i % colors.length];
+    ctx.globalAlpha = 0.7;
+    ctx.beginPath();
+    ctx.roundRect(padL, y, Math.max(barW, 2), barH, 3);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = '#e8f4ff';
+    ctx.font = 'bold 11px JetBrains Mono';
+    ctx.textAlign = 'left';
+    ctx.fillText((prev * 100).toFixed(1) + '%', padL + barW + 8, y + barH / 2 + 4);
+
+    ctx.fillStyle = '#4a6080';
+    ctx.font = '9px JetBrains Mono';
+    ctx.fillText(data.sepsis_risk_multiplier + 'x', W - 30, y + barH / 2 + 4);
+  });
+}
+
+function drawNHHeatmap() {
+  if (typeof NHANES === 'undefined') return;
+  var el = document.getElementById('nh-heatmap');
+  if (!el) return;
+  el.textContent = '';
+
+  var table = document.createElement('table');
+  table.style.cssText = 'width:100%;border-collapse:collapse;font-size:11px';
+
+  var thead = document.createElement('thead');
+  var hRow = document.createElement('tr');
+  ['Age', 'Male SBP', 'Female SBP'].forEach(function(txt) {
+    var th = document.createElement('th');
+    th.style.cssText = 'padding:8px;text-align:center;color:var(--text2);font-size:9px;letter-spacing:.1em;text-transform:uppercase';
+    if (txt === 'Age') th.style.textAlign = 'left';
+    th.textContent = txt;
+    hRow.appendChild(th);
+  });
+  thead.appendChild(hRow);
+  table.appendChild(thead);
+
+  var tbody = document.createElement('tbody');
+  NHANES.AGE_GROUPS.forEach(function(ag) {
+    var m = NHANES.BP_SYSTOLIC.Male[ag];
+    var f = NHANES.BP_SYSTOLIC.Female[ag];
+    var tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid var(--b1)';
+
+    var tdAge = document.createElement('td');
+    tdAge.style.cssText = 'padding:8px;color:var(--text1)';
+    tdAge.textContent = ag;
+    tr.appendChild(tdAge);
+
+    [m, f].forEach(function(d) {
+      var td = document.createElement('td');
+      var bg = d.mean >= 140 ? 'rgba(255,59,92,.15)' : d.mean >= 130 ? 'rgba(255,184,48,.12)' : 'rgba(0,255,157,.08)';
+      var fg = d.mean >= 140 ? 'var(--red)' : d.mean >= 130 ? 'var(--amber)' : 'var(--green)';
+      td.style.cssText = 'padding:8px;text-align:center;background:' + bg + ';color:' + fg + ';font-weight:700';
+      td.textContent = String(d.mean);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  el.appendChild(table);
+}
+
+// Hook into setView to init NHANES when that tab is opened
+(function() {
+  var _sv = setView;
+  setView = function(id) {
+    _sv(id);
+    if (id === 'nhanes') renderNHANES();
+  };
+})();
 </script>
 </body>
 </html>

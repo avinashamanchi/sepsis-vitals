@@ -29,6 +29,7 @@ htmlcov/
 
 # ── Data (partner data never committed) ──
 data/
+!docs/data/
 *.csv
 *.parquet
 *.feather
