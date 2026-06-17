@@ -58,7 +58,7 @@ class TestSyntheticData:
         from sepsis_vitals.ml.synthetic_data import generate_dataset
 
         df = generate_dataset(n_patients=50, seed=42)
-        for comorb in ["has_hypertension", "has_diabetes", "has_copd", "has_heart_failure"]:
+        for comorb in ["has_hypertension", "has_diabetes", "has_ckd", "has_copd", "has_heart_failure"]:
             assert comorb in df.columns
             assert df[comorb].isin([0, 1]).all()
 

@@ -73,7 +73,7 @@ SCORE_FEATURES = ["qsofa", "news2_computed", "sirs_computed", "shock_index_compu
 
 # Demographic / comorbidity features
 DEMOGRAPHIC_FEATURES = ["age_years"]
-COMORBIDITY_FEATURES = ["has_hypertension", "has_diabetes", "has_copd", "has_heart_failure"]
+COMORBIDITY_FEATURES = ["has_hypertension", "has_diabetes", "has_ckd", "has_copd", "has_heart_failure"]
 
 # Temporal features
 TEMPORAL_FEATURES = ["obs_gap_min"]
@@ -427,7 +427,7 @@ def train_single_model(
         version="1.0.0",
         description=f"{name} model trained on synthetic clinical data for sepsis identification",
         metrics=metrics,
-        training_data=f"Synthetic dataset based on MIMIC-III distributions",
+        training_data=f"Synthetic dataset calibrated to NHANES population distributions",
         fairness_notes="Trained with demographic features; fairness audit recommended",
     )
 

@@ -2,7 +2,7 @@
   SEPSIS VITALS — MODEL EVALUATION REPORT
 ======================================================================
 
-  Generated: 2026-06-16T18:27:01.258406
+  Generated: 2026-06-17T11:00:57.009843
   Best Model: GradientBoosting (v1.0.0)
   Calibrated: Yes
 
@@ -11,51 +11,51 @@
 ──────────────────────────────────────────────────────────────────────
   Model                   AUROC    AUPRC     Sens     Spec       F1     Time
   ────────────────────────────────────────────────────────────
-  RandomForest           0.9683   0.9206   0.7671   0.9938   0.8508   108.0s
-  GradientBoosting       0.9730   0.9291   0.7923   0.9918   0.8611    54.4s ***
-  LogisticRegression     0.9667   0.9091   0.7794   0.9871   0.8402     1.1s
+  RandomForest           0.9897   0.9742   0.8785   0.9912   0.9183    98.8s
+  GradientBoosting       0.9913   0.9774   0.8983   0.9892   0.9255    50.8s ***
+  LogisticRegression     0.9888   0.9715   0.8905   0.9852   0.9138     1.3s
 
 ──────────────────────────────────────────────────────────────────────
   TEST SET PERFORMANCE (Best Model)
 ──────────────────────────────────────────────────────────────────────
-  AUROC:              0.9740
-  AUPRC:              0.9274
-  Accuracy:           0.9664
-  Sensitivity:        0.8148
-  Specificity:        0.9895
-  PPV:                0.9224
-  NPV:                0.9722
-  F1 Score:           0.8653
-  Brier Score:        0.0269
+  AUROC:              0.9916
+  AUPRC:              0.9783
+  Accuracy:           0.9693
+  Sensitivity:        0.9022
+  Specificity:        0.9871
+  PPV:                0.9489
+  NPV:                0.9743
+  F1 Score:           0.9250
+  Brier Score:        0.0234
 
-  Sensitivity @ 90% Specificity: 0.9268
-  Sensitivity @ 95% Specificity: 0.8980
+  Sensitivity @ 90% Specificity: 0.9775
+  Sensitivity @ 95% Specificity: 0.9605
 
-  Calibration ECE:    0.0040 (excellent)
-  Brier Score:        0.0269
+  Calibration ECE:    0.0050 (excellent)
+  Brier Score:        0.0234
 
   Confusion Matrix:
-    TP:   2460  FP:    207
-    FN:    559  TN:  19549
+    TP:   4252  FP:    229
+    FN:    461  TN:  17498
 
 ──────────────────────────────────────────────────────────────────────
   TOP FEATURES (SHAP Importance)
 ──────────────────────────────────────────────────────────────────────
-   1. news2_computed                 0.4346  ██████████████████████████████
-   2. temperature_roll_mean          0.1108  ███████
-   3. sirs_computed                  0.1034  ███████
-   4. resp_rate_roll_mean            0.0576  ███
-   5. heart_rate_roll_mean           0.0496  ███
-   6. map                            0.0483  ███
-   7. temperature                    0.0452  ███
-   8. gcs_roll_std                   0.0393  ██
-   9. dbp                            0.0186  █
-  10. spo2_roll_mean                 0.0184  █
-  11. gcs_roll_mean                  0.0139  
-  12. shock_index_computed           0.0114  
-  13. heart_rate                     0.0106  
-  14. age_years                      0.0076  
-  15. temperature_roll_std           0.0070  
+   1. temperature_roll_mean          0.5457  ██████████████████████████████
+   2. temperature                    0.4903  ██████████████████████████
+   3. age_years                      0.4146  ██████████████████████
+   4. heart_rate_roll_mean           0.3980  █████████████████████
+   5. spo2_roll_mean                 0.3738  ████████████████████
+   6. heart_rate                     0.3715  ████████████████████
+   7. news2_computed                 0.3234  █████████████████
+   8. resp_rate_roll_mean            0.1874  ██████████
+   9. spo2                           0.1583  ████████
+  10. spo2_roll_std                  0.1515  ████████
+  11. has_copd                       0.1353  ███████
+  12. temperature_roll_std           0.1333  ███████
+  13. resp_rate                      0.1328  ███████
+  14. gcs_roll_std                   0.1156  ██████
+  15. heart_rate_roll_std            0.1138  ██████
 
 ======================================================================
   END OF REPORT

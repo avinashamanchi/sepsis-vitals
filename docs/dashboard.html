@@ -297,6 +297,18 @@ textarea:focus{border-color:var(--green)}
 .rdout-val.warn{color:var(--amber)}
 .rdout-val.bad{color:var(--red)}
 
+/* ── ML Predict: comorbidity checkboxes (large touch targets) ── */
+.ml-comorb-label{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg1);border:1px solid var(--b1);border-radius:var(--r);cursor:pointer;font-size:12px;color:var(--text1);transition:all .15s;-webkit-tap-highlight-color:transparent}
+.ml-comorb-label:active{background:var(--bg4)}
+.ml-comorb-label input[type=checkbox]{width:18px;height:18px;accent-color:var(--green);flex-shrink:0}
+.ml-comorb-label input[type=checkbox]:checked + span{color:var(--text0);font-weight:700}
+
+/* ── ML Alert Banner ── */
+.ml-banner-low{background:rgba(0,255,157,.1);border:2px solid rgba(0,255,157,.3);color:var(--green)}
+.ml-banner-moderate{background:rgba(56,180,255,.1);border:2px solid rgba(56,180,255,.3);color:var(--blue)}
+.ml-banner-high{background:rgba(255,184,48,.12);border:2px solid rgba(255,184,48,.4);color:var(--amber)}
+.ml-banner-critical{background:rgba(255,59,92,.15);border:2px solid rgba(255,59,92,.5);color:var(--red);animation:alarm-pulse 1.4s infinite}
+
 /* ── Score matrix ── */
 .score-matrix{display:grid;grid-template-columns:120px repeat(4,1fr);gap:1px;background:var(--b1);border:1px solid var(--b1);border-radius:var(--rl);overflow:hidden;font-size:11px}
 .sm-cell{background:var(--bg3);padding:9px 10px}
@@ -1047,50 +1059,73 @@ textarea:focus{border-color:var(--green)}
     <!-- ── ML Prediction ── -->
     <div class="view" id="view-mlpredict">
       <div class="ph">
-        <div class="ph-title">AI Sepsis Prediction</div>
-        <div class="ph-sub">Machine learning model with SHAP explanations and confidence intervals</div>
+        <div class="ph-title" data-i18n="ml.title">Sepsis Risk Assessment</div>
+        <div class="ph-sub" data-i18n="ml.subtitle">NHANES-calibrated ML model with clinical decision support</div>
       </div>
 
-      <!-- Model Status -->
-      <div class="card" id="ml-status-card">
-        <div class="card-title green">Model Status</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
-          <div class="stat-tile"><div class="stat-lbl">Model</div><div class="stat-val green" id="ml-model-name" style="font-size:14px">--</div><div class="stat-unit">active</div></div>
-          <div class="stat-tile"><div class="stat-lbl">AUROC</div><div class="stat-val green" id="ml-auroc">--</div><div class="stat-unit">test set</div></div>
-          <div class="stat-tile"><div class="stat-lbl">Sensitivity</div><div class="stat-val green" id="ml-sensitivity">--</div><div class="stat-unit">recall</div></div>
-        </div>
+      <!-- Quick Risk Banner (shown after prediction) -->
+      <div id="ml-alert-banner" style="display:none;padding:16px 20px;border-radius:var(--rl);margin-bottom:14px;text-align:center;font-family:var(--ui);cursor:pointer" onclick="document.getElementById('ml-result-card').scrollIntoView({behavior:'smooth'})">
+        <div style="font-size:48px;font-weight:800;line-height:1" id="ml-banner-pct">--</div>
+        <div style="font-size:14px;font-weight:700;letter-spacing:.1em;margin-top:4px" id="ml-banner-level">--</div>
+        <div style="font-size:11px;margin-top:6px;opacity:.8" id="ml-banner-action">--</div>
       </div>
 
-      <!-- Vital Input -->
-      <div class="card">
-        <div class="card-title blue">Enter Patient Vitals</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
-          <div class="igroup"><label class="ilabel">Temp</label><div class="irow"><input type="number" id="ml-temp" step=".1" min="25" max="45" placeholder="38.5"><span class="iunit">°C</span></div></div>
-          <div class="igroup"><label class="ilabel">Heart Rate</label><div class="irow"><input type="number" id="ml-hr" step="1" min="0" max="350" placeholder="110"><span class="iunit">bpm</span></div></div>
-          <div class="igroup"><label class="ilabel">Resp Rate</label><div class="irow"><input type="number" id="ml-rr" step="1" min="0" max="80" placeholder="24"><span class="iunit">/min</span></div></div>
-          <div class="igroup"><label class="ilabel">Sys BP</label><div class="irow"><input type="number" id="ml-sbp" step="1" min="30" max="300" placeholder="95"><span class="iunit">mmHg</span></div></div>
-          <div class="igroup"><label class="ilabel">Dia BP</label><div class="irow"><input type="number" id="ml-dbp" step="1" min="20" max="160" placeholder="58"><span class="iunit">mmHg</span></div></div>
-          <div class="igroup"><label class="ilabel">SpO2</label><div class="irow"><input type="number" id="ml-spo2" step="1" min="0" max="100" placeholder="94"><span class="iunit">%</span></div></div>
-          <div class="igroup"><label class="ilabel">GCS</label><div class="irow"><input type="number" id="ml-gcs" step="1" min="3" max="15" placeholder="14"><span class="iunit">/15</span></div></div>
-          <div class="igroup"><label class="ilabel">MAP</label><div class="irow"><input type="number" id="ml-map" step="1" min="30" max="180" placeholder="70"><span class="iunit">mmHg</span></div></div>
-          <div class="igroup"><label class="ilabel">Age</label><div class="irow"><input type="number" id="ml-age" step="1" min="18" max="100" placeholder="65"><span class="iunit">yrs</span></div></div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
-          <div class="igroup"><label class="ilabel">Patient ID</label><div class="irow"><input type="text" id="ml-pid" placeholder="PT-001"></div></div>
-          <div class="igroup"><label class="ilabel">Comorbidities</label>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
-              <label style="font-size:11px;color:var(--text1);display:flex;align-items:center;gap:4px"><input type="checkbox" id="ml-htn"> HTN</label>
-              <label style="font-size:11px;color:var(--text1);display:flex;align-items:center;gap:4px"><input type="checkbox" id="ml-dm"> DM</label>
-              <label style="font-size:11px;color:var(--text1);display:flex;align-items:center;gap:4px"><input type="checkbox" id="ml-copd"> COPD</label>
-              <label style="font-size:11px;color:var(--text1);display:flex;align-items:center;gap:4px"><input type="checkbox" id="ml-hf"> HF</label>
-            </div>
+      <!-- Model Status (compact) -->
+      <div class="card" id="ml-status-card" style="padding:12px 16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:8px;height:8px;border-radius:50%;background:var(--green)" id="ml-status-dot"></div>
+            <span style="font-size:12px;font-weight:700;color:var(--text0)" id="ml-model-name">Loading...</span>
+          </div>
+          <div style="display:flex;gap:12px;font-size:11px;color:var(--text2)">
+            <span>AUROC: <b style="color:var(--green)" id="ml-auroc">--</b></span>
+            <span>Sens: <b style="color:var(--green)" id="ml-sensitivity">--</b></span>
           </div>
         </div>
-        <div class="btn-row">
-          <button class="btn primary" onclick="runMLPredict()">Predict Sepsis Risk</button>
-          <button class="btn" onclick="loadSepticDemo()">Load Septic Demo</button>
-          <button class="btn" onclick="loadNormalDemo()">Load Normal Demo</button>
-          <button class="btn danger" onclick="clearMLInputs()">Clear</button>
+      </div>
+
+      <!-- Vital Input (redesigned for low-resource hospitals) -->
+      <div class="card">
+        <div class="card-title blue" data-i18n="ml.enterVitals">Enter Patient Vitals</div>
+
+        <!-- Primary vitals - 2-column grid for better mobile usability -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="igroup"><label class="ilabel" style="font-size:11px;font-weight:700;color:var(--text1)">Temperature</label><div class="irow" style="padding:4px 10px"><input type="number" id="ml-temp" step=".1" min="25" max="45" placeholder="37.0" style="font-size:16px;padding:10px 0"><span class="iunit" style="font-size:12px">°C</span></div></div>
+          <div class="igroup"><label class="ilabel" style="font-size:11px;font-weight:700;color:var(--text1)">Heart Rate</label><div class="irow" style="padding:4px 10px"><input type="number" id="ml-hr" step="1" min="0" max="350" placeholder="80" style="font-size:16px;padding:10px 0"><span class="iunit" style="font-size:12px">bpm</span></div></div>
+          <div class="igroup"><label class="ilabel" style="font-size:11px;font-weight:700;color:var(--text1)">Respiratory Rate</label><div class="irow" style="padding:4px 10px"><input type="number" id="ml-rr" step="1" min="0" max="80" placeholder="16" style="font-size:16px;padding:10px 0"><span class="iunit" style="font-size:12px">/min</span></div></div>
+          <div class="igroup"><label class="ilabel" style="font-size:11px;font-weight:700;color:var(--text1)">SpO2</label><div class="irow" style="padding:4px 10px"><input type="number" id="ml-spo2" step="1" min="0" max="100" placeholder="97" style="font-size:16px;padding:10px 0"><span class="iunit" style="font-size:12px">%</span></div></div>
+          <div class="igroup"><label class="ilabel" style="font-size:11px;font-weight:700;color:var(--text1)">Systolic BP</label><div class="irow" style="padding:4px 10px"><input type="number" id="ml-sbp" step="1" min="30" max="300" placeholder="120" style="font-size:16px;padding:10px 0" oninput="autoComputeMAP()"><span class="iunit" style="font-size:12px">mmHg</span></div></div>
+          <div class="igroup"><label class="ilabel" style="font-size:11px;font-weight:700;color:var(--text1)">Diastolic BP</label><div class="irow" style="padding:4px 10px"><input type="number" id="ml-dbp" step="1" min="20" max="160" placeholder="70" style="font-size:16px;padding:10px 0" oninput="autoComputeMAP()"><span class="iunit" style="font-size:12px">mmHg</span></div></div>
+          <div class="igroup"><label class="ilabel" style="font-size:11px;font-weight:700;color:var(--text1)">GCS</label><div class="irow" style="padding:4px 10px"><input type="number" id="ml-gcs" step="1" min="3" max="15" placeholder="15" style="font-size:16px;padding:10px 0"><span class="iunit" style="font-size:12px">/15</span></div></div>
+          <div class="igroup"><label class="ilabel" style="font-size:11px;font-weight:700;color:var(--text1)">MAP <span style="font-size:9px;color:var(--text2);font-weight:400">(auto)</span></label><div class="irow" style="padding:4px 10px;opacity:.7"><input type="number" id="ml-map" step="1" min="30" max="180" placeholder="auto" style="font-size:16px;padding:10px 0" readonly><span class="iunit" style="font-size:12px">mmHg</span></div></div>
+        </div>
+
+        <!-- Patient info row -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+          <div class="igroup"><label class="ilabel" style="font-size:11px;font-weight:700;color:var(--text1)">Age</label><div class="irow" style="padding:4px 10px"><input type="number" id="ml-age" step="1" min="18" max="100" placeholder="55" style="font-size:16px;padding:10px 0"><span class="iunit" style="font-size:12px">yrs</span></div></div>
+          <div class="igroup"><label class="ilabel" style="font-size:11px;font-weight:700;color:var(--text1)">Patient ID</label><div class="irow" style="padding:4px 10px"><input type="text" id="ml-pid" placeholder="PT-001" style="font-size:16px;padding:10px 0"></div></div>
+        </div>
+
+        <!-- Comorbidities - larger checkboxes for touch -->
+        <div style="margin-top:14px">
+          <label class="ilabel" style="font-size:11px;font-weight:700;color:var(--text1);margin-bottom:8px;display:block">Comorbidities</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+            <label class="ml-comorb-label"><input type="checkbox" id="ml-htn"> <span>Hypertension</span></label>
+            <label class="ml-comorb-label"><input type="checkbox" id="ml-dm"> <span>Diabetes</span></label>
+            <label class="ml-comorb-label"><input type="checkbox" id="ml-ckd"> <span>CKD</span></label>
+            <label class="ml-comorb-label"><input type="checkbox" id="ml-copd"> <span>COPD</span></label>
+            <label class="ml-comorb-label"><input type="checkbox" id="ml-hf"> <span>Heart Failure</span></label>
+          </div>
+        </div>
+
+        <!-- Action buttons - large, touch-friendly -->
+        <div style="margin-top:16px;display:grid;gap:8px">
+          <button class="btn primary" onclick="runMLPredict()" style="padding:14px;font-size:15px;font-weight:800;letter-spacing:.06em;border-radius:var(--rl);width:100%">ASSESS SEPSIS RISK</button>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+            <button class="btn" onclick="loadSepticDemo()" style="padding:10px;font-size:11px">Septic Demo</button>
+            <button class="btn" onclick="loadNormalDemo()" style="padding:10px;font-size:11px">Normal Demo</button>
+            <button class="btn danger" onclick="clearMLInputs()" style="padding:10px;font-size:11px">Clear All</button>
+          </div>
         </div>
       </div>
 
@@ -1099,12 +1134,12 @@ textarea:focus{border-color:var(--green)}
         <div class="card-title" id="ml-result-title">Prediction Result</div>
 
         <!-- Risk Gauge -->
-        <div style="text-align:center;margin:20px 0">
+        <div style="text-align:center;margin:16px 0">
           <div style="position:relative;display:inline-block">
             <canvas id="ml-gauge" width="280" height="160"></canvas>
             <div style="position:absolute;bottom:10px;left:50%;transform:translateX(-50%);text-align:center">
-              <div style="font-family:var(--ui);font-size:36px;font-weight:800" id="ml-risk-pct">--</div>
-              <div style="font-size:10px;color:var(--text2);letter-spacing:.1em;text-transform:uppercase" id="ml-risk-label">RISK</div>
+              <div style="font-family:var(--ui);font-size:42px;font-weight:800" id="ml-risk-pct">--</div>
+              <div style="font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase" id="ml-risk-label">RISK</div>
             </div>
           </div>
         </div>
@@ -1121,22 +1156,22 @@ textarea:focus{border-color:var(--green)}
           </div>
         </div>
 
-        <!-- Clinical Scores -->
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:16px 0">
-          <div class="stat-tile" style="padding:10px"><div class="stat-lbl">qSOFA</div><div class="stat-val" id="ml-qsofa" style="font-size:22px">--</div><div class="stat-unit">/3</div></div>
-          <div class="stat-tile" style="padding:10px"><div class="stat-lbl">SIRS</div><div class="stat-val" id="ml-sirs" style="font-size:22px">--</div><div class="stat-unit">/3</div></div>
-          <div class="stat-tile" style="padding:10px"><div class="stat-lbl">NEWS2</div><div class="stat-val" id="ml-news2" style="font-size:22px">--</div><div class="stat-unit">score</div></div>
-          <div class="stat-tile" style="padding:10px"><div class="stat-lbl">Shock Idx</div><div class="stat-val" id="ml-si" style="font-size:22px">--</div><div class="stat-unit">HR/SBP</div></div>
+        <!-- Clinical Scores - 2x2 grid on mobile for readability -->
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:16px 0">
+          <div class="stat-tile" style="padding:12px"><div class="stat-lbl" style="font-size:10px">qSOFA</div><div class="stat-val" id="ml-qsofa" style="font-size:26px">--</div><div class="stat-unit">/3</div></div>
+          <div class="stat-tile" style="padding:12px"><div class="stat-lbl" style="font-size:10px">SIRS</div><div class="stat-val" id="ml-sirs" style="font-size:26px">--</div><div class="stat-unit">/3</div></div>
+          <div class="stat-tile" style="padding:12px"><div class="stat-lbl" style="font-size:10px">NEWS2</div><div class="stat-val" id="ml-news2" style="font-size:26px">--</div><div class="stat-unit">score</div></div>
+          <div class="stat-tile" style="padding:12px"><div class="stat-lbl" style="font-size:10px">Shock Idx</div><div class="stat-val" id="ml-si" style="font-size:26px">--</div><div class="stat-unit">HR/SBP</div></div>
         </div>
 
         <!-- Risk Factors -->
         <div class="card-title amber" style="margin-top:16px">Top Risk Factors</div>
         <div id="ml-risk-factors"></div>
 
-        <!-- Recommendation -->
-        <div style="margin-top:16px;background:var(--bg1);border:1px solid var(--b1);border-radius:var(--r);padding:14px">
-          <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text2);margin-bottom:8px">Clinical Recommendation</div>
-          <div id="ml-recommendation" style="font-size:12px;line-height:1.7;color:var(--text1)">--</div>
+        <!-- Recommendation (prominent) -->
+        <div id="ml-rec-box" style="margin-top:16px;border-radius:var(--rl);padding:16px;border:2px solid var(--b1);background:var(--bg1)">
+          <div style="font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--text2);margin-bottom:8px">Action Required</div>
+          <div id="ml-recommendation" style="font-size:13px;line-height:1.8;color:var(--text0);font-weight:500">--</div>
         </div>
       </div>
 
@@ -1161,7 +1196,7 @@ textarea:focus{border-color:var(--green)}
 
 const I18N = {
   en: {
-    "nav.console":"Nurse Console","nav.mlpredict":"ML Predict","nav.ai":"AI Analysis","nav.scores":"Score Lab",
+    "nav.console":"Nurse Console","nav.mlpredict":"Sepsis Screen","nav.ai":"AI Analysis","nav.scores":"Score Lab",
     "nav.he":"Health Econ","nav.evidence":"Evidence","nav.roadmap":"Roadmap",
     "nav.readiness":"Site Readiness","nav.threshold":"Thresholds",
     "nav.backlog":"Backlog","nav.security":"Security","nav.surveillance":"Surveillance","nav.patients":"Patient Log","nav.trends":"Trends","nav.export":"Export","nav.alerts":"Alert History","nav.calculator":"Calc","nav.protocols":"Protocols","nav.nhanes":"NHANES Data",
@@ -1174,7 +1209,7 @@ const I18N = {
     "dismiss.confirm":"Confirm dismiss",
   },
   sw: {
-    "nav.console":"Dashibodi ya Muuguzi","nav.mlpredict":"Utabiri wa ML","nav.ai":"Uchambuzi wa AI","nav.scores":"Majaribio ya Alama",
+    "nav.console":"Dashibodi ya Muuguzi","nav.mlpredict":"Uchunguzi wa Sepsis","nav.ai":"Uchambuzi wa AI","nav.scores":"Majaribio ya Alama",
     "nav.he":"Uchumi wa Afya","nav.evidence":"Ushahidi","nav.roadmap":"Mpango",
     "nav.readiness":"Utayari wa Tovuti","nav.threshold":"Viwango",
     "nav.backlog":"Orodha ya Kazi","nav.security":"Usalama","nav.surveillance":"Uangalizi","nav.patients":"Kumbukumbu za Wagonjwa","nav.trends":"Mwenendo","nav.export":"Hamisha","nav.alerts":"Historia ya Maonyo","nav.calculator":"Hesabu","nav.protocols":"Itifaki","nav.nhanes":"Data ya NHANES",
@@ -3903,6 +3938,19 @@ function initMLPredict() {
     });
 }
 
+function autoComputeMAP() {
+  const sbp = parseFloat(document.getElementById('ml-sbp').value);
+  const dbp = parseFloat(document.getElementById('ml-dbp').value);
+  const mapEl = document.getElementById('ml-map');
+  if (!isNaN(sbp) && !isNaN(dbp) && sbp > 0 && dbp > 0) {
+    mapEl.value = Math.round((sbp + 2 * dbp) / 3);
+    mapEl.parentElement.style.opacity = '1';
+  } else {
+    mapEl.value = '';
+    mapEl.parentElement.style.opacity = '.7';
+  }
+}
+
 function loadSepticDemo() {
   document.getElementById('ml-temp').value = '39.2';
   document.getElementById('ml-hr').value = '125';
@@ -3911,11 +3959,14 @@ function loadSepticDemo() {
   document.getElementById('ml-dbp').value = '48';
   document.getElementById('ml-spo2').value = '90';
   document.getElementById('ml-gcs').value = '12';
-  document.getElementById('ml-map').value = '60';
   document.getElementById('ml-age').value = '72';
   document.getElementById('ml-pid').value = 'PT-DEMO-SEPTIC';
   document.getElementById('ml-htn').checked = true;
   document.getElementById('ml-dm').checked = true;
+  document.getElementById('ml-ckd').checked = false;
+  document.getElementById('ml-copd').checked = false;
+  document.getElementById('ml-hf').checked = true;
+  autoComputeMAP();
 }
 
 function loadNormalDemo() {
@@ -3926,23 +3977,26 @@ function loadNormalDemo() {
   document.getElementById('ml-dbp').value = '72';
   document.getElementById('ml-spo2').value = '98';
   document.getElementById('ml-gcs').value = '15';
-  document.getElementById('ml-map').value = '88';
   document.getElementById('ml-age').value = '45';
   document.getElementById('ml-pid').value = 'PT-DEMO-NORMAL';
   document.getElementById('ml-htn').checked = false;
   document.getElementById('ml-dm').checked = false;
+  document.getElementById('ml-ckd').checked = false;
   document.getElementById('ml-copd').checked = false;
   document.getElementById('ml-hf').checked = false;
+  autoComputeMAP();
 }
 
 function clearMLInputs() {
   ['ml-temp','ml-hr','ml-rr','ml-sbp','ml-dbp','ml-spo2','ml-gcs','ml-map','ml-age','ml-pid'].forEach(id => {
     document.getElementById(id).value = '';
   });
-  ['ml-htn','ml-dm','ml-copd','ml-hf'].forEach(id => {
+  ['ml-htn','ml-dm','ml-ckd','ml-copd','ml-hf'].forEach(id => {
     document.getElementById(id).checked = false;
   });
   document.getElementById('ml-result-card').style.display = 'none';
+  document.getElementById('ml-alert-banner').style.display = 'none';
+  document.getElementById('ml-map').parentElement.style.opacity = '.7';
 }
 
 async function runMLPredict() {
@@ -3967,6 +4021,7 @@ async function runMLPredict() {
   const comorbidities = {
     has_hypertension: document.getElementById('ml-htn').checked ? 1 : 0,
     has_diabetes: document.getElementById('ml-dm').checked ? 1 : 0,
+    has_ckd: document.getElementById('ml-ckd').checked ? 1 : 0,
     has_copd: document.getElementById('ml-copd').checked ? 1 : 0,
     has_heart_failure: document.getElementById('ml-hf').checked ? 1 : 0,
   };
@@ -4075,6 +4130,20 @@ function displayMLPrediction(pred) {
   const colors = {low: 'var(--green)', moderate: 'var(--blue)', high: 'var(--amber)', critical: 'var(--red)'};
   const color = colors[level] || 'var(--text0)';
 
+  // Show alert banner at top
+  const banner = document.getElementById('ml-alert-banner');
+  banner.style.display = 'block';
+  banner.className = 'ml-banner-' + level;
+  document.getElementById('ml-banner-pct').textContent = (risk * 100).toFixed(0) + '%';
+  document.getElementById('ml-banner-level').textContent = level.toUpperCase() + ' SEPSIS RISK';
+  const actions = {
+    critical: 'IMMEDIATE ASSESSMENT REQUIRED - Tap for details',
+    high: 'URGENT REVIEW NEEDED - Tap for details',
+    moderate: 'Monitor closely - Tap for details',
+    low: 'Continue routine care - Tap for details'
+  };
+  document.getElementById('ml-banner-action').textContent = actions[level] || '';
+
   // Update risk percentage
   const pctEl = document.getElementById('ml-risk-pct');
   pctEl.textContent = (risk * 100).toFixed(1) + '%';
@@ -4088,6 +4157,10 @@ function displayMLPrediction(pred) {
   const titleEl = document.getElementById('ml-result-title');
   titleEl.className = 'card-title ' + (level === 'critical' || level === 'high' ? 'red' : level === 'moderate' ? 'amber' : 'green');
   titleEl.textContent = 'Prediction: ' + level.toUpperCase();
+
+  // Recommendation box border color
+  const recBox = document.getElementById('ml-rec-box');
+  recBox.style.borderColor = color;
 
   // Draw gauge
   drawGauge(risk, color);

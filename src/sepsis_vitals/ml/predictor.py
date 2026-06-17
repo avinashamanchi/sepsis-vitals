@@ -208,7 +208,7 @@ class SepsisPredictor:
         age_years : int, optional
             Patient age
         comorbidities : dict, optional
-            Dict of {has_hypertension, has_diabetes, has_copd, has_heart_failure}: 0/1
+            Dict of {has_hypertension, has_diabetes, has_ckd, has_copd, has_heart_failure}: 0/1
 
         Returns
         -------
@@ -344,11 +344,13 @@ class SepsisPredictor:
         if comorbidities:
             features["has_hypertension"] = comorbidities.get("has_hypertension", 0)
             features["has_diabetes"] = comorbidities.get("has_diabetes", 0)
+            features["has_ckd"] = comorbidities.get("has_ckd", 0)
             features["has_copd"] = comorbidities.get("has_copd", 0)
             features["has_heart_failure"] = comorbidities.get("has_heart_failure", 0)
         else:
             features["has_hypertension"] = 0
             features["has_diabetes"] = 0
+            features["has_ckd"] = 0
             features["has_copd"] = 0
             features["has_heart_failure"] = 0
 
