@@ -8,9 +8,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-import bcrypt
-import pyotp
-
 # ---------------------------------------------------------------------------
 # Password hashing
 # ---------------------------------------------------------------------------
@@ -18,11 +15,13 @@ import pyotp
 
 def hash_password(password: str) -> str:
     """Return a bcrypt hash of *password*."""
+    import bcrypt
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(password: str, hashed: str) -> bool:
     """Return True if *password* matches the bcrypt *hashed* value."""
+    import bcrypt
     return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
 
 
@@ -61,17 +60,20 @@ def check_permission(role: str, permission: str) -> None:
 
 def generate_totp_secret() -> str:
     """Return a base32-encoded random secret suitable for TOTP."""
+    import pyotp
     return pyotp.random_base32()
 
 
 def verify_totp(secret: str, code: str) -> bool:
     """Return True if *code* is a valid TOTP token for *secret*."""
+    import pyotp
     totp = pyotp.TOTP(secret)
     return totp.verify(code)
 
 
 def get_totp_uri(secret: str, email: str) -> str:
     """Return an ``otpauth://`` provisioning URI for *email*."""
+    import pyotp
     totp = pyotp.TOTP(secret)
     return totp.provisioning_uri(name=email, issuer_name="SepsisVitals")
 

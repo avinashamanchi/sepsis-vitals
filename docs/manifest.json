@@ -1,0 +1,23 @@
+{
+  "name": "Sepsis Vitals",
+  "short_name": "SepsisVitals",
+  "description": "AI-powered sepsis early warning system",
+  "start_url": "/sepsis-vitals/dashboard.html",
+  "display": "standalone",
+  "background_color": "#04080f",
+  "theme_color": "#04080f",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='192' height='192' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='24' fill='%2304080f'/%3E%3Crect x='76' y='36' width='40' height='120' rx='8' fill='%2300ff9d'/%3E%3Crect x='36' y='76' width='120' height='40' rx='8' fill='%2300ff9d'/%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='512' height='512' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='64' fill='%2304080f'/%3E%3Crect x='203' y='96' width='106' height='320' rx='20' fill='%2300ff9d'/%3E%3Crect x='96' y='203' width='320' height='106' rx='20' fill='%2300ff9d'/%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

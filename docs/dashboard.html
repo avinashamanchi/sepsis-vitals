@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<link rel="manifest" href="manifest.json">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <meta name="theme-color" content="#04080f">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -475,6 +476,7 @@ textarea:focus{border-color:var(--green)}
 
   <!-- Main -->
   <main class="main">
+    <div class="net-banner" id="offline-banner">Offline mode — using cached data</div>
     <div class="net-banner" id="net-banner">⚠ You are offline. Score-only mode active.</div>
 
     <!-- ── Console ── -->
@@ -1180,6 +1182,26 @@ textarea:focus{border-color:var(--green)}
         <div class="card-title blue">Prediction History</div>
         <div id="ml-history"></div>
         <canvas id="ml-trend-canvas" height="120" style="width:100%;margin-top:12px;border-radius:var(--r)"></canvas>
+      </div>
+
+      <!-- AI Clinical Copilot -->
+      <div class="card" id="ml-copilot-card">
+        <div class="card-title" style="color:#a78bfa">AI Clinical Copilot</div>
+        <p style="font-size:12px;color:var(--text2);margin-bottom:12px">Ask the AI for clinical decision support based on the current vitals.</p>
+        <textarea id="copilot-question" placeholder="Optional: Ask a specific clinical question..." style="width:100%;height:60px;background:var(--bg0);color:var(--text0);border:1px solid var(--b1);border-radius:var(--r);padding:10px;font-size:14px;resize:vertical;font-family:inherit;box-sizing:border-box"></textarea>
+        <button onclick="runCopilot()" style="width:100%;padding:14px;margin-top:8px;background:linear-gradient(135deg,#7c3aed,#a78bfa);color:#fff;border:none;border-radius:var(--r);cursor:pointer;font-size:15px;font-weight:700">Ask AI Copilot</button>
+        <div id="copilot-result" style="display:none;margin-top:12px">
+          <div id="copilot-analysis" style="font-size:13px;line-height:1.7;color:var(--text0);padding:12px;background:var(--bg0);border-radius:var(--r);border-left:3px solid #a78bfa"></div>
+          <div style="margin-top:10px">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#f59e0b;margin-bottom:6px">Key Concerns</div>
+            <ul id="copilot-concerns" style="font-size:12px;color:var(--text1);padding-left:18px;margin:0"></ul>
+          </div>
+          <div style="margin-top:10px">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#34d399;margin-bottom:6px">Suggested Actions</div>
+            <ul id="copilot-actions" style="font-size:12px;color:var(--text1);padding-left:18px;margin:0"></ul>
+          </div>
+          <div id="copilot-disclaimer" style="margin-top:10px;font-size:10px;color:var(--text2);font-style:italic;padding:8px;background:var(--bg1);border-radius:var(--r)"></div>
+        </div>
       </div>
     </div>
 
@@ -4368,6 +4390,126 @@ function drawTrendChart() {
     ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fillStyle = c; ctx.fill();
   });
 }
+
+window.addEventListener('online', () => document.getElementById('offline-banner').classList.remove('show'));
+window.addEventListener('offline', () => document.getElementById('offline-banner').classList.add('show'));
+if (!navigator.onLine) document.getElementById('offline-banner').classList.add('show');
+
+// ══════════════════════════════════════════════════════════════════
+// AI CLINICAL COPILOT
+// ══════════════════════════════════════════════════════════════════
+
+async function runCopilot() {
+  const apiBase = document.getElementById('ml-api-url')?.value || 'http://localhost:8000';
+  const vitals = {};
+  ['temperature','heart_rate','resp_rate','sbp','dbp','spo2','gcs','map'].forEach(v => {
+    const el = document.getElementById('ml-' + v.replace('_','-'));
+    if (el && el.value) vitals[v] = parseFloat(el.value);
+  });
+  if (Object.keys(vitals).length < 2) { alert('Enter at least 2 vitals first.'); return; }
+
+  const ageEl = document.getElementById('ml-age');
+  const age = ageEl && ageEl.value ? parseInt(ageEl.value) : null;
+  const comorbidities = {
+    has_hypertension: document.getElementById('ml-htn')?.checked ? 1 : 0,
+    has_diabetes: document.getElementById('ml-dm')?.checked ? 1 : 0,
+    has_ckd: document.getElementById('ml-ckd')?.checked ? 1 : 0,
+    has_copd: document.getElementById('ml-copd')?.checked ? 1 : 0,
+    has_heart_failure: document.getElementById('ml-hf')?.checked ? 1 : 0,
+  };
+  const question = document.getElementById('copilot-question')?.value || null;
+
+  const resultDiv = document.getElementById('copilot-result');
+  document.getElementById('copilot-analysis').innerHTML = '<span style="color:var(--text2)">Analyzing...</span>';
+  resultDiv.style.display = 'block';
+
+  try {
+    const resp = await fetch(apiBase + '/copilot', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({vitals, patient_id: 'dashboard', age_years: age, comorbidities, question})
+    });
+    if (!resp.ok) throw new Error('API error ' + resp.status);
+    const data = await resp.json();
+
+    document.getElementById('copilot-analysis').textContent = data.analysis || 'No analysis available.';
+    document.getElementById('copilot-concerns').innerHTML = (data.key_concerns || []).map(c => '<li style="margin-bottom:4px">' + c + '</li>').join('');
+    document.getElementById('copilot-actions').innerHTML = (data.suggested_actions || []).map(a => '<li style="margin-bottom:4px">' + a + '</li>').join('');
+    document.getElementById('copilot-disclaimer').textContent = data.disclaimer || '';
+  } catch(e) {
+    // Fallback: use local rule-based analysis
+    const q = qsofa(vitals), s = sirs(vitals);
+    const concerns = [];
+    const actions = [];
+    if (vitals.temperature && (vitals.temperature > 38.3 || vitals.temperature < 36.0))
+      concerns.push('Abnormal temperature (' + vitals.temperature + '°C)');
+    if (vitals.heart_rate && vitals.heart_rate > 100)
+      concerns.push('Tachycardia (HR ' + vitals.heart_rate + ' bpm)');
+    if (vitals.resp_rate && vitals.resp_rate > 22)
+      concerns.push('Tachypnea (RR ' + vitals.resp_rate + '/min)');
+    if (vitals.sbp && vitals.sbp <= 100)
+      concerns.push('Hypotension (SBP ' + vitals.sbp + ' mmHg)');
+    if (vitals.spo2 && vitals.spo2 < 94)
+      concerns.push('Hypoxemia (SpO2 ' + vitals.spo2 + '%)');
+    if (q >= 2) {
+      actions.push('IMMEDIATE clinical assessment — activate sepsis protocol');
+      actions.push('Obtain blood cultures, serum lactate');
+      actions.push('Broad-spectrum antibiotics within 1 hour');
+    } else if (q >= 1) {
+      actions.push('Urgent clinical review within 30 minutes');
+      actions.push('Check serum lactate and CBC');
+    } else {
+      actions.push('Continue routine monitoring per protocol');
+    }
+    if (concerns.length === 0) concerns.push('Vital signs within normal limits');
+
+    document.getElementById('copilot-analysis').textContent = 'qSOFA ' + q + '/3, SIRS ' + s + '/3. ' + concerns.length + ' concern(s) identified. (Offline mode — rule-based analysis)';
+    document.getElementById('copilot-concerns').innerHTML = concerns.map(c => '<li style="margin-bottom:4px">' + c + '</li>').join('');
+    document.getElementById('copilot-actions').innerHTML = actions.map(a => '<li style="margin-bottom:4px">' + a + '</li>').join('');
+    document.getElementById('copilot-disclaimer').textContent = 'Rule-based analysis (AI copilot offline). Not a substitute for clinical judgment.';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// WEBSOCKET REAL-TIME ALERTS
+// ══════════════════════════════════════════════════════════════════
+
+(function initWebSocket() {
+  const apiBase = document.getElementById('ml-api-url')?.value || 'http://localhost:8000';
+  const wsUrl = apiBase.replace(/^http/, 'ws') + '/ws/alerts';
+  let ws = null, retries = 0;
+
+  function connect() {
+    try {
+      ws = new WebSocket(wsUrl);
+      ws.onopen = () => { retries = 0; };
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'sepsis_alert') {
+            showRealtimeAlert(msg);
+          }
+        } catch(e) {}
+      };
+      ws.onclose = () => { if (retries < 5) { retries++; setTimeout(connect, 3000 * retries); } };
+      ws.onerror = () => { ws.close(); };
+    } catch(e) {}
+  }
+
+  function showRealtimeAlert(alert) {
+    const banner = document.getElementById('ml-alert-banner');
+    if (banner) {
+      const colors = {critical:'#dc2626',high:'#f59e0b'};
+      banner.style.background = colors[alert.risk_level] || '#f59e0b';
+      banner.innerHTML = '<strong>ALERT:</strong> Patient ' + (alert.patient_id || '?') + ' — ' + (alert.risk_level||'').toUpperCase() + ' risk (' + (alert.risk_probability*100).toFixed(0) + '%)';
+      banner.style.display = 'block';
+      setTimeout(() => { banner.style.display = 'none'; }, 15000);
+    }
+  }
+
+  if (typeof WebSocket !== 'undefined') connect();
+})();
 </script>
 </body>
+<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{})}</script>
 </html>

@@ -9,10 +9,23 @@ import numpy as np
 import pandas as pd
 import pytest
 
+try:
+    import bcrypt as _bcrypt  # noqa: F401
+    HAS_BCRYPT = True
+except ImportError:
+    HAS_BCRYPT = False
+
+try:
+    import pyotp as _pyotp  # noqa: F401
+    HAS_PYOTP = True
+except ImportError:
+    HAS_PYOTP = False
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Auth
 # ──────────────────────────────────────────────────────────────────────────────
 
+@pytest.mark.skipif(not HAS_BCRYPT, reason="bcrypt not installed")
 class TestPasswordHashing:
     def test_hash_and_verify(self):
         from sepsis_vitals.auth.jwt import hash_password, verify_password
@@ -51,6 +64,7 @@ class TestRBAC:
             check_permission("researcher", "patient:read")
 
 
+@pytest.mark.skipif(not HAS_PYOTP, reason="pyotp not installed")
 class TestMFA:
     def test_generate_secret_is_base32(self):
         from sepsis_vitals.auth.jwt import generate_totp_secret
