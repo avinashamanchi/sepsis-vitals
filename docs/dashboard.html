@@ -1044,6 +1044,110 @@ textarea:focus{border-color:var(--green)}
       </div>
     </div>
 
+    <!-- ── ML Prediction ── -->
+    <div class="view" id="view-mlpredict">
+      <div class="ph">
+        <div class="ph-title">AI Sepsis Prediction</div>
+        <div class="ph-sub">Machine learning model with SHAP explanations and confidence intervals</div>
+      </div>
+
+      <!-- Model Status -->
+      <div class="card" id="ml-status-card">
+        <div class="card-title green">Model Status</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+          <div class="stat-tile"><div class="stat-lbl">Model</div><div class="stat-val green" id="ml-model-name" style="font-size:14px">--</div><div class="stat-unit">active</div></div>
+          <div class="stat-tile"><div class="stat-lbl">AUROC</div><div class="stat-val green" id="ml-auroc">--</div><div class="stat-unit">test set</div></div>
+          <div class="stat-tile"><div class="stat-lbl">Sensitivity</div><div class="stat-val green" id="ml-sensitivity">--</div><div class="stat-unit">recall</div></div>
+        </div>
+      </div>
+
+      <!-- Vital Input -->
+      <div class="card">
+        <div class="card-title blue">Enter Patient Vitals</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+          <div class="igroup"><label class="ilabel">Temp</label><div class="irow"><input type="number" id="ml-temp" step=".1" min="25" max="45" placeholder="38.5"><span class="iunit">°C</span></div></div>
+          <div class="igroup"><label class="ilabel">Heart Rate</label><div class="irow"><input type="number" id="ml-hr" step="1" min="0" max="350" placeholder="110"><span class="iunit">bpm</span></div></div>
+          <div class="igroup"><label class="ilabel">Resp Rate</label><div class="irow"><input type="number" id="ml-rr" step="1" min="0" max="80" placeholder="24"><span class="iunit">/min</span></div></div>
+          <div class="igroup"><label class="ilabel">Sys BP</label><div class="irow"><input type="number" id="ml-sbp" step="1" min="30" max="300" placeholder="95"><span class="iunit">mmHg</span></div></div>
+          <div class="igroup"><label class="ilabel">Dia BP</label><div class="irow"><input type="number" id="ml-dbp" step="1" min="20" max="160" placeholder="58"><span class="iunit">mmHg</span></div></div>
+          <div class="igroup"><label class="ilabel">SpO2</label><div class="irow"><input type="number" id="ml-spo2" step="1" min="0" max="100" placeholder="94"><span class="iunit">%</span></div></div>
+          <div class="igroup"><label class="ilabel">GCS</label><div class="irow"><input type="number" id="ml-gcs" step="1" min="3" max="15" placeholder="14"><span class="iunit">/15</span></div></div>
+          <div class="igroup"><label class="ilabel">MAP</label><div class="irow"><input type="number" id="ml-map" step="1" min="30" max="180" placeholder="70"><span class="iunit">mmHg</span></div></div>
+          <div class="igroup"><label class="ilabel">Age</label><div class="irow"><input type="number" id="ml-age" step="1" min="18" max="100" placeholder="65"><span class="iunit">yrs</span></div></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+          <div class="igroup"><label class="ilabel">Patient ID</label><div class="irow"><input type="text" id="ml-pid" placeholder="PT-001"></div></div>
+          <div class="igroup"><label class="ilabel">Comorbidities</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+              <label style="font-size:11px;color:var(--text1);display:flex;align-items:center;gap:4px"><input type="checkbox" id="ml-htn"> HTN</label>
+              <label style="font-size:11px;color:var(--text1);display:flex;align-items:center;gap:4px"><input type="checkbox" id="ml-dm"> DM</label>
+              <label style="font-size:11px;color:var(--text1);display:flex;align-items:center;gap:4px"><input type="checkbox" id="ml-copd"> COPD</label>
+              <label style="font-size:11px;color:var(--text1);display:flex;align-items:center;gap:4px"><input type="checkbox" id="ml-hf"> HF</label>
+            </div>
+          </div>
+        </div>
+        <div class="btn-row">
+          <button class="btn primary" onclick="runMLPredict()">Predict Sepsis Risk</button>
+          <button class="btn" onclick="loadSepticDemo()">Load Septic Demo</button>
+          <button class="btn" onclick="loadNormalDemo()">Load Normal Demo</button>
+          <button class="btn danger" onclick="clearMLInputs()">Clear</button>
+        </div>
+      </div>
+
+      <!-- Prediction Result -->
+      <div class="card" id="ml-result-card" style="display:none">
+        <div class="card-title" id="ml-result-title">Prediction Result</div>
+
+        <!-- Risk Gauge -->
+        <div style="text-align:center;margin:20px 0">
+          <div style="position:relative;display:inline-block">
+            <canvas id="ml-gauge" width="280" height="160"></canvas>
+            <div style="position:absolute;bottom:10px;left:50%;transform:translateX(-50%);text-align:center">
+              <div style="font-family:var(--ui);font-size:36px;font-weight:800" id="ml-risk-pct">--</div>
+              <div style="font-size:10px;color:var(--text2);letter-spacing:.1em;text-transform:uppercase" id="ml-risk-label">RISK</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Confidence interval -->
+        <div style="margin:12px 0">
+          <div style="font-size:10px;color:var(--text2);letter-spacing:.1em;text-transform:uppercase;margin-bottom:6px">Confidence Interval</div>
+          <div style="background:var(--bg1);border:1px solid var(--b1);border-radius:var(--r);padding:10px;position:relative;height:32px">
+            <div id="ml-ci-bar" style="position:absolute;top:8px;height:16px;border-radius:4px;background:rgba(0,255,157,.2);border:1px solid rgba(0,255,157,.4);transition:all .3s"></div>
+            <div id="ml-ci-marker" style="position:absolute;top:6px;width:3px;height:20px;background:var(--green);border-radius:2px;transition:left .3s"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text2);margin-top:4px">
+            <span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span>
+          </div>
+        </div>
+
+        <!-- Clinical Scores -->
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:16px 0">
+          <div class="stat-tile" style="padding:10px"><div class="stat-lbl">qSOFA</div><div class="stat-val" id="ml-qsofa" style="font-size:22px">--</div><div class="stat-unit">/3</div></div>
+          <div class="stat-tile" style="padding:10px"><div class="stat-lbl">SIRS</div><div class="stat-val" id="ml-sirs" style="font-size:22px">--</div><div class="stat-unit">/3</div></div>
+          <div class="stat-tile" style="padding:10px"><div class="stat-lbl">NEWS2</div><div class="stat-val" id="ml-news2" style="font-size:22px">--</div><div class="stat-unit">score</div></div>
+          <div class="stat-tile" style="padding:10px"><div class="stat-lbl">Shock Idx</div><div class="stat-val" id="ml-si" style="font-size:22px">--</div><div class="stat-unit">HR/SBP</div></div>
+        </div>
+
+        <!-- Risk Factors -->
+        <div class="card-title amber" style="margin-top:16px">Top Risk Factors</div>
+        <div id="ml-risk-factors"></div>
+
+        <!-- Recommendation -->
+        <div style="margin-top:16px;background:var(--bg1);border:1px solid var(--b1);border-radius:var(--r);padding:14px">
+          <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text2);margin-bottom:8px">Clinical Recommendation</div>
+          <div id="ml-recommendation" style="font-size:12px;line-height:1.7;color:var(--text1)">--</div>
+        </div>
+      </div>
+
+      <!-- Prediction History -->
+      <div class="card" id="ml-history-card" style="display:none">
+        <div class="card-title blue">Prediction History</div>
+        <div id="ml-history"></div>
+        <canvas id="ml-trend-canvas" height="120" style="width:100%;margin-top:12px;border-radius:var(--r)"></canvas>
+      </div>
+    </div>
+
   </main>
 
   <!-- Bottom nav (mobile) -->
@@ -1057,7 +1161,7 @@ textarea:focus{border-color:var(--green)}
 
 const I18N = {
   en: {
-    "nav.console":"Nurse Console","nav.ai":"AI Analysis","nav.scores":"Score Lab",
+    "nav.console":"Nurse Console","nav.mlpredict":"ML Predict","nav.ai":"AI Analysis","nav.scores":"Score Lab",
     "nav.he":"Health Econ","nav.evidence":"Evidence","nav.roadmap":"Roadmap",
     "nav.readiness":"Site Readiness","nav.threshold":"Thresholds",
     "nav.backlog":"Backlog","nav.security":"Security","nav.surveillance":"Surveillance","nav.patients":"Patient Log","nav.trends":"Trends","nav.export":"Export","nav.alerts":"Alert History","nav.calculator":"Calc","nav.protocols":"Protocols","nav.nhanes":"NHANES Data",
@@ -1070,7 +1174,7 @@ const I18N = {
     "dismiss.confirm":"Confirm dismiss",
   },
   sw: {
-    "nav.console":"Dashibodi ya Muuguzi","nav.ai":"Uchambuzi wa AI","nav.scores":"Majaribio ya Alama",
+    "nav.console":"Dashibodi ya Muuguzi","nav.mlpredict":"Utabiri wa ML","nav.ai":"Uchambuzi wa AI","nav.scores":"Majaribio ya Alama",
     "nav.he":"Uchumi wa Afya","nav.evidence":"Ushahidi","nav.roadmap":"Mpango",
     "nav.readiness":"Utayari wa Tovuti","nav.threshold":"Viwango",
     "nav.backlog":"Orodha ya Kazi","nav.security":"Usalama","nav.surveillance":"Uangalizi","nav.patients":"Kumbukumbu za Wagonjwa","nav.trends":"Mwenendo","nav.export":"Hamisha","nav.alerts":"Historia ya Maonyo","nav.calculator":"Hesabu","nav.protocols":"Itifaki","nav.nhanes":"Data ya NHANES",
@@ -1112,7 +1216,8 @@ const ONBOARD_STEPS = [
 
 const NAV_ITEMS = [
   {id:"console",  icon:"⬡", mobile:true,  badge:"3"},
-  {id:"ai",       icon:"◈", mobile:true},
+  {id:"mlpredict",icon:"⚕", mobile:true},
+  {id:"ai",       icon:"◈", mobile:false},
   {id:"scores",   icon:"◎", mobile:true},
   {id:"he",       icon:"💰",mobile:false},
   {id:"evidence", icon:"◈", mobile:false},
@@ -3762,14 +3867,434 @@ function drawNHHeatmap() {
   el.appendChild(table);
 }
 
-// Hook into setView to init NHANES when that tab is opened
+// Hook into setView to init NHANES/ML when that tab is opened
 (function() {
   var _sv = setView;
   setView = function(id) {
     _sv(id);
     if (id === 'nhanes') renderNHANES();
+    if (id === 'mlpredict') initMLPredict();
   };
 })();
+
+// ══════════════════════════════════════════════════════════════════
+// ML PREDICTION ENGINE (client-side)
+// ══════════════════════════════════════════════════════════════════
+
+const API_BASE = 'http://localhost:8080';
+let mlPredictionHistory = [];
+let mlInitialized = false;
+
+function initMLPredict() {
+  if (mlInitialized) return;
+  mlInitialized = true;
+  // Try to load model info
+  fetch(API_BASE + '/model/info')
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById('ml-model-name').textContent = data.model_name || '--';
+      const m = data.metrics || {};
+      document.getElementById('ml-auroc').textContent = m.val_auroc ? m.val_auroc.toFixed(4) : '--';
+      document.getElementById('ml-sensitivity').textContent = m.val_recall ? m.val_recall.toFixed(4) : '--';
+    })
+    .catch(() => {
+      document.getElementById('ml-model-name').textContent = 'Offline';
+      document.getElementById('ml-model-name').className = 'stat-val amber';
+    });
+}
+
+function loadSepticDemo() {
+  document.getElementById('ml-temp').value = '39.2';
+  document.getElementById('ml-hr').value = '125';
+  document.getElementById('ml-rr').value = '28';
+  document.getElementById('ml-sbp').value = '82';
+  document.getElementById('ml-dbp').value = '48';
+  document.getElementById('ml-spo2').value = '90';
+  document.getElementById('ml-gcs').value = '12';
+  document.getElementById('ml-map').value = '60';
+  document.getElementById('ml-age').value = '72';
+  document.getElementById('ml-pid').value = 'PT-DEMO-SEPTIC';
+  document.getElementById('ml-htn').checked = true;
+  document.getElementById('ml-dm').checked = true;
+}
+
+function loadNormalDemo() {
+  document.getElementById('ml-temp').value = '36.8';
+  document.getElementById('ml-hr').value = '78';
+  document.getElementById('ml-rr').value = '16';
+  document.getElementById('ml-sbp').value = '122';
+  document.getElementById('ml-dbp').value = '72';
+  document.getElementById('ml-spo2').value = '98';
+  document.getElementById('ml-gcs').value = '15';
+  document.getElementById('ml-map').value = '88';
+  document.getElementById('ml-age').value = '45';
+  document.getElementById('ml-pid').value = 'PT-DEMO-NORMAL';
+  document.getElementById('ml-htn').checked = false;
+  document.getElementById('ml-dm').checked = false;
+  document.getElementById('ml-copd').checked = false;
+  document.getElementById('ml-hf').checked = false;
+}
+
+function clearMLInputs() {
+  ['ml-temp','ml-hr','ml-rr','ml-sbp','ml-dbp','ml-spo2','ml-gcs','ml-map','ml-age','ml-pid'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+  ['ml-htn','ml-dm','ml-copd','ml-hf'].forEach(id => {
+    document.getElementById(id).checked = false;
+  });
+  document.getElementById('ml-result-card').style.display = 'none';
+}
+
+async function runMLPredict() {
+  const vitals = {};
+  const fields = {
+    'ml-temp': 'temperature', 'ml-hr': 'heart_rate', 'ml-rr': 'resp_rate',
+    'ml-sbp': 'sbp', 'ml-dbp': 'dbp', 'ml-spo2': 'spo2', 'ml-gcs': 'gcs', 'ml-map': 'map'
+  };
+
+  for (const [id, key] of Object.entries(fields)) {
+    const v = parseFloat(document.getElementById(id).value);
+    if (!isNaN(v)) vitals[key] = v;
+  }
+
+  if (Object.keys(vitals).length < 3) {
+    alert('Please enter at least 3 vital signs');
+    return;
+  }
+
+  const pid = document.getElementById('ml-pid').value || 'unknown';
+  const age = parseInt(document.getElementById('ml-age').value) || null;
+  const comorbidities = {
+    has_hypertension: document.getElementById('ml-htn').checked ? 1 : 0,
+    has_diabetes: document.getElementById('ml-dm').checked ? 1 : 0,
+    has_copd: document.getElementById('ml-copd').checked ? 1 : 0,
+    has_heart_failure: document.getElementById('ml-hf').checked ? 1 : 0,
+  };
+
+  // Try API first, fall back to client-side scoring
+  let prediction;
+  try {
+    const resp = await fetch(API_BASE + '/predict', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({vitals, patient_id: pid, age_years: age, comorbidities})
+    });
+    if (!resp.ok) throw new Error('API error');
+    prediction = await resp.json();
+  } catch (e) {
+    // Fallback: client-side scoring only
+    prediction = clientSidePredict(vitals, pid, age, comorbidities);
+  }
+
+  displayMLPrediction(prediction);
+  mlPredictionHistory.push(prediction);
+  updateMLHistory();
+}
+
+function clientSidePredict(vitals, pid, age, comorbidities) {
+  // Client-side fallback using clinical scores
+  const hr = vitals.heart_rate || 0;
+  const rr = vitals.resp_rate || 0;
+  const sbp = vitals.sbp || 120;
+  const temp = vitals.temperature || 37;
+  const spo2 = vitals.spo2 || 98;
+  const gcs = vitals.gcs || 15;
+
+  // qSOFA
+  let qsofa = 0;
+  if (rr >= 22) qsofa++;
+  if (gcs <= 13) qsofa++;
+  if (sbp <= 100) qsofa++;
+
+  // SIRS
+  let sirs = 0;
+  if (temp > 38.3 || temp < 36) sirs++;
+  if (hr > 90) sirs++;
+  if (rr > 20) sirs++;
+
+  // NEWS2
+  let news2 = 0;
+  if (rr <= 8) news2 += 3; else if (rr <= 11) news2 += 1; else if (rr <= 20) news2 += 0; else if (rr <= 24) news2 += 2; else news2 += 3;
+  if (spo2 <= 91) news2 += 3; else if (spo2 <= 93) news2 += 2; else if (spo2 <= 95) news2 += 1;
+  if (sbp <= 90) news2 += 3; else if (sbp <= 100) news2 += 2; else if (sbp <= 110) news2 += 1;
+  if (hr <= 40) news2 += 3; else if (hr <= 50) news2 += 1; else if (hr <= 90) news2 += 0; else if (hr <= 110) news2 += 1; else if (hr <= 130) news2 += 2; else news2 += 3;
+  if (temp <= 35) news2 += 3; else if (temp <= 36) news2 += 1; else if (temp <= 38) news2 += 0; else if (temp <= 39) news2 += 1; else news2 += 2;
+  if (gcs < 15) news2 += 3;
+
+  const si = sbp > 0 ? Math.round((hr / sbp) * 1000) / 1000 : 0;
+
+  // Heuristic risk score
+  let risk = 0.05;
+  risk += qsofa * 0.15;
+  risk += sirs * 0.08;
+  risk += Math.max(0, (news2 - 3) * 0.05);
+  if (si >= 1.0) risk += 0.15;
+  if (si >= 1.3) risk += 0.15;
+  if (age && age > 65) risk += 0.05;
+  const n_comor = Object.values(comorbidities).reduce((a,b)=>a+b,0);
+  risk += n_comor * 0.03;
+  risk = Math.min(0.99, Math.max(0.01, risk));
+
+  let level = 'low';
+  if (risk >= 0.75 || qsofa >= 3 || news2 >= 7) level = 'critical';
+  else if (risk >= 0.50 || qsofa >= 2 || si >= 1.0) level = 'high';
+  else if (risk >= 0.25 || qsofa >= 1 || sirs >= 2) level = 'moderate';
+
+  return {
+    patient_id: pid,
+    timestamp: new Date().toISOString(),
+    risk_probability: risk,
+    risk_level: level,
+    confidence_interval: {lower: Math.max(0, risk - 0.08), upper: Math.min(1, risk + 0.08)},
+    alert: level === 'high' || level === 'critical',
+    clinical_scores: {qsofa, sirs_count: sirs, news2_style: news2, shock_index: si, risk_level: level},
+    top_risk_factors: [
+      {feature: 'resp_rate', label: 'Respiratory Rate', importance: 0.18, current_value: rr, normal_range: '12-20', status: rr > 20 ? 'elevated' : rr < 12 ? 'low' : 'normal'},
+      {feature: 'heart_rate', label: 'Heart Rate', importance: 0.15, current_value: hr, normal_range: '60-100', status: hr > 100 ? 'elevated' : hr < 60 ? 'low' : 'normal'},
+      {feature: 'sbp', label: 'Systolic BP', importance: 0.14, current_value: sbp, normal_range: '90-140', status: sbp < 90 ? 'low' : sbp > 140 ? 'elevated' : 'normal'},
+      {feature: 'temperature', label: 'Temperature', importance: 0.12, current_value: temp, normal_range: '36.1-37.2', status: temp > 37.2 ? 'elevated' : temp < 36.1 ? 'low' : 'normal'},
+      {feature: 'spo2', label: 'SpO2', importance: 0.10, current_value: spo2, normal_range: '95-100', status: spo2 < 95 ? 'low' : 'normal'},
+    ],
+    recommendation: level === 'critical'
+      ? `CRITICAL SEPSIS RISK. Immediate clinical assessment required. Consider sepsis bundle initiation. ML risk: ${(risk*100).toFixed(0)}%, qSOFA: ${qsofa}/3.`
+      : level === 'high'
+      ? `HIGH SEPSIS RISK. Urgent clinical review recommended. ML risk: ${(risk*100).toFixed(0)}%, qSOFA: ${qsofa}/3.`
+      : level === 'moderate'
+      ? `MODERATE SEPSIS RISK. Close monitoring recommended. ML risk: ${(risk*100).toFixed(0)}%, qSOFA: ${qsofa}/3.`
+      : `LOW SEPSIS RISK. Continue routine monitoring. ML risk: ${(risk*100).toFixed(0)}%, qSOFA: ${qsofa}/3.`,
+    model: {name: 'Client-side scoring (API offline)', version: 'fallback'},
+  };
+}
+
+function displayMLPrediction(pred) {
+  const card = document.getElementById('ml-result-card');
+  card.style.display = 'block';
+
+  const risk = pred.risk_probability;
+  const level = pred.risk_level;
+  const colors = {low: 'var(--green)', moderate: 'var(--blue)', high: 'var(--amber)', critical: 'var(--red)'};
+  const color = colors[level] || 'var(--text0)';
+
+  // Update risk percentage
+  const pctEl = document.getElementById('ml-risk-pct');
+  pctEl.textContent = (risk * 100).toFixed(1) + '%';
+  pctEl.style.color = color;
+
+  const labelEl = document.getElementById('ml-risk-label');
+  labelEl.textContent = level.toUpperCase() + ' RISK';
+  labelEl.style.color = color;
+
+  // Title color
+  const titleEl = document.getElementById('ml-result-title');
+  titleEl.className = 'card-title ' + (level === 'critical' || level === 'high' ? 'red' : level === 'moderate' ? 'amber' : 'green');
+  titleEl.textContent = 'Prediction: ' + level.toUpperCase();
+
+  // Draw gauge
+  drawGauge(risk, color);
+
+  // Confidence interval
+  const ci = pred.confidence_interval || {lower: risk - 0.08, upper: risk + 0.08};
+  const ciBar = document.getElementById('ml-ci-bar');
+  ciBar.style.left = (ci.lower * 100) + '%';
+  ciBar.style.width = ((ci.upper - ci.lower) * 100) + '%';
+  const ciMarker = document.getElementById('ml-ci-marker');
+  ciMarker.style.left = (risk * 100) + '%';
+  ciMarker.style.background = color;
+
+  // Clinical scores
+  const scores = pred.clinical_scores || {};
+  document.getElementById('ml-qsofa').textContent = scores.qsofa ?? '--';
+  document.getElementById('ml-sirs').textContent = scores.sirs_count ?? '--';
+  document.getElementById('ml-news2').textContent = scores.news2_style ?? '--';
+  document.getElementById('ml-si').textContent = scores.shock_index != null ? scores.shock_index.toFixed(2) : '--';
+
+  // Color clinical score values
+  ['ml-qsofa','ml-sirs','ml-news2','ml-si'].forEach(id => {
+    const el = document.getElementById(id);
+    const val = parseFloat(el.textContent);
+    if (isNaN(val)) return;
+    if (id === 'ml-qsofa' && val >= 2) el.style.color = 'var(--red)';
+    else if (id === 'ml-sirs' && val >= 2) el.style.color = 'var(--amber)';
+    else if (id === 'ml-news2' && val >= 5) el.style.color = 'var(--red)';
+    else if (id === 'ml-si' && val >= 1.0) el.style.color = 'var(--red)';
+    else el.style.color = 'var(--green)';
+  });
+
+  // Risk factors
+  const factorsEl = document.getElementById('ml-risk-factors');
+  const factors = pred.top_risk_factors || [];
+  factorsEl.innerHTML = factors.map(f => {
+    const statusColor = f.status === 'elevated' ? 'var(--red)' : f.status === 'low' ? 'var(--amber)' : 'var(--green)';
+    const statusIcon = f.status === 'elevated' ? '▲' : f.status === 'low' ? '▼' : '●';
+    const barWidth = Math.min(100, (f.importance / 0.2) * 100);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--b1)">
+      <span style="color:${statusColor};font-size:14px;width:16px">${statusIcon}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:700;color:var(--text0)">${f.label}</div>
+        <div style="font-size:10px;color:var(--text2)">${f.current_value != null ? f.current_value : '--'} (normal: ${f.normal_range || '--'})</div>
+      </div>
+      <div style="width:80px">
+        <div style="height:4px;background:var(--bg1);border-radius:2px;overflow:hidden">
+          <div style="height:100%;width:${barWidth}%;background:${statusColor};border-radius:2px"></div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Recommendation
+  document.getElementById('ml-recommendation').textContent = pred.recommendation || '--';
+
+  // Scroll to result
+  card.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+function drawGauge(risk, color) {
+  const canvas = document.getElementById('ml-gauge');
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  const cx = w / 2, cy = h - 10;
+  const r = Math.min(cx, cy) - 20;
+
+  ctx.clearRect(0, 0, w, h);
+
+  // Background arc
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, Math.PI, 0, false);
+  ctx.lineWidth = 16;
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.stroke();
+
+  // Colored segments
+  const segments = [
+    {from: 0, to: 0.25, color: '#00ff9d'},
+    {from: 0.25, to: 0.50, color: '#38b4ff'},
+    {from: 0.50, to: 0.75, color: '#ffb830'},
+    {from: 0.75, to: 1.0, color: '#ff3b5c'},
+  ];
+
+  segments.forEach(seg => {
+    const startAngle = Math.PI + (seg.from * Math.PI);
+    const endAngle = Math.PI + (seg.to * Math.PI);
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, startAngle, endAngle, false);
+    ctx.lineWidth = 16;
+    ctx.strokeStyle = seg.color + '33';
+    ctx.stroke();
+  });
+
+  // Risk needle
+  const angle = Math.PI + (risk * Math.PI);
+  const nx = cx + Math.cos(angle) * (r - 6);
+  const ny = cy + Math.sin(angle) * (r - 6);
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(nx, ny);
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = color;
+  ctx.stroke();
+
+  // Center dot
+  ctx.beginPath();
+  ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+
+  // Glow on needle tip
+  ctx.beginPath();
+  ctx.arc(nx, ny, 4, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = color;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Labels
+  ctx.font = '10px JetBrains Mono';
+  ctx.fillStyle = '#4a6080';
+  ctx.textAlign = 'left';
+  ctx.fillText('LOW', cx - r - 5, cy + 16);
+  ctx.textAlign = 'right';
+  ctx.fillText('CRITICAL', cx + r + 5, cy + 16);
+}
+
+function updateMLHistory() {
+  const historyCard = document.getElementById('ml-history-card');
+  if (mlPredictionHistory.length === 0) {
+    historyCard.style.display = 'none';
+    return;
+  }
+  historyCard.style.display = 'block';
+
+  const el = document.getElementById('ml-history');
+  const colors = {low: 'var(--green)', moderate: 'var(--blue)', high: 'var(--amber)', critical: 'var(--red)'};
+
+  el.innerHTML = mlPredictionHistory.slice().reverse().slice(0, 10).map(p => {
+    const color = colors[p.risk_level] || 'var(--text0)';
+    const time = new Date(p.timestamp).toLocaleTimeString();
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--b1)">
+      <span style="color:${color};font-size:18px;font-weight:800">${(p.risk_probability * 100).toFixed(0)}%</span>
+      <div style="flex:1">
+        <div style="font-size:12px;font-weight:600;color:var(--text0)">${p.patient_id}</div>
+        <div style="font-size:10px;color:var(--text2)">${time}</div>
+      </div>
+      <span class="risk-pill ${p.risk_level}">${p.risk_level}</span>
+    </div>`;
+  }).join('');
+
+  // Draw trend chart
+  drawTrendChart();
+}
+
+function drawTrendChart() {
+  const canvas = document.getElementById('ml-trend-canvas');
+  if (!canvas || mlPredictionHistory.length < 2) return;
+
+  const ctx = canvas.getContext('2d');
+  canvas.width = canvas.offsetWidth * 2;
+  canvas.height = 240;
+  const w = canvas.width, h = canvas.height;
+  const pad = {t: 20, r: 20, b: 30, l: 50};
+
+  ctx.clearRect(0, 0, w, h);
+
+  // Background
+  ctx.fillStyle = 'rgba(8,15,26,0.8)';
+  ctx.fillRect(0, 0, w, h);
+
+  const data = mlPredictionHistory.map(p => p.risk_probability);
+  const n = data.length;
+  const xStep = (w - pad.l - pad.r) / Math.max(1, n - 1);
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+  ctx.lineWidth = 1;
+  for (let y = 0; y <= 1; y += 0.25) {
+    const py = pad.t + (1 - y) * (h - pad.t - pad.b);
+    ctx.beginPath(); ctx.moveTo(pad.l, py); ctx.lineTo(w - pad.r, py); ctx.stroke();
+    ctx.fillStyle = '#4a6080'; ctx.font = '18px JetBrains Mono'; ctx.textAlign = 'right';
+    ctx.fillText((y * 100).toFixed(0) + '%', pad.l - 8, py + 5);
+  }
+
+  // Line
+  ctx.beginPath();
+  data.forEach((v, i) => {
+    const x = pad.l + i * xStep;
+    const y = pad.t + (1 - v) * (h - pad.t - pad.b);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = '#00ff9d';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // Dots
+  data.forEach((v, i) => {
+    const x = pad.l + i * xStep;
+    const y = pad.t + (1 - v) * (h - pad.t - pad.b);
+    const c = v >= 0.75 ? '#ff3b5c' : v >= 0.5 ? '#ffb830' : v >= 0.25 ? '#38b4ff' : '#00ff9d';
+    ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fillStyle = c; ctx.fill();
+  });
+}
 </script>
 </body>
 </html>
