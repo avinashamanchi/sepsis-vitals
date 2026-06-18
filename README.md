@@ -1,8 +1,8 @@
-# Sepsis Vitals v0.4.0
+# Sepsis Vitals v0.5.0
 
 Vitals-only sepsis prediction for low-resource district hospitals.
 
-**189+ tests passing · 10 categories of gaps addressed · Production-ready scaffold**
+**228+ tests passing · Production-ready SaaS platform**
 
 ---
 
@@ -12,7 +12,7 @@ Vitals-only sepsis prediction for low-resource district hospitals.
 unzip sepsis-vitals.zip && cd sepsis-vitals
 python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
-python -m pytest -q                                   # 189+ tests
+python -m pytest -q                                   # 228+ tests
 PYTHONPATH=src python3 examples/run_feature_pipeline.py
 python3 -m http.server 8000 --directory docs          # → http://localhost:8000
 ```
@@ -38,7 +38,11 @@ sepsis-vitals/
 │   │   ├── synthetic_data.py# NHANES-powered synthetic vital sign generation
 │   │   ├── trainer.py       # Model training pipeline
 │   │   └── predictor.py     # Inference and prediction
-│   └── i18n/               # English + Swahili locale strings
+│   ├── billing/            # Stripe 3-tier SaaS billing
+│   ├── patients/           # Patient CRUD + vitals persistence
+│   ├── alerts/             # SMS (Twilio + Africa's Talking), push, dispatcher
+│   ├── fhir/               # HL7 FHIR R4 adapter with LOINC mapping
+│   └── i18n/               # 6 languages (en, sw, fr, pt, am, ar)
 ├── health_economics/model.py # ROI, QALY, cost-effectiveness, break-even
 ├── compliance/
 │   ├── irb_protocol_template.md
@@ -48,7 +52,7 @@ sepsis-vitals/
 ├── alembic/                 # Database migrations
 ├── docker/                  # Dockerfile, docker-compose, nginx, prometheus
 ├── terraform/               # AWS ECS + RDS + Redis + WAF + Secrets Manager
-├── tests/                   # 189+ tests
+├── tests/                   # 228+ tests
 ├── examples/run_feature_pipeline.py
 ├── docs/index.html          # Mobile-first dashboard (auth, i18n, onboarding)
 └── .github/workflows/       # 4-job CI pipeline (lint, typecheck, security, test)
