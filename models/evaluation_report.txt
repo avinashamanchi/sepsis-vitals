@@ -2,7 +2,7 @@
   SEPSIS VITALS — MODEL EVALUATION REPORT
 ======================================================================
 
-  Generated: 2026-06-18T11:15:15.345539
+  Generated: 2026-06-18T11:20:37.221147
   Best Model: GradientBoosting (v1.0.0)
   Calibrated: Yes
 
@@ -11,51 +11,51 @@
 ──────────────────────────────────────────────────────────────────────
   Model                   AUROC    AUPRC     Sens     Spec       F1     Time
   ────────────────────────────────────────────────────────────
-  RandomForest           0.9885   0.9746   0.8645   0.9923   0.9138    47.8s
-  GradientBoosting       0.9901   0.9768   0.8956   0.9897   0.9267    17.7s ***
-  LogisticRegression     0.9873   0.9707   0.8768   0.9874   0.9123     0.6s
+  RandomForest           0.9911   0.9769   0.8749   0.9942   0.9217   189.3s
+  GradientBoosting       0.9920   0.9789   0.8931   0.9921   0.9278    60.2s ***
+  LogisticRegression     0.9888   0.9713   0.8766   0.9890   0.9125     2.7s
 
 ──────────────────────────────────────────────────────────────────────
   TEST SET PERFORMANCE (Best Model)
 ──────────────────────────────────────────────────────────────────────
-  AUROC:              0.9905
-  AUPRC:              0.9749
-  Accuracy:           0.9731
-  Sensitivity:        0.9074
-  Specificity:        0.9876
-  PPV:                0.9414
-  NPV:                0.9798
-  F1 Score:           0.9241
-  Brier Score:        0.0209
+  AUROC:              0.9913
+  AUPRC:              0.9775
+  Accuracy:           0.9702
+  Sensitivity:        0.9103
+  Specificity:        0.9856
+  PPV:                0.9422
+  NPV:                0.9771
+  F1 Score:           0.9259
+  Brier Score:        0.0230
 
-  Sensitivity @ 90% Specificity: 0.9757
-  Sensitivity @ 95% Specificity: 0.9619
+  Sensitivity @ 90% Specificity: 0.9762
+  Sensitivity @ 95% Specificity: 0.9599
 
-  Calibration ECE:    0.0071 (excellent)
-  Brier Score:        0.0209
+  Calibration ECE:    0.0062 (excellent)
+  Brier Score:        0.0230
 
   Confusion Matrix:
-    TP:   1833  FP:    114
-    FN:    187  TN:   9059
+    TP:   6352  FP:    390
+    FN:    626  TN:  26726
 
 ──────────────────────────────────────────────────────────────────────
   TOP FEATURES (SHAP Importance)
 ──────────────────────────────────────────────────────────────────────
-   1. temperature_roll_mean          0.4666  ██████████████████████████████
-   2. heart_rate_roll_mean           0.1360  ████████
-   3. news2_computed                 0.1077  ██████
-   4. temperature                    0.0698  ████
-   5. spo2_roll_mean                 0.0522  ███
-   6. heart_rate                     0.0413  ██
-   7. age_years                      0.0316  ██
-   8. resp_rate_roll_mean            0.0183  █
-   9. risk_level_numeric             0.0165  █
-  10. gcs_roll_std                   0.0105  
-  11. spo2_roll_std                  0.0081  
-  12. shock_index_computed           0.0055  
-  13. temperature_roll_std           0.0052  
-  14. gcs_roll_mean                  0.0048  
-  15. has_copd                       0.0044  
+   1. temperature_roll_mean          0.4829  ██████████████████████████████
+   2. heart_rate_roll_mean           0.1377  ████████
+   3. news2_computed                 0.1042  ██████
+   4. temperature                    0.0555  ███
+   5. spo2_roll_mean                 0.0492  ███
+   6. heart_rate                     0.0422  ██
+   7. age_years                      0.0339  ██
+   8. resp_rate_roll_mean            0.0194  █
+   9. risk_level_numeric             0.0171  █
+  10. gcs_roll_std                   0.0124  
+  11. sirs_computed                  0.0105  
+  12. spo2_roll_std                  0.0048  
+  13. temperature_roll_std           0.0047  
+  14. gcs_roll_mean                  0.0043  
+  15. shock_index_computed           0.0035  
 
 ======================================================================
   END OF REPORT
