@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#04080f">
 <meta name="description" content="Sepsis Vitals — Simple, transparent per-bed pricing that scales with your hospital.">
+<meta name="ga-measurement-id" content="">
 <title>Sepsis Vitals — Pricing</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
@@ -201,6 +202,22 @@ footer{border-top:1px solid var(--b1);padding:32px 24px;text-align:center}
 .fade-in-d2{animation-delay:.2s}
 .fade-in-d3{animation-delay:.3s}
 </style>
+<!-- Google Analytics 4 -->
+<script>
+(function(){
+  var m = document.querySelector('meta[name="ga-measurement-id"]');
+  var id = m ? m.getAttribute('content') : '';
+  if (!id) return;
+  var s = document.createElement('script');
+  s.async = true;
+  s.src = 'https://www.googletagmanager.com/gtag/js?id=' + id;
+  document.head.appendChild(s);
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){ dataLayer.push(arguments); }
+  gtag('js', new Date());
+  gtag('config', id);
+})();
+</script>
 </head>
 <body>
 
@@ -262,7 +279,7 @@ footer{border-top:1px solid var(--b1);padding:32px 24px;text-align:center}
           <li>Email support (48h response)</li>
           <li>Data retention: 90 days</li>
         </ul>
-        <a href="#" class="btn-outline-green">Start Free Trial</a>
+        <a href="dashboard.html" class="btn-outline-green">Start Free Trial</a>
       </div>
     </div>
 
@@ -290,7 +307,7 @@ footer{border-top:1px solid var(--b1);padding:32px 24px;text-align:center}
           <li>Data retention: 2 years</li>
           <li>API access</li>
         </ul>
-        <a href="#" class="btn-filled-green">Start Free Trial</a>
+        <a href="dashboard.html" class="btn-filled-green">Start Free Trial</a>
       </div>
     </div>
 
@@ -317,7 +334,7 @@ footer{border-top:1px solid var(--b1);padding:32px 24px;text-align:center}
           <li>24/7 phone support</li>
           <li>White-label option</li>
         </ul>
-        <a href="#" class="btn-outline-blue">Contact Sales</a>
+        <a href="mailto:contact@sepsisvitals.com?subject=Enterprise%20Plan%20Inquiry" class="btn-outline-blue">Contact Sales</a>
       </div>
     </div>
 
@@ -602,8 +619,8 @@ footer{border-top:1px solid var(--b1);padding:32px 24px;text-align:center}
   <h2>Ready to save lives and reduce costs?</h2>
   <p>Start your free 30-day trial. No credit card required.</p>
   <div class="cta-buttons">
-    <a href="#" class="btn-primary">Start Free Trial</a>
-    <a href="#" class="btn-secondary">Schedule a Demo</a>
+    <a href="dashboard.html" class="btn-primary">Start Free Trial</a>
+    <a href="mailto:contact@sepsisvitals.com?subject=Schedule%20a%20Demo" class="btn-secondary" data-calendly-url="https://calendly.com/sepsisvitals/demo">Schedule a Demo</a>
   </div>
 </section>
 

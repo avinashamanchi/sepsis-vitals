@@ -18,7 +18,11 @@ if database_url:
     sync_url = database_url.replace("+asyncpg", "")
     config.set_main_option("sqlalchemy.url", sync_url)
 
-target_metadata = None
+try:
+    from sepsis_vitals.db import Base
+    target_metadata = Base.metadata
+except ImportError:
+    target_metadata = None
 
 
 def run_migrations_offline():

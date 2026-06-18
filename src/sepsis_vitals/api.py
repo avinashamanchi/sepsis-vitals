@@ -58,7 +58,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -734,3 +734,42 @@ async def prometheus_metrics():
         f"sepsis_model_loaded {1 if _get_predictor() is not None else 0}",
     ]
     return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Sub-routers — auth, patients, billing, alerts, FHIR
+# ---------------------------------------------------------------------------
+
+def _include_routers():
+    """Include sub-routers with graceful handling if optional deps are missing."""
+    try:
+        from sepsis_vitals.auth.router import router as auth_router
+        app.include_router(auth_router, tags=["auth"])
+    except Exception:
+        pass
+
+    try:
+        from sepsis_vitals.patients.router import router as patients_router
+        app.include_router(patients_router, tags=["patients"])
+    except Exception:
+        pass
+
+    try:
+        from sepsis_vitals.billing.router import router as billing_router
+        app.include_router(billing_router, tags=["billing"])
+    except Exception:
+        pass
+
+    try:
+        from sepsis_vitals.alerts.router import router as alerts_router
+        app.include_router(alerts_router, tags=["alerts"])
+    except Exception:
+        pass
+
+    try:
+        from sepsis_vitals.fhir.router import router as fhir_router
+        app.include_router(fhir_router, tags=["fhir"])
+    except Exception:
+        pass
+
+_include_routers()

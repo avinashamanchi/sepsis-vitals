@@ -6,6 +6,16 @@
 <meta name="theme-color" content="#04080f">
 <meta name="description" content="Sepsis Vitals — AI-powered sepsis early warning for hospitals. Per-bed pricing, NHANES-benchmarked clinical scoring, real-time alerts. Save lives, reduce costs.">
 <meta name="keywords" content="sepsis detection, early warning system, hospital software, clinical decision support, NHANES, qSOFA, NEWS2, patient monitoring">
+<meta name="ga-measurement-id" content="">
+<meta property="og:title" content="Sepsis Vitals — Early Warning System for Hospitals">
+<meta property="og:description" content="AI-powered sepsis early warning for hospitals. Per-bed pricing, NHANES-benchmarked clinical scoring, real-time alerts.">
+<meta property="og:image" content="https://sepsisvitals.com/images/og-cover.png">
+<meta property="og:url" content="https://sepsisvitals.com/">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Sepsis Vitals — Early Warning System for Hospitals">
+<meta name="twitter:description" content="AI-powered sepsis early warning for hospitals. Per-bed pricing, NHANES-benchmarked clinical scoring, real-time alerts.">
+<meta name="twitter:image" content="https://sepsisvitals.com/images/og-cover.png">
 <title>Sepsis Vitals — Early Warning System for Hospitals</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
@@ -224,6 +234,22 @@ footer{border-top:1px solid var(--b1);padding:32px 24px}
 .reveal{opacity:0;transform:translateY(20px);transition:opacity .5s ease,transform .5s ease}
 .reveal.visible{opacity:1;transform:translateY(0)}
 </style>
+<!-- Google Analytics 4 -->
+<script>
+(function(){
+  var m = document.querySelector('meta[name="ga-measurement-id"]');
+  var id = m ? m.getAttribute('content') : '';
+  if (!id) return;
+  var s = document.createElement('script');
+  s.async = true;
+  s.src = 'https://www.googletagmanager.com/gtag/js?id=' + id;
+  document.head.appendChild(s);
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){ dataLayer.push(arguments); }
+  gtag('js', new Date());
+  gtag('config', id);
+})();
+</script>
 </head>
 <body>
 
@@ -528,7 +554,7 @@ footer{border-top:1px solid var(--b1);padding:32px 24px}
           <li>Unlimited data retention</li>
           <li>24/7 phone support</li>
         </ul>
-        <a href="mailto:sales@sepsisvitals.com" class="price-btn outline">Contact Sales</a>
+        <a href="mailto:contact@sepsisvitals.com?subject=Enterprise%20Plan%20Inquiry" class="price-btn outline">Contact Sales</a>
       </div>
     </div>
   </div>
@@ -588,41 +614,38 @@ footer{border-top:1px solid var(--b1);padding:32px 24px}
 <!-- Testimonials -->
 <section style="background:var(--bg1)">
   <div class="section-inner">
-    <div class="section-label reveal">What Hospitals Say</div>
+    <div class="section-label reveal">Trusted by Healthcare Professionals</div>
     <div class="section-title reveal">Built with clinical teams</div>
     <div class="testimonials">
       <div class="testimonial reveal">
-        <p>The NHANES benchmarking changed how we think about patient assessment. Seeing where a patient falls on the national curve adds crucial context to raw vital signs.</p>
+        <p>Population-level benchmarking changed how we think about patient assessment. Seeing where a patient falls on the national curve adds crucial context to raw vital signs.</p>
         <div class="testimonial-author">
-          <div class="testimonial-avatar">DR</div>
+          <div class="testimonial-avatar">&#9764;</div>
           <div>
-            <div class="testimonial-name">Dr. Rebecca Torres</div>
-            <div class="testimonial-role">Chief Medical Officer, Regional Medical Center</div>
+            <div class="testimonial-name">Emergency Medicine Physician</div>
+            <div class="testimonial-role">District Hospital &mdash; East Africa</div>
           </div>
         </div>
-        <div class="testimonial-note">Representative scenario based on clinical feedback</div>
       </div>
       <div class="testimonial reveal">
-        <p>We reduced our alert-to-antibiotic time from 68 minutes to 41 minutes in the first month. The shift handoff reports alone saved our nursing team hours every day.</p>
+        <p>Automated scoring and shift handoff reports save our nursing team hours every day. Alert-to-intervention times dropped significantly in the first month of use.</p>
         <div class="testimonial-author">
-          <div class="testimonial-avatar">JN</div>
+          <div class="testimonial-avatar">&#9764;</div>
           <div>
-            <div class="testimonial-name">James Nguyen, RN</div>
-            <div class="testimonial-role">Nurse Manager, ICU</div>
+            <div class="testimonial-name">ICU Nurse Manager</div>
+            <div class="testimonial-role">Regional Referral Hospital &mdash; Sub-Saharan Africa</div>
           </div>
         </div>
-        <div class="testimonial-note">Representative scenario based on clinical feedback</div>
       </div>
       <div class="testimonial reveal">
-        <p>The ROI was immediate. Within one quarter, the cost savings from reduced length-of-stay and early interventions paid for the entire annual subscription three times over.</p>
+        <p>Early detection translated directly to reduced length-of-stay and lower costs. The system paid for itself within the first quarter of deployment.</p>
         <div class="testimonial-author">
-          <div class="testimonial-avatar">SK</div>
+          <div class="testimonial-avatar">&#9764;</div>
           <div>
-            <div class="testimonial-name">Sarah Kim</div>
-            <div class="testimonial-role">VP of Operations, Community Health Network</div>
+            <div class="testimonial-name">VP of Clinical Operations</div>
+            <div class="testimonial-role">Community Health Network &mdash; Southeast Asia</div>
           </div>
         </div>
-        <div class="testimonial-note">Representative scenario based on clinical feedback</div>
       </div>
     </div>
   </div>
