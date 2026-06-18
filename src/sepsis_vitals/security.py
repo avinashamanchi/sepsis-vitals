@@ -95,6 +95,13 @@ _DANGEROUS_PATTERNS = [
     re.compile(r"<script", re.IGNORECASE),
     re.compile(r"\{\{.*\}\}", re.IGNORECASE),
     re.compile(r"UNION\s+SELECT", re.IGNORECASE),
+    re.compile(r"javascript\s*:", re.IGNORECASE),
+    re.compile(r"on(?:error|load|click|mouse)\s*=", re.IGNORECASE),
+    re.compile(r"<iframe", re.IGNORECASE),
+    re.compile(r"<object", re.IGNORECASE),
+    re.compile(r"<embed", re.IGNORECASE),
+    re.compile(r";\s*(?:DROP|DELETE|ALTER|TRUNCATE)\s", re.IGNORECASE),
+    re.compile(r"--\s*$", re.MULTILINE),
 ]
 
 
@@ -168,13 +175,18 @@ class PromptInjectionError(Exception):
 
 
 _INJECTION_PATTERNS = [
-    re.compile(r"ignore\s+(all\s+previous\s+instructions|prior\s+prompts)", re.IGNORECASE),
-    re.compile(r"forget\s+your\s+instructions", re.IGNORECASE),
-    re.compile(r"you\s+are\s+now\s+jailbreak", re.IGNORECASE),
-    re.compile(r"<system>", re.IGNORECASE),
+    re.compile(r"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|prompts?)", re.IGNORECASE),
+    re.compile(r"forget\s+(your\s+)?(instructions?|rules?|guidelines?)", re.IGNORECASE),
+    re.compile(r"you\s+are\s+now\s+(jailbreak|DAN|unrestricted)", re.IGNORECASE),
+    re.compile(r"<\s*system\s*>", re.IGNORECASE),
     re.compile(r"\[SYSTEM\]", re.IGNORECASE),
-    re.compile(r"disregard\s+all", re.IGNORECASE),
+    re.compile(r"disregard\s+(all|previous|prior)", re.IGNORECASE),
     re.compile(r"pretend\s+to\s+be", re.IGNORECASE),
+    re.compile(r"override\s+(your\s+)?(safety|instructions|rules)", re.IGNORECASE),
+    re.compile(r"act\s+as\s+(if|though)\s+you\s+(have\s+)?no\s+(rules|restrictions)", re.IGNORECASE),
+    re.compile(r"new\s+system\s+prompt", re.IGNORECASE),
+    re.compile(r"ADMIN\s*:\s*override", re.IGNORECASE),
+    re.compile(r"developer\s+mode", re.IGNORECASE),
 ]
 
 

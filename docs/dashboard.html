@@ -5,6 +5,9 @@
 <link rel="manifest" href="manifest.json">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <meta name="theme-color" content="#04080f">
+<meta http-equiv="X-Content-Type-Options" content="nosniff">
+<meta http-equiv="X-Frame-Options" content="DENY">
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Sepsis Vitals</title>
@@ -401,6 +404,11 @@ textarea:focus{border-color:var(--green)}
     </div>
     <div class="auth-title" id="auth-title">Sign In</div>
     <div class="auth-sub" id="auth-sub">Early warning for every patient</div>
+    <!-- Registration-only fields (hidden during login) -->
+    <div class="auth-field" id="auth-name-field" style="display:none">
+      <label class="auth-label" id="lbl-name">Full name</label>
+      <input class="auth-input" id="auth-name" type="text" placeholder="Dr. Jane Doe" autocomplete="name">
+    </div>
     <div class="auth-field">
       <label class="auth-label" id="lbl-email">Email address</label>
       <input class="auth-input" id="auth-email" type="email" placeholder="nurse@hospital.ke" autocomplete="email">
@@ -409,6 +417,16 @@ textarea:focus{border-color:var(--green)}
       <label class="auth-label" id="lbl-password">Password</label>
       <input class="auth-input" id="auth-pass" type="password" placeholder="••••••••" autocomplete="current-password">
     </div>
+    <div class="auth-field" id="auth-role-field" style="display:none">
+      <label class="auth-label" id="lbl-role">Role</label>
+      <select class="auth-input" id="auth-role" style="cursor:pointer">
+        <option value="nurse">Nurse</option>
+        <option value="physician">Physician</option>
+        <option value="senior_nurse">Senior Nurse</option>
+        <option value="researcher">Researcher</option>
+        <option value="admin">Administrator</option>
+      </select>
+    </div>
     <div class="auth-mfa" id="auth-mfa-section">
       <div class="auth-mfa-note" id="lbl-mfa-note">Enter the 6-digit code from your authenticator app</div>
       <div class="auth-field">
@@ -416,13 +434,21 @@ textarea:focus{border-color:var(--green)}
         <input class="auth-input" id="auth-mfa" type="text" inputmode="numeric" pattern="\d{6}" maxlength="6" placeholder="000000">
       </div>
     </div>
-    <button class="auth-btn" id="auth-submit-btn" onclick="doLogin()">
+    <button class="auth-btn" id="auth-submit-btn" onclick="doAuth()">
       <span id="auth-btn-text">Sign In</span>
     </button>
     <div class="auth-error" id="auth-error"></div>
+    <div class="auth-success" id="auth-success" style="display:none;background:rgba(0,255,157,.1);border:1px solid rgba(0,255,157,.3);border-radius:var(--r);padding:10px 12px;font-size:12px;color:var(--green);margin-top:12px"></div>
+    <div style="text-align:center;margin-top:14px">
+      <span id="auth-toggle" style="font-size:11px;color:var(--blue);cursor:pointer;text-decoration:underline" onclick="toggleAuthMode()">No account? Register</span>
+    </div>
     <div class="auth-lang">
-      <button class="lang-btn active" onclick="setLang('en',this)">English</button>
-      <button class="lang-btn" onclick="setLang('sw',this)">Kiswahili</button>
+      <button class="lang-btn active" data-lang="en" onclick="setLang('en',this)">EN</button>
+      <button class="lang-btn" data-lang="sw" onclick="setLang('sw',this)">SW</button>
+      <button class="lang-btn" data-lang="fr" onclick="setLang('fr',this)">FR</button>
+      <button class="lang-btn" data-lang="pt" onclick="setLang('pt',this)">PT</button>
+      <button class="lang-btn" data-lang="am" onclick="setLang('am',this)">AM</button>
+      <button class="lang-btn" data-lang="ar" onclick="setLang('ar',this)">AR</button>
     </div>
   </div>
 </div>
@@ -1222,11 +1248,16 @@ const I18N = {
     "nav.he":"Health Econ","nav.evidence":"Evidence","nav.roadmap":"Roadmap",
     "nav.readiness":"Site Readiness","nav.threshold":"Thresholds",
     "nav.backlog":"Backlog","nav.security":"Security","nav.surveillance":"Surveillance","nav.patients":"Patient Log","nav.trends":"Trends","nav.export":"Export","nav.alerts":"Alert History","nav.calculator":"Calc","nav.protocols":"Protocols","nav.nhanes":"NHANES Data",
-    "auth.title":"Sign In","auth.sub":"Early warning for every patient",
-    "auth.email":"Email address","auth.password":"Password",
-    "auth.btn":"Sign In","auth.mfa_note":"Enter your 6-digit authenticator code",
+    "auth.title":"Sign In","auth.title.register":"Create Account","auth.sub":"Early warning for every patient",
+    "auth.email":"Email address","auth.password":"Password","auth.name":"Full name","auth.role":"Role",
+    "auth.btn":"Sign In","auth.btn.register":"Create Account",
+    "auth.toggle.register":"No account? Register","auth.toggle.login":"Already have an account? Sign In",
+    "auth.mfa_note":"Enter your 6-digit authenticator code",
     "auth.mfa":"Authenticator code","auth.error.creds":"Invalid credentials.",
     "auth.error.locked":"Account locked. Contact your administrator.",
+    "auth.error.exists":"An account with this email already exists.",
+    "auth.error.password":"Password must be 8+ characters with uppercase and number.",
+    "auth.success.register":"Account created! You can now sign in.",
     "onboard.skip":"Skip","dismiss.title":"Dismiss alert","dismiss.sub":"A reason is required",
     "dismiss.confirm":"Confirm dismiss",
   },
@@ -1235,40 +1266,133 @@ const I18N = {
     "nav.he":"Uchumi wa Afya","nav.evidence":"Ushahidi","nav.roadmap":"Mpango",
     "nav.readiness":"Utayari wa Tovuti","nav.threshold":"Viwango",
     "nav.backlog":"Orodha ya Kazi","nav.security":"Usalama","nav.surveillance":"Uangalizi","nav.patients":"Kumbukumbu za Wagonjwa","nav.trends":"Mwenendo","nav.export":"Hamisha","nav.alerts":"Historia ya Maonyo","nav.calculator":"Hesabu","nav.protocols":"Itifaki","nav.nhanes":"Data ya NHANES",
-    "auth.title":"Ingia","auth.sub":"Onyo la mapema kwa kila mgonjwa",
-    "auth.email":"Barua pepe","auth.password":"Nywila",
-    "auth.btn":"Ingia","auth.mfa_note":"Weka nambari yako ya uthibitishaji wa tarakimu 6",
+    "auth.title":"Ingia","auth.title.register":"Tengeneza Akaunti","auth.sub":"Onyo la mapema kwa kila mgonjwa",
+    "auth.email":"Barua pepe","auth.password":"Nywila","auth.name":"Jina kamili","auth.role":"Jukumu",
+    "auth.btn":"Ingia","auth.btn.register":"Tengeneza Akaunti",
+    "auth.toggle.register":"Huna akaunti? Jisajili","auth.toggle.login":"Tayari una akaunti? Ingia",
+    "auth.mfa_note":"Weka nambari yako ya uthibitishaji wa tarakimu 6",
     "auth.mfa":"Nambari ya uthibitishaji",
     "auth.error.creds":"Barua pepe au nywila si sahihi.",
     "auth.error.locked":"Akaunti imefungwa. Wasiliana na msimamizi wako.",
+    "auth.error.exists":"Akaunti yenye barua pepe hii tayari ipo.",
+    "auth.error.password":"Nywila lazima iwe na herufi 8+ na herufi kubwa na nambari.",
+    "auth.success.register":"Akaunti imeundwa! Sasa unaweza kuingia.",
     "onboard.skip":"Ruka","dismiss.title":"Ondoa onyo","dismiss.sub":"Sababu inahitajika",
     "dismiss.confirm":"Thibitisha kuondoa",
+  },
+  fr: {
+    "nav.console":"Console Infirmier","nav.mlpredict":"D\u00e9pistage Sepsis","nav.ai":"Analyse IA","nav.scores":"Labo de Scores",
+    "nav.he":"\u00c9conomie Sant\u00e9","nav.evidence":"Preuves","nav.roadmap":"Feuille de Route",
+    "nav.readiness":"Pr\u00e9paration Site","nav.threshold":"Seuils",
+    "nav.backlog":"T\u00e2ches","nav.security":"S\u00e9curit\u00e9","nav.surveillance":"Surveillance","nav.patients":"Journal Patients","nav.trends":"Tendances","nav.export":"Exporter","nav.alerts":"Historique Alertes","nav.calculator":"Calcul","nav.protocols":"Protocoles","nav.nhanes":"Donn\u00e9es NHANES",
+    "auth.title":"Connexion","auth.title.register":"Cr\u00e9er un compte","auth.sub":"Alerte pr\u00e9coce pour chaque patient",
+    "auth.email":"Adresse e-mail","auth.password":"Mot de passe","auth.name":"Nom complet","auth.role":"R\u00f4le",
+    "auth.btn":"Se connecter","auth.btn.register":"Cr\u00e9er le compte",
+    "auth.toggle.register":"Pas de compte ? S'inscrire","auth.toggle.login":"D\u00e9j\u00e0 un compte ? Se connecter",
+    "auth.mfa_note":"Saisissez le code \u00e0 6 chiffres","auth.mfa":"Code d'authentification",
+    "auth.error.creds":"Identifiants invalides.",
+    "auth.error.locked":"Compte verrouill\u00e9. Contactez votre administrateur.",
+    "auth.error.exists":"Un compte avec cet e-mail existe d\u00e9j\u00e0.",
+    "auth.error.password":"Le mot de passe doit contenir 8+ caract\u00e8res avec majuscule et chiffre.",
+    "auth.success.register":"Compte cr\u00e9\u00e9 ! Vous pouvez maintenant vous connecter.",
+    "onboard.skip":"Passer","dismiss.title":"Rejeter l'alerte","dismiss.sub":"Un motif est requis",
+    "dismiss.confirm":"Confirmer le rejet",
+  },
+  pt: {
+    "nav.console":"Consola de Enfermagem","nav.mlpredict":"Rastreio Sepsis","nav.ai":"An\u00e1lise IA","nav.scores":"Lab de Scores",
+    "nav.he":"Economia Sa\u00fade","nav.evidence":"Evid\u00eancias","nav.roadmap":"Roteiro",
+    "nav.readiness":"Prontid\u00e3o","nav.threshold":"Limiares",
+    "nav.backlog":"Tarefas","nav.security":"Seguran\u00e7a","nav.surveillance":"Vigil\u00e2ncia","nav.patients":"Registo Pacientes","nav.trends":"Tend\u00eancias","nav.export":"Exportar","nav.alerts":"Hist\u00f3rico Alertas","nav.calculator":"C\u00e1lculo","nav.protocols":"Protocolos","nav.nhanes":"Dados NHANES",
+    "auth.title":"Iniciar Sess\u00e3o","auth.title.register":"Criar Conta","auth.sub":"Alerta precoce para cada paciente",
+    "auth.email":"Endere\u00e7o de e-mail","auth.password":"Palavra-passe","auth.name":"Nome completo","auth.role":"Fun\u00e7\u00e3o",
+    "auth.btn":"Iniciar Sess\u00e3o","auth.btn.register":"Criar Conta",
+    "auth.toggle.register":"N\u00e3o tem conta? Registar","auth.toggle.login":"J\u00e1 tem conta? Iniciar Sess\u00e3o",
+    "auth.mfa_note":"Introduza o c\u00f3digo de 6 d\u00edgitos","auth.mfa":"C\u00f3digo de autentica\u00e7\u00e3o",
+    "auth.error.creds":"Credenciais inv\u00e1lidas.",
+    "auth.error.locked":"Conta bloqueada. Contacte o administrador.",
+    "auth.error.exists":"J\u00e1 existe uma conta com este e-mail.",
+    "auth.error.password":"A palavra-passe deve ter 8+ caracteres com mai\u00fascula e n\u00famero.",
+    "auth.success.register":"Conta criada! Pode agora iniciar sess\u00e3o.",
+    "onboard.skip":"Saltar","dismiss.title":"Descartar alerta","dismiss.sub":"\u00c9 necess\u00e1rio um motivo",
+    "dismiss.confirm":"Confirmar descarte",
+  },
+  am: {
+    "nav.console":"\u12e8\u1290\u122d\u1235 \u12ae\u1295\u1236\u120d","nav.mlpredict":"\u12e8\u1234\u1355\u1232\u1235 \u121d\u122d\u1218\u122b","nav.ai":"\u12e8AI \u1275\u1295\u1270\u1293","nav.scores":"\u12e8\u12a5\u1235\u12ae\u122d \u120b\u1265",
+    "nav.he":"\u12e8\u1324\u1293 \u12a2\u12ae\u1296\u121a\u12ad\u1235","nav.evidence":"\u121b\u1235\u1228\u1303","nav.roadmap":"\u12e8\u1218\u1295\u1308\u12f5 \u12a5\u1245\u12f5",
+    "nav.readiness":"\u12dd\u130d\u1301\u1290\u1275","nav.threshold":"\u12e8\u12f0\u1228\u1303 \u12ad\u1275\u1275\u120d",
+    "nav.backlog":"\u12e8\u1235\u122b \u12dd\u122d\u12dd\u122d","nav.security":"\u12de\u1290\u1275","nav.surveillance":"\u12ad\u1275\u1275\u120d","nav.patients":"\u12e8\u1205\u1219\u121b\u1295 \u1218\u12dd\u1308\u1265","nav.trends":"\u12a0\u12dd\u121b\u121a\u12eb","nav.export":"\u120b\u12ad","nav.alerts":"\u12e8\u121b\u1295\u1242\u12eb \u1270\u122d\u12ad","nav.calculator":"\u121b\u1235\u120a\u12eb","nav.protocols":"\u1355\u122e\u1276\u12ae\u120e\u127d","nav.nhanes":"\u12e8NHANES \u1218\u1228\u1303",
+    "auth.title":"\u12ed\u130d\u1261","auth.title.register":"\u1218\u1208\u12eb \u12ed\u134d\u1320\u1229","auth.sub":"\u1208\u12a5\u12eb\u1295\u12f3\u1295\u12f1 \u1215\u1218\u1298\u129d \u12e8\u1240\u12f0\u1218 \u121b\u1295\u1242\u12eb",
+    "auth.email":"\u12e8\u12a2\u121c\u120d \u12a0\u12f5\u122b\u123b","auth.password":"\u12e8\u12ed\u1208\u134d \u1243\u120d","auth.name":"\u1229\u1209 \u1235\u121d","auth.role":"\u121a\u1293",
+    "auth.btn":"\u12ed\u130d\u1261","auth.btn.register":"\u1218\u1208\u12eb \u12ed\u134d\u1320\u1229",
+    "auth.toggle.register":"\u1218\u1208\u12eb \u12e8\u1208\u12ce\u1275\u121d? \u12ed\u1218\u12dd\u1308\u1261","auth.toggle.login":"\u1218\u1208\u12eb \u12a0\u1208\u12ce\u1275? \u12ed\u130d\u1261",
+    "auth.mfa_note":"\u12e8 6 \u12a0\u1210\u12dd \u12ae\u12f5 \u12eb\u1235\u1308\u1261","auth.mfa":"\u12e8\u121b\u1228\u130b\u1308\u1325 \u12ae\u12f5",
+    "auth.error.creds":"\u12e8\u1270\u1233\u1233\u1270 \u1218\u1228\u1303\u1362",
+    "auth.error.locked":"\u1218\u1208\u12eb\u12ce \u1270\u1240\u120d\u134d\u120f\u120d\u1362",
+    "auth.error.exists":"\u1260\u12da\u1205 \u12a2\u121c\u120d \u1218\u1208\u12eb \u12a0\u1208\u1362",
+    "auth.error.password":"\u12e8\u12ed\u1208\u134d \u1243\u120d 8+ \u1240\u121d\u122e\u127d \u12a5\u1293 \u12a0\u12ad\u120d \u1206\u1204\u12ed\u12a4 \u1262\u12ed\u1296\u122d\u1362",
+    "auth.success.register":"\u1218\u1208\u12eb \u1270\u1348\u1320\u1228! \u12a0\u1201\u1295 \u1218\u130d\u1263\u1275 \u12ed\u127d\u120b\u1209\u1362",
+    "onboard.skip":"\u12dd\u1208\u120d","dismiss.title":"\u121b\u1295\u1242\u12eb\u12cd\u1295 \u12a0\u1230\u1293\u1265\u1275","dismiss.sub":"\u121d\u12ad\u1295\u12eb\u1275 \u12eb\u1235\u134c\u120d\u130b\u120d",
+    "dismiss.confirm":"\u121b\u1230\u1293\u1260\u1275\u12cd\u1295 \u12eb\u1228\u130b\u130d\u1321",
+  },
+  ar: {
+    "nav.console":"\u0644\u0648\u062d\u0629 \u0627\u0644\u062a\u0645\u0631\u064a\u0636","nav.mlpredict":"\u0641\u062d\u0635 \u0627\u0644\u0625\u0646\u062a\u0627\u0646 \u0627\u0644\u062f\u0645\u0648\u064a","nav.ai":"\u062a\u062d\u0644\u064a\u0644 AI","nav.scores":"\u0645\u062e\u062a\u0628\u0631 \u0627\u0644\u062f\u0631\u062c\u0627\u062a",
+    "nav.he":"\u0627\u0642\u062a\u0635\u0627\u062f \u0627\u0644\u0635\u062d\u0629","nav.evidence":"\u0627\u0644\u0623\u062f\u0644\u0629","nav.roadmap":"\u062e\u0631\u064a\u0637\u0629 \u0627\u0644\u0637\u0631\u064a\u0642",
+    "nav.readiness":"\u062c\u0627\u0647\u0632\u064a\u0629 \u0627\u0644\u0645\u0648\u0642\u0639","nav.threshold":"\u0627\u0644\u0639\u062a\u0628\u0627\u062a",
+    "nav.backlog":"\u0627\u0644\u0645\u0647\u0627\u0645","nav.security":"\u0627\u0644\u0623\u0645\u0627\u0646","nav.surveillance":"\u0627\u0644\u0645\u0631\u0627\u0642\u0628\u0629","nav.patients":"\u0633\u062c\u0644 \u0627\u0644\u0645\u0631\u0636\u0649","nav.trends":"\u0627\u0644\u0627\u062a\u062c\u0627\u0647\u0627\u062a","nav.export":"\u062a\u0635\u062f\u064a\u0631","nav.alerts":"\u0633\u062c\u0644 \u0627\u0644\u062a\u0646\u0628\u064a\u0647\u0627\u062a","nav.calculator":"\u062d\u0627\u0633\u0628\u0629","nav.protocols":"\u0627\u0644\u0628\u0631\u0648\u062a\u0648\u0643\u0648\u0644\u0627\u062a","nav.nhanes":"\u0628\u064a\u0627\u0646\u0627\u062a NHANES",
+    "auth.title":"\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062f\u062e\u0648\u0644","auth.title.register":"\u0625\u0646\u0634\u0627\u0621 \u062d\u0633\u0627\u0628","auth.sub":"\u0625\u0646\u0630\u0627\u0631 \u0645\u0628\u0643\u0631 \u0644\u0643\u0644 \u0645\u0631\u064a\u0636",
+    "auth.email":"\u0639\u0646\u0648\u0627\u0646 \u0627\u0644\u0628\u0631\u064a\u062f","auth.password":"\u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631","auth.name":"\u0627\u0644\u0627\u0633\u0645 \u0627\u0644\u0643\u0627\u0645\u0644","auth.role":"\u0627\u0644\u062f\u0648\u0631",
+    "auth.btn":"\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062f\u062e\u0648\u0644","auth.btn.register":"\u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u062d\u0633\u0627\u0628",
+    "auth.toggle.register":"\u0644\u064a\u0633 \u0644\u062f\u064a\u0643 \u062d\u0633\u0627\u0628\u061f \u0633\u062c\u0651\u0644","auth.toggle.login":"\u0644\u062f\u064a\u0643 \u062d\u0633\u0627\u0628\u061f \u0633\u062c\u0651\u0644 \u0627\u0644\u062f\u062e\u0648\u0644",
+    "auth.mfa_note":"\u0623\u062f\u062e\u0644 \u0631\u0645\u0632 6 \u0623\u0631\u0642\u0627\u0645","auth.mfa":"\u0631\u0645\u0632 \u0627\u0644\u0645\u0635\u0627\u062f\u0642\u0629",
+    "auth.error.creds":"\u0628\u064a\u0627\u0646\u0627\u062a \u063a\u064a\u0631 \u0635\u062d\u064a\u062d\u0629\u0651.",
+    "auth.error.locked":"\u0627\u0644\u062d\u0633\u0627\u0628 \u0645\u0642\u0641\u0644.",
+    "auth.error.exists":"\u062d\u0633\u0627\u0628 \u0628\u0647\u0630\u0627 \u0627\u0644\u0628\u0631\u064a\u062f \u0645\u0648\u062c\u0648\u062f \u0628\u0627\u0644\u0641\u0639\u0644.",
+    "auth.error.password":"\u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u064a\u062c\u0628 \u0623\u0646 \u062a\u0643\u0648\u0646 8+ \u0623\u062d\u0631\u0641 \u0645\u0639 \u062d\u0631\u0641 \u0643\u0628\u064a\u0631 \u0648\u0631\u0642\u0645.",
+    "auth.success.register":"\u062a\u0645 \u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u062d\u0633\u0627\u0628! \u064a\u0645\u0643\u0646\u0643 \u0627\u0644\u0622\u0646 \u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062f\u062e\u0648\u0644.",
+    "onboard.skip":"\u062a\u062e\u0637\u0651\u064a","dismiss.title":"\u0631\u0641\u0636 \u0627\u0644\u062a\u0646\u0628\u064a\u0647","dismiss.sub":"\u064a\u062c\u0628 \u0630\u0643\u0631 \u0627\u0644\u0633\u0628\u0628",
+    "dismiss.confirm":"\u062a\u0623\u0643\u064a\u062f \u0627\u0644\u0631\u0641\u0636",
   }
 };
 
 let LANG = localStorage.getItem("lang") || "en";
-let SESSION = JSON.parse(sessionStorage.getItem("sv_session") || "null");
+let SESSION = JSON.parse(localStorage.getItem("sv_session") || "null");
 let llmCalls = 0, LLM_MAX = 2;
 let dismissAlertId = null;
 let onboardStep = 0;
 
 const ONBOARD_STEPS = [
-  {icon:"🏥",tk:"step1_title",bk:"step1_body",
-   t:{en:"Welcome to Sepsis Vitals",sw:"Karibu kwenye Sepsis Vitals"},
+  {icon:"\ud83c\udfe5",tk:"step1_title",bk:"step1_body",
+   t:{en:"Welcome to Sepsis Vitals",sw:"Karibu kwenye Sepsis Vitals",fr:"Bienvenue sur Sepsis Vitals",pt:"Bem-vindo ao Sepsis Vitals",am:"\u12a5\u1295\u12a9\u12a3\u1295 \u12c8\u12f0 Sepsis Vitals \u1260\u12f0\u1205\u1293 \u1218\u1321",ar:"\u0645\u0631\u062d\u0628\u064b\u0627 \u0641\u064a Sepsis Vitals"},
    b:{en:"This system helps you identify patients at risk of sepsis early. You will see alerts based on their vital signs.",
-      sw:"Mfumo huu unakusaidia kutambua wagonjwa walio katika hatari ya sepsis mapema. Utaona maonyo kulingana na ishara zao za uhai."}},
-  {icon:"🔴",
-   t:{en:"Reading Alerts",sw:"Kusoma Maonyo"},
+      sw:"Mfumo huu unakusaidia kutambua wagonjwa walio katika hatari ya sepsis mapema. Utaona maonyo kulingana na ishara zao za uhai.",
+      fr:"Ce syst\u00e8me vous aide \u00e0 identifier les patients \u00e0 risque de sepsis pr\u00e9cocement. Vous verrez des alertes bas\u00e9es sur leurs signes vitaux.",
+      pt:"Este sistema ajuda-o a identificar precocemente pacientes em risco de sepsis. Ver\u00e1 alertas baseados nos sinais vitais.",
+      am:"\u12ed\u1205 \u1235\u122d\u12d3\u1275 \u12e8\u1234\u1355\u1232\u1235 \u12a0\u12f3\u130b \u12eb\u1208\u1263\u1278\u12cd\u1295 \u1215\u1219\u121b\u1295 \u1260\u1240\u12f0\u121e \u1208\u1218\u1208\u12e8\u1275 \u12ed\u1228\u12f3\u12ce\u1273\u120d\u1362",
+      ar:"\u064a\u0633\u0627\u0639\u062f\u0643 \u0647\u0630\u0627 \u0627\u0644\u0646\u0638\u0627\u0645 \u0639\u0644\u0649 \u062a\u062d\u062f\u064a\u062f \u0627\u0644\u0645\u0631\u0636\u0649 \u0627\u0644\u0645\u0639\u0631\u0636\u064a\u0646 \u0644\u062e\u0637\u0631 \u0627\u0644\u0625\u0646\u062a\u0627\u0646 \u0627\u0644\u062f\u0645\u0648\u064a \u0645\u0628\u0643\u0631\u064b\u0627."}},
+  {icon:"\ud83d\udd34",
+   t:{en:"Reading Alerts",sw:"Kusoma Maonyo",fr:"Lire les alertes",pt:"Ler os alertas",am:"\u121b\u1295\u1242\u12eb\u12ce\u127d\u1295 \u121b\u1295\u1260\u1265",ar:"\u0642\u0631\u0627\u0621\u0629 \u0627\u0644\u062a\u0646\u0628\u064a\u0647\u0627\u062a"},
    b:{en:"Alerts are colour-coded: RED = Critical (act now), ORANGE = High, BLUE = Moderate. Always review the patient before acting.",
-      sw:"Maonyo yana rangi: NYEKUNDU = Hatari Kali, MACHUNGWA = Kubwa, BLUU = Wastani. Daima kagua mgonjwa kabla ya kutenda."}},
-  {icon:"📋",
-   t:{en:"Responding to Alerts",sw:"Kujibu Maonyo"},
+      sw:"Maonyo yana rangi: NYEKUNDU = Hatari Kali, MACHUNGWA = Kubwa, BLUU = Wastani. Daima kagua mgonjwa kabla ya kutenda.",
+      fr:"Les alertes sont cod\u00e9es par couleur : ROUGE = Critique, ORANGE = \u00c9lev\u00e9, BLEU = Mod\u00e9r\u00e9. Examinez toujours le patient avant d\u2019agir.",
+      pt:"Os alertas s\u00e3o codificados por cores: VERMELHO = Cr\u00edtico, LARANJA = Elevado, AZUL = Moderado. Revise sempre o paciente antes de agir.",
+      am:"\u121b\u1295\u1242\u12eb\u12ce\u127d \u1260\u1240\u1208\u121d \u12e8\u1270\u12a8\u134b\u1348\u1209: \u1240\u12ed = \u12a0\u1233\u1233\u127d, \u1265\u122d\u1271\u12ab\u1293\u12ca = \u12a8\u134d\u1270\u129b, \u1230\u121b\u12eb\u12ca = \u1218\u12ab\u12a8\u1208\u129b\u1362",
+      ar:"\u0627\u0644\u062a\u0646\u0628\u064a\u0647\u0627\u062a \u0645\u0631\u0645\u0632\u0629 \u0628\u0627\u0644\u0623\u0644\u0648\u0627\u0646: \u0623\u062d\u0645\u0631 = \u062d\u0631\u062c\u060c \u0628\u0631\u062a\u0642\u0627\u0644\u064a = \u0645\u0631\u062a\u0641\u0639\u060c \u0623\u0632\u0631\u0642 = \u0645\u062a\u0648\u0633\u0637."}},
+  {icon:"\ud83d\udccb",
+   t:{en:"Responding to Alerts",sw:"Kujibu Maonyo",fr:"R\u00e9pondre aux alertes",pt:"Responder aos alertas",am:"\u1208\u121b\u1295\u1242\u12eb\u12ce\u127d \u1218\u1218\u1208\u1235",ar:"\u0627\u0644\u0631\u062f \u0639\u0644\u0649 \u0627\u0644\u062a\u0646\u0628\u064a\u0647\u0627\u062a"},
    b:{en:"Tap 'Acknowledge' to log you've seen it, 'Escalate' to involve a doctor, or 'Dismiss' if the patient is stable. Always give a reason when dismissing.",
-      sw:"Bonyeza 'Kuthibitisha' kuandika kuona kwako, 'Paza' kwa daktari, au 'Ondoa' ikiwa mgonjwa ni thabiti. Daima toa sababu unapoondoa."}},
-  {icon:"✅",
-   t:{en:"You're Ready",sw:"Uko Tayari"},
-   b:{en:"This tool supports your judgment — it never replaces it. If you have questions, tap the help icon on any screen. Good luck on your shift.",
-      sw:"Chombo hiki kinasaidia hukumu yako — hakibadilishi kamwe. Ikiwa una maswali, gonga aikoni ya msaada. Bahati nzuri katika zamu yako."}},
+      sw:"Bonyeza 'Kuthibitisha' kuandika kuona kwako, 'Paza' kwa daktari, au 'Ondoa' ikiwa mgonjwa ni thabiti. Daima toa sababu unapoondoa.",
+      fr:"Appuyez sur \u00ab\u202fConfirmer\u202f\u00bb pour signaler que vous l\u2019avez vu, \u00ab\u202fEscalader\u202f\u00bb pour impliquer un m\u00e9decin, ou \u00ab\u202fRejeter\u202f\u00bb si le patient est stable.",
+      pt:"Toque em \u2018Confirmar\u2019 para registar que viu, \u2018Escalar\u2019 para envolver um m\u00e9dico, ou \u2018Descartar\u2019 se o paciente est\u00e1 est\u00e1vel.",
+      am:"\u2018\u12a5\u12cd\u1240\u1275\u2019 \u12ed\u1295\u12a9 \u12a5\u1295\u12f3\u12eb\u1229\u1275 \u1208\u121b\u1235\u1218\u12dd\u1308\u1265\u1362 \u2018\u12eb\u1235\u1270\u120b\u120d\u1349\u2019 \u12f6\u12ad\u1270\u122d \u1208\u121b\u1233\u1270\u134d\u1362",
+      ar:"\u0627\u0646\u0642\u0631 \u0639\u0644\u0649 \u00ab\u0625\u0642\u0631\u0627\u0631\u00bb \u0644\u062a\u0633\u062c\u064a\u0644 \u0623\u0646\u0643 \u0631\u0623\u064a\u062a\u0647\u060c \u00ab\u062a\u0635\u0639\u064a\u062f\u00bb \u0644\u0625\u0634\u0631\u0627\u0643 \u0637\u0628\u064a\u0628\u060c \u0623\u0648 \u00ab\u0631\u0641\u0636\u00bb \u0625\u0630\u0627 \u0643\u0627\u0646 \u0627\u0644\u0645\u0631\u064a\u0636 \u0645\u0633\u062a\u0642\u0631\u064b\u0627."}},
+  {icon:"\u2705",
+   t:{en:"You're Ready",sw:"Uko Tayari",fr:"Vous \u00eates pr\u00eat",pt:"Est\u00e1 pronto",am:"\u12dd\u130d\u1301 \u1290\u12ce\u1275",ar:"\u0623\u0646\u062a \u062c\u0627\u0647\u0632"},
+   b:{en:"This tool supports your judgment \u2014 it never replaces it. If you have questions, tap the help icon on any screen. Good luck on your shift.",
+      sw:"Chombo hiki kinasaidia hukumu yako \u2014 hakibadilishi kamwe. Ikiwa una maswali, gonga aikoni ya msaada. Bahati nzuri katika zamu yako.",
+      fr:"Cet outil soutient votre jugement \u2014 il ne le remplace jamais. Bonne chance dans votre service.",
+      pt:"Esta ferramenta apoia o seu julgamento \u2014 nunca o substitui. Boa sorte no seu turno.",
+      am:"\u12ed\u1205 \u1218\u1233\u122a\u12eb \u12e8\u12a5\u122d\u1235\u12ce\u1295 \u12cd\u1233\u1294 \u12ed\u12f0\u130d\u134b\u120d \u2014 \u1260\u134b\u12e5\u121d \u12a0\u12ed\u1270\u12ab\u12cd\u121d\u1362",
+      ar:"\u0647\u0630\u0647 \u0627\u0644\u0623\u062f\u0627\u0629 \u062a\u062f\u0639\u0645 \u062d\u0643\u0645\u0643 \u2014 \u0644\u0627 \u062a\u062d\u0644 \u0645\u062d\u0644\u0647 \u0623\u0628\u062f\u064b\u0627. \u062d\u0638\u064b\u0627 \u0633\u0639\u064a\u062f\u064b\u0627 \u0641\u064a \u0648\u0631\u062f\u064a\u062a\u0643."}},
 ];
 
 const NAV_ITEMS = [
@@ -1315,56 +1439,207 @@ function valVital(n,v){const[lo,hi]=VR[n]||[0,9999];if(v<lo||v>hi)throw new Erro
 function t(k){return(I18N[LANG]||I18N.en)[k]||k}
 function setLang(lang,el){
   LANG=lang;localStorage.setItem("lang",lang);
-  document.querySelectorAll(".lang-btn").forEach(b=>b.classList.remove("active"));
-  el.classList.add("active");
+  // Set RTL for Arabic
+  document.documentElement.dir = lang === "ar" ? "rtl" : "ltr";
   applyI18n();
 }
+let authMode = "login"; // "login" or "register"
+
 function applyI18n(){
   document.querySelectorAll("[data-i18n]").forEach(el=>{
     el.textContent=t(el.dataset.i18n)||el.textContent;
   });
   // Auth screen
-  document.getElementById("auth-title").textContent=t("auth.title");
+  const isReg = authMode === "register";
+  document.getElementById("auth-title").textContent = t(isReg ? "auth.title.register" : "auth.title");
   document.getElementById("auth-sub").textContent=t("auth.sub");
   document.getElementById("lbl-email").textContent=t("auth.email");
   document.getElementById("lbl-password").textContent=t("auth.password");
-  document.getElementById("auth-btn-text").textContent=t("auth.btn");
+  document.getElementById("auth-btn-text").textContent = t(isReg ? "auth.btn.register" : "auth.btn");
+  document.getElementById("auth-toggle").textContent = t(isReg ? "auth.toggle.login" : "auth.toggle.register");
+  const nameField = document.getElementById("auth-name-field");
+  const roleField = document.getElementById("auth-role-field");
+  if (nameField) { nameField.style.display = isReg ? "block" : "none"; document.getElementById("lbl-name").textContent = t("auth.name"); }
+  if (roleField) { roleField.style.display = isReg ? "block" : "none"; document.getElementById("lbl-role").textContent = t("auth.role"); }
+  // Set lang button active state
+  document.querySelectorAll(".lang-btn").forEach(b => {
+    b.classList.toggle("active", b.dataset.lang === LANG);
+  });
+}
+
+function toggleAuthMode() {
+  authMode = authMode === "login" ? "register" : "login";
+  document.getElementById("auth-error").style.display = "none";
+  document.getElementById("auth-success").style.display = "none";
+  applyI18n();
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Auth
+// IndexedDB User Database (persistent storage)
 // ══════════════════════════════════════════════════════════════════
-function doLogin(){
+const DB_NAME = "sepsis_vitals_auth";
+const DB_VERSION = 1;
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains("users")) {
+        const store = db.createObjectStore("users", { keyPath: "email" });
+        store.createIndex("created_at", "created_at");
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function hashPassword(password, salt) {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt: enc.encode(salt), iterations: 100000, hash: "SHA-256" }, keyMaterial, 256);
+  return Array.from(new Uint8Array(bits)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function generateSalt() {
+  const arr = new Uint8Array(16);
+  crypto.getRandomValues(arr);
+  return Array.from(arr).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function dbGetUser(email) {
+  const db = await openDB();
+  return new Promise((resolve) => {
+    const tx = db.transaction("users", "readonly");
+    const req = tx.objectStore("users").get(email.toLowerCase());
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => resolve(null);
+  });
+}
+
+async function dbCreateUser(user) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("users", "readwrite");
+    tx.objectStore("users").add(user);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function validatePassword(pass) {
+  return pass.length >= 8 && /[A-Z]/.test(pass) && /\d/.test(pass);
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Auth (Login + Registration with IndexedDB)
+// ══════════════════════════════════════════════════════════════════
+async function doAuth() {
+  if (authMode === "register") return doRegister();
+  return doLogin();
+}
+
+async function doLogin(){
   const email=document.getElementById("auth-email").value.trim();
   const pass=document.getElementById("auth-pass").value;
   const err=document.getElementById("auth-error");
-  err.style.display="none";
+  const succ=document.getElementById("auth-success");
+  err.style.display="none"; succ.style.display="none";
   const btn=document.getElementById("auth-submit-btn");
   btn.disabled=true;
-  btn.innerHTML='<span class="spin">⟳</span> Signing in…';
+  btn.innerHTML='<span class="spin">\u27f3</span> Signing in\u2026';
 
-  // Demo: any email + "ChangeMe123!" works
-  setTimeout(()=>{
-    if(!email||!pass){showAuthError(t("auth.error.creds"));btn.disabled=false;btn.innerHTML=t("auth.btn");return}
-    if(pass.length<8){showAuthError(t("auth.error.creds"));btn.disabled=false;btn.innerHTML=t("auth.btn");return}
+  if(!email||!pass){showAuthError(t("auth.error.creds"));return}
 
-    SESSION={email,role:"nurse",site_id:"SITE-A",name:email.split("@")[0],
-             token:"demo-access-token",ts:Date.now()};
-    sessionStorage.setItem("sv_session",JSON.stringify(SESSION));
+  try {
+    const user = await dbGetUser(email);
+    if (!user) { showAuthError(t("auth.error.creds")); return; }
+    if (user.locked_until && Date.now() < user.locked_until) { showAuthError(t("auth.error.locked")); return; }
+
+    const hash = await hashPassword(pass, user.salt);
+    if (hash !== user.password_hash) {
+      // Track failed attempts
+      user.failed_attempts = (user.failed_attempts || 0) + 1;
+      if (user.failed_attempts >= 5) { user.locked_until = Date.now() + 15 * 60 * 1000; }
+      const db = await openDB();
+      const tx = db.transaction("users", "readwrite");
+      tx.objectStore("users").put(user);
+      showAuthError(t("auth.error.creds"));
+      return;
+    }
+
+    // Reset failed attempts on success
+    user.failed_attempts = 0;
+    user.locked_until = null;
+    user.last_login = new Date().toISOString();
+    const db = await openDB();
+    const tx = db.transaction("users", "readwrite");
+    tx.objectStore("users").put(user);
+
+    SESSION = {
+      email: user.email, role: user.role, site_id: "SITE-A",
+      name: user.name, token: "sv-" + generateSalt(), ts: Date.now()
+    };
+    localStorage.setItem("sv_session", JSON.stringify(SESSION));
 
     document.getElementById("auth-screen").style.display="none";
     initApp();
-  },800);
+  } catch(e) {
+    showAuthError(t("auth.error.creds"));
+  }
 }
+
+async function doRegister(){
+  const name = document.getElementById("auth-name").value.trim();
+  const email = document.getElementById("auth-email").value.trim().toLowerCase();
+  const pass = document.getElementById("auth-pass").value;
+  const role = document.getElementById("auth-role").value;
+  const err = document.getElementById("auth-error");
+  const succ = document.getElementById("auth-success");
+  err.style.display="none"; succ.style.display="none";
+  const btn = document.getElementById("auth-submit-btn");
+  btn.disabled=true;
+  btn.innerHTML='<span class="spin">\u27f3</span> Creating account\u2026';
+
+  if (!name || !email || !pass) { showAuthError(t("auth.error.creds")); return; }
+  if (!validatePassword(pass)) { showAuthError(t("auth.error.password")); return; }
+
+  try {
+    const existing = await dbGetUser(email);
+    if (existing) { showAuthError(t("auth.error.exists")); return; }
+
+    const salt = generateSalt();
+    const password_hash = await hashPassword(pass, salt);
+    await dbCreateUser({
+      email, name, role, salt, password_hash,
+      created_at: new Date().toISOString(),
+      failed_attempts: 0, locked_until: null, last_login: null
+    });
+
+    // Show success, switch to login
+    succ.textContent = t("auth.success.register");
+    succ.style.display = "block";
+    btn.disabled = false;
+    btn.innerHTML = t("auth.btn.register");
+    authMode = "login";
+    setTimeout(() => applyI18n(), 1500);
+  } catch(e) {
+    showAuthError(t("auth.error.exists"));
+  }
+}
+
 function showAuthError(msg){
   const e=document.getElementById("auth-error");
   e.textContent=msg; e.style.display="block";
   const btn=document.getElementById("auth-submit-btn");
-  btn.disabled=false; btn.innerHTML=t("auth.btn");
+  btn.disabled=false; btn.innerHTML=t(authMode === "register" ? "auth.btn.register" : "auth.btn");
 }
-document.getElementById("auth-pass").addEventListener("keydown",e=>{if(e.key==="Enter")doLogin()});
+document.getElementById("auth-pass").addEventListener("keydown",e=>{if(e.key==="Enter")doAuth()});
+document.getElementById("auth-email").addEventListener("keydown",e=>{if(e.key==="Enter")doAuth()});
+
 function doLogout(){
-  sessionStorage.removeItem("sv_session");
+  localStorage.removeItem("sv_session");
   SESSION=null;
   document.getElementById("app").style.display="none";
   document.getElementById("auth-screen").style.display="flex";
@@ -2038,16 +2313,14 @@ function renderSecurity(){
 applyI18n();
 buildScenarioBtns();
 
-// If already logged in this session, skip auth
+// Apply i18n on page load
+applyI18n();
+
+// If already logged in (persistent via localStorage), skip auth
 if(SESSION){
   document.getElementById("auth-screen").style.display="none";
   initApp();
 }
-
-// Demo: auto-login on Enter key for fast testing
-document.getElementById("auth-email").addEventListener("keydown",e=>{
-  if(e.key==="Enter")document.getElementById("auth-pass").focus();
-});
 
 // ══════════════════════════════════════════════════════════════════
 // SURVEILLANCE DATA — HHS Region 9 · Age 18-44 · Jun 2025–Feb 2026
