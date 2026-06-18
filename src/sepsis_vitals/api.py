@@ -14,11 +14,14 @@ Wires together all security, ML, real-time, and monitoring subsystems:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import (
     Depends,
@@ -105,7 +108,7 @@ async def check_ml_rate_limit(request: Request) -> None:
 
 # Simple token-based auth. In production, replace with proper JWT RS256.
 API_KEYS: Dict[str, Dict[str, str]] = {}
-_auth_enabled = os.getenv("SEPSIS_AUTH_ENABLED", "false").lower() == "true"
+_auth_enabled = os.getenv("SEPSIS_AUTH_ENABLED", "true").lower() == "true"
 
 
 def _load_api_keys():
@@ -331,6 +334,27 @@ async def general_error_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "Internal server error. Contact support."},
     )
+
+
+# ---------------------------------------------------------------------------
+# Security headers middleware
+# ---------------------------------------------------------------------------
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; "
+        "base-uri 'self'; form-action 'self'"
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -669,7 +693,15 @@ async def websocket_alerts(websocket: WebSocket):
     """Real-time sepsis alert stream via WebSocket.
 
     Clients receive JSON messages when any patient triggers a high/critical alert.
+    Requires a valid API key via ``?token=<key>`` query parameter when auth is enabled.
     """
+    # Authenticate WebSocket handshake
+    if _auth_enabled:
+        token = websocket.query_params.get("token")
+        if not token or token not in API_KEYS:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
     await ws_manager.connect(websocket)
     try:
         while True:
@@ -742,34 +774,21 @@ async def prometheus_metrics():
 
 def _include_routers():
     """Include sub-routers with graceful handling if optional deps are missing."""
-    try:
-        from sepsis_vitals.auth.router import router as auth_router
-        app.include_router(auth_router, tags=["auth"])
-    except Exception:
-        pass
-
-    try:
-        from sepsis_vitals.patients.router import router as patients_router
-        app.include_router(patients_router, tags=["patients"])
-    except Exception:
-        pass
-
-    try:
-        from sepsis_vitals.billing.router import router as billing_router
-        app.include_router(billing_router, tags=["billing"])
-    except Exception:
-        pass
-
-    try:
-        from sepsis_vitals.alerts.router import router as alerts_router
-        app.include_router(alerts_router, tags=["alerts"])
-    except Exception:
-        pass
-
-    try:
-        from sepsis_vitals.fhir.router import router as fhir_router
-        app.include_router(fhir_router, tags=["fhir"])
-    except Exception:
-        pass
+    routers = [
+        ("sepsis_vitals.auth.router", "auth"),
+        ("sepsis_vitals.patients.router", "patients"),
+        ("sepsis_vitals.billing.router", "billing"),
+        ("sepsis_vitals.alerts.router", "alerts"),
+        ("sepsis_vitals.fhir.router", "fhir"),
+    ]
+    for module_path, tag in routers:
+        try:
+            import importlib
+            mod = importlib.import_module(module_path)
+            app.include_router(mod.router, tags=[tag])
+        except ImportError as exc:
+            logger.info("Skipping %s router (missing dependency: %s)", tag, exc)
+        except Exception as exc:
+            logger.error("Failed to load %s router: %s", tag, exc, exc_info=True)
 
 _include_routers()
