@@ -107,10 +107,10 @@ dehydration, pain, COPD/HF exacerbation, viral infection). Lab values
 
 | Metric      | Value  | Note |
 |-------------|--------|------|
-| AUROC       | ~0.86  | Realistic with confounders |
-| Sensitivity | ~0.59  | At default threshold (0.5) |
-| Specificity | ~0.93  | Low false-alarm rate |
-| Sens@90Spec | ~0.68  | Clinical operating point |
+| AUROC       | ~0.88  | Realistic with confounders |
+| Sensitivity | ~0.58  | At default threshold (0.5) |
+| Specificity | ~0.94  | Low false-alarm rate |
+| Sens@90Spec | ~0.70  | Clinical operating point |
 
 ---
 

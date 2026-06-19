@@ -2,7 +2,7 @@
   SEPSIS VITALS — MODEL EVALUATION REPORT
 ======================================================================
 
-  Generated: 2026-06-19T00:09:15.518119
+  Generated: 2026-06-19T00:16:42.479300
   Best Model: GradientBoosting (v1.0.0)
   Calibrated: Yes
 
@@ -11,51 +11,51 @@
 ──────────────────────────────────────────────────────────────────────
   Model                   AUROC    AUPRC     Sens     Spec       F1     Time
   ────────────────────────────────────────────────────────────
-  RandomForest           0.8585   0.7230   0.5420   0.9418   0.6333   255.0s
-  GradientBoosting       0.8611   0.7274   0.5555   0.9412   0.6434   116.9s ***
-  LogisticRegression     0.8059   0.6231   0.3056   0.9596   0.4294     2.2s
+  RandomForest           0.8810   0.7189   0.5500   0.9431   0.6329   243.2s
+  GradientBoosting       0.8827   0.7224   0.5625   0.9432   0.6428   117.4s ***
+  LogisticRegression     0.8221   0.6091   0.2887   0.9655   0.4116     2.4s
 
 ──────────────────────────────────────────────────────────────────────
   TEST SET PERFORMANCE (Best Model)
 ──────────────────────────────────────────────────────────────────────
-  AUROC:              0.8550
-  AUPRC:              0.7189
-  Accuracy:           0.8494
-  Sensitivity:        0.5745
-  Specificity:        0.9390
-  PPV:                0.7545
-  NPV:                0.8713
-  F1 Score:           0.6523
-  Brier Score:        0.1141
+  AUROC:              0.8761
+  AUPRC:              0.7116
+  Accuracy:           0.8594
+  Sensitivity:        0.5790
+  Specificity:        0.9405
+  PPV:                0.7379
+  NPV:                0.8853
+  F1 Score:           0.6489
+  Brier Score:        0.1036
 
-  Sensitivity @ 90% Specificity: 0.6720
-  Sensitivity @ 95% Specificity: 0.5191
+  Sensitivity @ 90% Specificity: 0.7042
+  Sensitivity @ 95% Specificity: 0.5309
 
-  Calibration ECE:    0.0127 (excellent)
-  Brier Score:        0.1141
+  Calibration ECE:    0.0166 (excellent)
+  Brier Score:        0.1036
 
   Confusion Matrix:
-    TP:   4772  FP:   1553
-    FN:   3535  TN:  23925
+    TP:   4390  FP:   1559
+    FN:   3192  TN:  24644
 
 ──────────────────────────────────────────────────────────────────────
   TOP FEATURES (SHAP Importance)
 ──────────────────────────────────────────────────────────────────────
-   1. procalcitonin_roll_mean        0.3835  ██████████████████████████████
-   2. age_years                      0.3206  █████████████████████████
-   3. heart_rate_roll_mean           0.0767  ██████
-   4. temperature_roll_mean          0.0553  ████
-   5. lactate_roll_mean              0.0249  █
-   6. obs_gap_min                    0.0216  █
-   7. procalcitonin                  0.0179  █
-   8. spo2_roll_mean                 0.0171  █
-   9. procalcitonin_delta            0.0119  
-  10. sbp_roll_mean                  0.0102  
-  11. sbp_roll_std                   0.0100  
-  12. wbc_roll_mean                  0.0097  
-  13. gcs_roll_mean                  0.0096  
-  14. news2_computed                 0.0087  
-  15. resp_rate_roll_mean            0.0041  
+   1. procalcitonin_roll_mean        0.3861  ██████████████████████████████
+   2. age_years                      0.3217  ████████████████████████
+   3. heart_rate_roll_mean           0.0750  █████
+   4. temperature_roll_mean          0.0560  ████
+   5. lactate_roll_mean              0.0236  █
+   6. obs_gap_min                    0.0219  █
+   7. procalcitonin                  0.0206  █
+   8. spo2_roll_mean                 0.0160  █
+   9. procalcitonin_delta            0.0099  
+  10. gcs_roll_mean                  0.0099  
+  11. sbp_roll_mean                  0.0090  
+  12. wbc_roll_mean                  0.0083  
+  13. news2_computed                 0.0074  
+  14. sbp_roll_std                   0.0072  
+  15. risk_level_numeric             0.0052  
 
 ======================================================================
   END OF REPORT
