@@ -1,0 +1,73 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Syne:wght@400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-void: #04080f;
+  --color-surface: #0a1120;
+  --color-elevated: #111d2e;
+  --color-overlay: #182438;
+  --color-border: rgba(255,255,255,0.06);
+  --color-border-bright: rgba(255,255,255,0.12);
+
+  --color-accent: #00ff9d;
+  --color-accent-dim: #00cc7d;
+  --color-warning: #ffb830;
+  --color-danger: #ff3b5c;
+  --color-info: #38b4ff;
+
+  --color-text-primary: #e8f4ff;
+  --color-text-secondary: #8ba8cc;
+  --color-text-muted: #4a6080;
+
+  --color-risk-low: #00ff9d;
+  --color-risk-moderate: #ffb830;
+  --color-risk-high: #ff6b35;
+  --color-risk-critical: #ff3b5c;
+
+  --font-heading: 'Syne', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-elevated) var(--color-void);
+}
+
+body {
+  font-family: var(--font-mono);
+  background: var(--color-void);
+  color: var(--color-text-primary);
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@keyframes pulse-critical {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@utility animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+@utility animate-pulse-critical {
+  animation: pulse-critical 2s ease-in-out infinite;
+}
+
+@utility glow-accent {
+  box-shadow: 0 0 20px rgba(0, 255, 157, 0.15);
+}
+
+@utility glow-danger {
+  box-shadow: 0 0 20px rgba(255, 59, 92, 0.2);
+}
+
+@utility font-heading {
+  font-family: var(--font-heading);
+}
