@@ -44,12 +44,15 @@ from sepsis_vitals.security import RateLimiter, RateLimitExceeded, sanitise_stri
 # App config
 # ---------------------------------------------------------------------------
 
+_is_production = os.getenv("SEPSIS_ENV", "development") == "production"
+
 app = FastAPI(
     title="Sepsis Vitals API",
     version=__version__,
     description="AI-powered vitals-only sepsis prediction for low-resource hospitals",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url=None if _is_production else "/docs",
+    redoc_url=None if _is_production else "/redoc",
+    openapi_url=None if _is_production else "/openapi.json",
 )
 
 ALLOWED_ORIGINS = os.getenv(
@@ -73,6 +76,8 @@ app.add_middleware(
 _api_limiter = RateLimiter(rate=10.0, burst=20)
 _ml_limiter = RateLimiter(rate=2.0, burst=5)
 _copilot_limiter = RateLimiter(rate=0.5, burst=3)
+_billing_limiter = RateLimiter(rate=1.0, burst=3)  # Stripe mutations: 1/s
+_webhook_limiter = RateLimiter(rate=5.0, burst=10)  # Stripe webhooks: 5/s
 
 
 def _client_ip(request: Request) -> str:
@@ -375,9 +380,12 @@ async def count_requests(request: Request, call_next):
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/health", response_model=HealthResponse)
+@app.get("/health")
 async def health():
+    """Minimal health check. Sensitive details hidden in production."""
     predictor = _get_predictor()
+    if _is_production:
+        return {"status": "ok", "version": __version__, "timestamp": time.time()}
     return HealthResponse(
         status="ok",
         version=__version__,
@@ -523,7 +531,8 @@ async def clinical_copilot(body: CopilotRequest, user: Dict = Depends(verify_aut
     is only available when SEPSIS_ENTERPRISE_LLM=true (requires BAA with
     Anthropic and explicit opt-in).
     """
-    if not _copilot_limiter.allow("copilot_global"):
+    copilot_key = f"copilot:{user.get('user', user.get('email', 'anon'))}"
+    if not _copilot_limiter.allow(copilot_key):
         raise HTTPException(status_code=429, detail="Copilot rate limit exceeded. Max 1 request per 2 seconds.")
 
     _metrics["copilot_calls_total"] += 1
@@ -768,9 +777,9 @@ async def websocket_alerts(websocket: WebSocket):
 # Prometheus-compatible metrics
 # ---------------------------------------------------------------------------
 
-@app.get("/metrics", response_class=PlainTextResponse)
-async def prometheus_metrics():
-    """Prometheus-compatible metrics endpoint."""
+@app.get("/metrics", response_class=PlainTextResponse, dependencies=[Depends(check_rate_limit)])
+async def prometheus_metrics(user: Dict = Depends(verify_auth)):
+    """Prometheus-compatible metrics endpoint. Requires auth in production."""
     lines = [
         "# HELP sepsis_requests_total Total API requests",
         "# TYPE sepsis_requests_total counter",

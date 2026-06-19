@@ -2,7 +2,7 @@
 
 Vitals + lab-augmented sepsis prediction for district hospitals.
 
-**253+ tests passing · Production-hardened clinical platform**
+**258+ tests passing · Production-hardened clinical platform**
 
 ---
 
@@ -118,16 +118,18 @@ dehydration, pain, COPD/HF exacerbation, viral infection). Lab values
 
 | # | Gap | Implementation |
 |---|---|---|
-| 1 | Rate limiting | Token-bucket (10 req/s API, 2 req/s ML, 0.5 req/s copilot) |
-| 2 | Auth by default | `SEPSIS_AUTH_ENABLED=true`; JWT tokens; SQLite user store |
-| 3 | Exposed endpoints | CORS whitelist; HSTS; CSP; X-Frame-Options DENY |
+| 1 | Rate limiting | Token-bucket (10 req/s API, 2 req/s ML, 0.5 req/s copilot, 1 req/s billing, 5 req/s webhook) |
+| 2 | Auth by default | `SEPSIS_AUTH_ENABLED=true`; JWT with ephemeral dev secret; production requires `SEPSIS_JWT_SECRET` |
+| 3 | Exposed endpoints | CORS whitelist; `/docs` + `/openapi.json` disabled in production; `/metrics` requires auth |
 | 4 | WebSocket auth | Token-based handshake; rejects unauthenticated connections |
-| 5 | LLM isolation | Enterprise flag required; de-identified data only; BAA required |
-| 6 | Security headers | HSTS (2yr preload), CSP, nosniff, X-XSS-Protection |
-| 7 | Prompt injection | 12-pattern regex + structural isolation + client-side filter |
-| 8 | Webhook security | HMAC-SHA256 + 5-minute replay window |
-| 9 | Password security | PBKDF2-SHA256 (200K iterations) or bcrypt + account lockout |
+| 5 | LLM isolation | Enterprise flag required; de-identified data only; per-user copilot rate limiting |
+| 6 | Security headers | HSTS (2yr preload), CSP, nosniff, X-XSS-Protection, Permissions-Policy |
+| 7 | Prompt injection | 21-pattern regex (incl. leet-speak, XML, role hijack) + structural isolation |
+| 8 | Webhook security | HMAC-SHA256 + replay window + Stripe IP allowlist + event deduplication |
+| 9 | Password security | PBKDF2-SHA256 (200K iterations) or bcrypt + exponential lockout |
 | 10 | Patient state | SQLite WAL mode (persists across restarts, multi-worker safe) |
+| 11 | Key management | No hardcoded secrets; ephemeral dev keys; production raises on missing secrets |
+| 12 | Health endpoint | Minimal response in production (no model name, auth status, or connection count) |
 
 ---
 

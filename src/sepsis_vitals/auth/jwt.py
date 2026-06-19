@@ -139,12 +139,24 @@ def is_locked_out(lockout_until: Optional[datetime]) -> bool:
 
 
 def _get_jwt_secret() -> str:
-    """Return the JWT signing secret from env or generate one."""
+    """Return the JWT signing secret from env. Raises in production if unset."""
     secret = os.environ.get("SEPSIS_JWT_SECRET")
     if secret:
         return secret
-    # Deterministic fallback for dev (NOT for production)
-    return "sepsis-vitals-dev-secret-CHANGE-IN-PRODUCTION"
+    env = os.environ.get("SEPSIS_ENV", "development")
+    if env == "production":
+        raise RuntimeError(
+            "SEPSIS_JWT_SECRET must be set in production. "
+            "Generate with: python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+    # Dev-only: generate a per-process ephemeral secret (never hardcoded)
+    if not hasattr(_get_jwt_secret, "_ephemeral"):
+        _get_jwt_secret._ephemeral = secrets.token_hex(32)  # type: ignore[attr-defined]
+        import logging
+        logging.getLogger(__name__).warning(
+            "SEPSIS_JWT_SECRET not set — using ephemeral secret (tokens won't survive restart)"
+        )
+    return _get_jwt_secret._ephemeral  # type: ignore[attr-defined]
 
 
 def _b64url_encode(data: bytes) -> str:

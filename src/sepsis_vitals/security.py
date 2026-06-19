@@ -187,6 +187,18 @@ _INJECTION_PATTERNS = [
     re.compile(r"new\s+system\s+prompt", re.IGNORECASE),
     re.compile(r"ADMIN\s*:\s*override", re.IGNORECASE),
     re.compile(r"developer\s+mode", re.IGNORECASE),
+    # Obfuscation variants (leet-speak, spacing)
+    re.compile(r"[i1][gq]n[o0]r[e3]\s+.{0,20}[i1]nstruct", re.IGNORECASE),
+    re.compile(r"d[i1]sr[e3]g[a4]rd", re.IGNORECASE),
+    re.compile(r"f[o0]rg[e3]t\s+.{0,10}r[u\|]l[e3]s", re.IGNORECASE),
+    # Structural injection via markdown/XML
+    re.compile(r"```\s*system", re.IGNORECASE),
+    re.compile(r"<\s*/?instruction", re.IGNORECASE),
+    re.compile(r"<\s*/?prompt", re.IGNORECASE),
+    # Role hijacking
+    re.compile(r"you\s+must\s+obey", re.IGNORECASE),
+    re.compile(r"execute\s+the\s+following\s+command", re.IGNORECASE),
+    re.compile(r"respond\s+only\s+with\s+(?:yes|true|json)", re.IGNORECASE),
 ]
 
 

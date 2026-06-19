@@ -9,6 +9,8 @@ authentication.
 from __future__ import annotations
 
 import logging
+import os
+import time
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -29,6 +31,64 @@ from sepsis_vitals.db import get_db
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/billing", tags=["billing"])
+
+# ---------------------------------------------------------------------------
+# Rate limiting — imported from api module, or create local instances
+# ---------------------------------------------------------------------------
+
+try:
+    from sepsis_vitals.api import _billing_limiter, _webhook_limiter, _client_ip
+except ImportError:
+    from sepsis_vitals.security import RateLimiter
+    _billing_limiter = RateLimiter(rate=1.0, burst=3)
+    _webhook_limiter = RateLimiter(rate=5.0, burst=10)
+
+    def _client_ip(request: Request) -> str:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        return request.client.host if request.client else "unknown"
+
+
+async def _check_billing_rate(request: Request) -> None:
+    ip = _client_ip(request)
+    if not _billing_limiter.allow(ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Billing rate limit exceeded. Max 1 request/second.",
+        )
+
+
+async def _check_webhook_rate(request: Request) -> None:
+    ip = _client_ip(request)
+    if not _webhook_limiter.allow(ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Webhook rate limit exceeded.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Stripe webhook IP allowlist (production hardening)
+# ---------------------------------------------------------------------------
+
+_STRIPE_WEBHOOK_CIDRS: set[str] | None = None
+
+try:
+    import ipaddress
+
+    # Stripe's documented webhook IPs — https://docs.stripe.com/ips
+    _STRIPE_WEBHOOK_CIDRS = {
+        "3.18.12.63", "3.130.192.31", "13.235.14.237",
+        "13.235.122.149", "18.211.135.69", "35.154.171.200",
+        "52.15.183.38", "54.88.130.119", "54.88.130.237",
+        "54.187.174.169", "54.187.205.235", "54.187.216.72",
+    }
+except ImportError:
+    pass
+
+# In-memory deduplication cache for webhook events
+_processed_webhook_events: Dict[str, float] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +252,7 @@ async def list_plans() -> List[PlanInfo]:
     "/checkout",
     response_model=CheckoutResponse,
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(_check_billing_rate)],
 )
 async def create_checkout(
     body: CheckoutRequest,
@@ -243,6 +304,7 @@ async def create_checkout(
     "/portal",
     response_model=PortalResponse,
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(_check_billing_rate)],
 )
 async def create_portal(
     body: PortalRequest,
@@ -268,6 +330,7 @@ async def create_portal(
     "/webhook",
     response_model=WebhookResponse,
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(_check_webhook_rate)],
 )
 async def stripe_webhook(
     request: Request, db: Session = Depends(get_db)
@@ -276,7 +339,18 @@ async def stripe_webhook(
 
     This endpoint does **not** require bearer-token auth; instead it verifies
     the ``Stripe-Signature`` header against the webhook endpoint secret.
+    Includes IP allowlist check and event deduplication.
     """
+    # IP allowlist in production
+    if _STRIPE_WEBHOOK_CIDRS and os.getenv("SEPSIS_ENV") == "production":
+        client_ip = _client_ip(request)
+        if client_ip not in _STRIPE_WEBHOOK_CIDRS:
+            logger.warning("Webhook from non-Stripe IP: %s", client_ip)
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Webhook origin not in allowlist.",
+            )
+
     payload = await request.body()
     sig_header = request.headers.get("Stripe-Signature")
     if not sig_header:
@@ -284,6 +358,17 @@ async def stripe_webhook(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Missing Stripe-Signature header.",
         )
+
+    # Event deduplication — skip already-processed events
+    import json as _json
+    try:
+        event_data = _json.loads(payload)
+        event_id = event_data.get("id", "")
+        if event_id and event_id in _processed_webhook_events:
+            logger.info("Skipping duplicate webhook event: %s", event_id)
+            return WebhookResponse(status="duplicate", type=event_data.get("type", "unknown"))
+    except (ValueError, KeyError):
+        pass
 
     try:
         result = StripeService.handle_webhook(payload, sig_header, db)
@@ -293,6 +378,15 @@ async def stripe_webhook(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid webhook signature.",
         )
+
+    # Record processed event
+    if event_id:
+        _processed_webhook_events[event_id] = time.time()
+        # Evict old entries (keep last 1000)
+        if len(_processed_webhook_events) > 1000:
+            oldest = sorted(_processed_webhook_events, key=_processed_webhook_events.get)[:500]  # type: ignore[arg-type]
+            for k in oldest:
+                _processed_webhook_events.pop(k, None)
 
     return WebhookResponse(**result)
 
@@ -389,6 +483,7 @@ async def get_subscription(
     "/beds",
     response_model=UpdateBedsResponse,
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(_check_billing_rate)],
 )
 async def update_beds(
     body: UpdateBedsRequest,
