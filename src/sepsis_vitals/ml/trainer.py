@@ -68,6 +68,15 @@ ROLLING_MEAN_FEATURES = [f"{v}_roll_mean" for v in CORE_VITALS]
 ROLLING_STD_FEATURES = [f"{v}_roll_std" for v in CORE_VITALS]
 MISSING_FEATURES = [f"{v}_missing" for v in CORE_VITALS] + ["n_vitals_missing"]
 
+# Lab value features
+LAB_FEATURES = ["lactate", "wbc", "procalcitonin"]
+LAB_DERIVED = [
+    "lactate_delta", "wbc_delta", "procalcitonin_delta",
+    "lactate_roll_mean", "wbc_roll_mean", "procalcitonin_roll_mean",
+    "lactate_missing", "wbc_missing", "procalcitonin_missing",
+    "n_labs_missing",
+]
+
 # Clinical scores as features
 SCORE_FEATURES = ["qsofa", "news2_computed", "sirs_computed", "shock_index_computed"]
 
@@ -141,6 +150,12 @@ def prepare_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
         if col in features.columns:
             # Convert boolean to int
             features[col] = features[col].astype(int)
+            feature_cols.append(col)
+
+    for col in LAB_FEATURES + LAB_DERIVED:
+        if col in features.columns:
+            if features[col].dtype == bool:
+                features[col] = features[col].astype(int)
             feature_cols.append(col)
 
     for col in SCORE_FEATURES:

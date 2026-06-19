@@ -1,28 +1,60 @@
 """
 sepsis_vitals.auth.jwt
-Authentication utilities: password hashing, RBAC, MFA (TOTP), and account lockout.
+Authentication utilities: password hashing, JWT token generation,
+RBAC, MFA (TOTP), account lockout, and user management.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import hashlib
+import hmac
+import json
+import os
+import secrets
+import sqlite3
+import time
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+import base64
+
+
 # ---------------------------------------------------------------------------
-# Password hashing
+# Password hashing — uses PBKDF2 from stdlib as bcrypt fallback
 # ---------------------------------------------------------------------------
 
 
 def hash_password(password: str) -> str:
-    """Return a bcrypt hash of *password*."""
-    import bcrypt
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    """Return a secure hash of *password*.
+
+    Uses bcrypt if available, otherwise PBKDF2-SHA256 (stdlib, no deps).
+    """
+    try:
+        import bcrypt
+        return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    except ImportError:
+        # PBKDF2 fallback — no external deps needed
+        salt = secrets.token_hex(16)
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode(), 200_000)
+        return f"pbkdf2:sha256:200000${salt}${dk.hex()}"
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    """Return True if *password* matches the bcrypt *hashed* value."""
-    import bcrypt
-    return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+    """Return True if *password* matches the hashed value."""
+    if hashed.startswith("pbkdf2:"):
+        parts = hashed.split("$")
+        if len(parts) != 3:
+            return False
+        _, salt, stored_hash = parts
+        iterations = int(hashed.split(":")[2].split("$")[0])
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode(), iterations)
+        return hmac.compare_digest(dk.hex(), stored_hash)
+
+    try:
+        import bcrypt
+        return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+    except ImportError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -99,3 +131,199 @@ def is_locked_out(lockout_until: Optional[datetime]) -> bool:
     if lockout_until is None:
         return False
     return datetime.now(timezone.utc) < lockout_until
+
+
+# ---------------------------------------------------------------------------
+# JWT token generation and verification (HMAC-SHA256, no external deps)
+# ---------------------------------------------------------------------------
+
+
+def _get_jwt_secret() -> str:
+    """Return the JWT signing secret from env or generate one."""
+    secret = os.environ.get("SEPSIS_JWT_SECRET")
+    if secret:
+        return secret
+    # Deterministic fallback for dev (NOT for production)
+    return "sepsis-vitals-dev-secret-CHANGE-IN-PRODUCTION"
+
+
+def _b64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(s: str) -> bytes:
+    padding = 4 - len(s) % 4
+    s += "=" * (padding % 4)
+    return base64.urlsafe_b64decode(s)
+
+
+def create_access_token(
+    user_id: str,
+    email: str,
+    role: str,
+    expires_minutes: int = 60,
+) -> str:
+    """Create a JWT access token (HMAC-SHA256 signed).
+
+    No external JWT library needed — uses stdlib hmac + json + base64.
+    """
+    secret = _get_jwt_secret()
+    now = time.time()
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "role": role,
+        "iat": int(now),
+        "exp": int(now + expires_minutes * 60),
+    }
+
+    header = _b64url_encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    body = _b64url_encode(json.dumps(payload).encode())
+    signature_input = f"{header}.{body}"
+    sig = hmac.new(secret.encode(), signature_input.encode(), hashlib.sha256).digest()
+    return f"{header}.{body}.{_b64url_encode(sig)}"
+
+
+def verify_token(token: str) -> Optional[dict]:
+    """Verify and decode a JWT token. Returns payload dict or None if invalid."""
+    secret = _get_jwt_secret()
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+
+    header_b64, body_b64, sig_b64 = parts
+    signature_input = f"{header_b64}.{body_b64}"
+    expected_sig = hmac.new(secret.encode(), signature_input.encode(), hashlib.sha256).digest()
+
+    try:
+        actual_sig = _b64url_decode(sig_b64)
+    except Exception:
+        return None
+
+    if not hmac.compare_digest(expected_sig, actual_sig):
+        return None
+
+    try:
+        payload = json.loads(_b64url_decode(body_b64))
+    except Exception:
+        return None
+
+    # Check expiration
+    if payload.get("exp", 0) < time.time():
+        return None
+
+    return payload
+
+
+# ---------------------------------------------------------------------------
+# SQLite-backed user database
+# ---------------------------------------------------------------------------
+
+
+class UserStore:
+    """Database-backed user management with bcrypt/PBKDF2 password hashing.
+
+    Replaces the in-memory API_KEYS dict with a real persistent user table.
+    """
+
+    def __init__(self, db_path: str = "models/users.db"):
+        self._db_path = db_path
+        os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._init_db()
+
+    def _init_db(self):
+        self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'nurse',
+                is_active INTEGER NOT NULL DEFAULT 1,
+                failed_attempts INTEGER NOT NULL DEFAULT 0,
+                lockout_until TEXT,
+                totp_secret TEXT,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+        """)
+        self._conn.commit()
+
+    def create_user(
+        self, email: str, password: str, role: str = "nurse"
+    ) -> Optional[dict]:
+        """Create a new user. Returns user dict or None if email exists."""
+        user_id = secrets.token_hex(16)
+        pw_hash = hash_password(password)
+        now = time.time()
+        try:
+            self._conn.execute(
+                "INSERT INTO users (id, email, password_hash, role, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (user_id, email.lower(), pw_hash, role, now, now),
+            )
+            self._conn.commit()
+            return {"id": user_id, "email": email.lower(), "role": role}
+        except sqlite3.IntegrityError:
+            return None
+
+    def authenticate(self, email: str, password: str) -> Optional[dict]:
+        """Authenticate a user. Returns user dict with JWT token, or None."""
+        row = self._conn.execute(
+            "SELECT id, email, password_hash, role, is_active, failed_attempts, lockout_until "
+            "FROM users WHERE email = ?",
+            (email.lower(),),
+        ).fetchone()
+
+        if row is None:
+            return None
+
+        user_id, user_email, pw_hash, role, is_active, failed_attempts, lockout_str = row
+
+        if not is_active:
+            return None
+
+        # Check lockout
+        if lockout_str:
+            lockout_until = datetime.fromisoformat(lockout_str)
+            if is_locked_out(lockout_until):
+                return None
+
+        if not verify_password(password, pw_hash):
+            # Increment failed attempts
+            new_failures = failed_attempts + 1
+            lock_dur = lockout_duration(new_failures)
+            lockout = None
+            if lock_dur > 0:
+                lockout = (datetime.now(timezone.utc) + timedelta(seconds=lock_dur)).isoformat()
+            self._conn.execute(
+                "UPDATE users SET failed_attempts = ?, lockout_until = ?, updated_at = ? WHERE id = ?",
+                (new_failures, lockout, time.time(), user_id),
+            )
+            self._conn.commit()
+            return None
+
+        # Success — reset failed attempts
+        self._conn.execute(
+            "UPDATE users SET failed_attempts = 0, lockout_until = NULL, updated_at = ? WHERE id = ?",
+            (time.time(), user_id),
+        )
+        self._conn.commit()
+
+        token = create_access_token(user_id, user_email, role)
+        return {"id": user_id, "email": user_email, "role": role, "token": token}
+
+    def get_user(self, user_id: str) -> Optional[dict]:
+        """Look up a user by ID."""
+        row = self._conn.execute(
+            "SELECT id, email, role, is_active FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {"id": row[0], "email": row[1], "role": row[2], "is_active": bool(row[3])}
+
+    def close(self):
+        self._conn.close()

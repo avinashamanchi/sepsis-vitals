@@ -196,43 +196,61 @@ SEPSIS_INCIDENCE_PER_100K = {
 }
 
 # ---------------------------------------------------------------------------
-# MIMIC-III based sepsis vital sign distributions (kept as-is)
+# MIMIC-III based sepsis vital sign distributions
+# Recalibrated to produce realistic AUROC (0.75-0.85) by:
+#   - Adding a "subtle/occult" phenotype (40% of septic patients)
+#   - Making early sepsis milder (closer to sick-but-not-septic)
+#   - Widening standard deviations for more overlap
 # ---------------------------------------------------------------------------
 
 # Early sepsis (SIRS-positive, pre-organ dysfunction)
+# Pulled closer to normal -- many early sepsis patients look nearly normal
 EARLY_SEPSIS_VITALS = {
-    "temperature": (38.6, 0.8),
-    "heart_rate": (105.0, 15.0),
-    "resp_rate": (22.0, 4.0),
-    "sbp": (105.0, 18.0),
-    "dbp": (62.0, 12.0),
-    "spo2": (94.5, 2.5),
-    "gcs": (14.5, 0.8),
-    "map": (76.0, 14.0),
+    "temperature": (37.8, 0.8),
+    "heart_rate": (95.0, 15.0),
+    "resp_rate": (20.0, 4.0),
+    "sbp": (112.0, 18.0),
+    "dbp": (66.0, 12.0),
+    "spo2": (95.5, 2.5),
+    "gcs": (14.8, 0.5),
+    "map": (81.0, 14.0),
+}
+
+# Subtle / occult sepsis -- nearly normal vitals, hard to detect (~40% of septic)
+# These patients are the reason real-world AUROC is 0.75-0.85, not 0.99
+SUBTLE_SEPSIS_VITALS = {
+    "temperature": (37.3, 0.6),
+    "heart_rate": (88.0, 14.0),
+    "resp_rate": (18.5, 3.5),
+    "sbp": (118.0, 18.0),
+    "dbp": (70.0, 12.0),
+    "spo2": (96.0, 2.0),
+    "gcs": (14.9, 0.3),
+    "map": (86.0, 14.0),
 }
 
 # Severe sepsis / septic shock
 SEVERE_SEPSIS_VITALS = {
-    "temperature": (39.2, 1.0),
-    "heart_rate": (125.0, 18.0),
-    "resp_rate": (28.0, 5.0),
-    "sbp": (82.0, 15.0),
-    "dbp": (48.0, 10.0),
-    "spo2": (90.0, 4.0),
-    "gcs": (12.0, 2.5),
-    "map": (60.0, 12.0),
+    "temperature": (39.0, 1.0),
+    "heart_rate": (120.0, 18.0),
+    "resp_rate": (26.0, 5.0),
+    "sbp": (85.0, 15.0),
+    "dbp": (50.0, 10.0),
+    "spo2": (91.0, 4.0),
+    "gcs": (12.5, 2.5),
+    "map": (62.0, 12.0),
 }
 
-# Hypothermic sepsis (subset -- cold sepsis, ~15% of septic patients)
+# Hypothermic sepsis (subset -- cold sepsis, ~10% of septic patients)
 HYPOTHERMIC_SEPSIS_VITALS = {
-    "temperature": (35.2, 0.6),
-    "heart_rate": (115.0, 20.0),
-    "resp_rate": (26.0, 5.0),
-    "sbp": (85.0, 18.0),
-    "dbp": (50.0, 12.0),
-    "spo2": (91.0, 3.5),
-    "gcs": (13.0, 2.0),
-    "map": (62.0, 14.0),
+    "temperature": (35.4, 0.6),
+    "heart_rate": (110.0, 20.0),
+    "resp_rate": (24.0, 5.0),
+    "sbp": (90.0, 18.0),
+    "dbp": (52.0, 12.0),
+    "spo2": (92.0, 3.5),
+    "gcs": (13.5, 2.0),
+    "map": (65.0, 14.0),
 }
 
 # Comorbidity vital sign modifiers (additive mean offset, additive std offset)
@@ -242,6 +260,101 @@ COMORBIDITY_MODIFIERS = {
     "copd": {"resp_rate": (3.0, 2.0), "spo2": (-3.0, 1.5)},
     "heart_failure": {"heart_rate": (10.0, 5.0), "sbp": (-8.0, 5.0)},
     "ckd": {"sbp": (6.0, 3.0), "dbp": (3.0, 2.0)},
+}
+
+# ---------------------------------------------------------------------------
+# Lab value distributions (MIMIC-III / literature calibrated)
+# ---------------------------------------------------------------------------
+
+# Normal ranges for lab values
+LAB_NORMALS = {
+    "lactate": (1.0, 0.4),        # mmol/L — normal <2.0
+    "wbc": (7.5, 2.0),            # x10^9/L — normal 4.5-11.0
+    "procalcitonin": (0.05, 0.03),  # ng/mL — normal <0.1
+}
+
+# Sepsis lab distributions -- recalibrated for realistic overlap
+EARLY_SEPSIS_LABS = {
+    "lactate": (2.2, 1.0),        # Mildly elevated, overlaps with sick-nonseptic
+    "wbc": (12.0, 4.5),           # Elevated but wide overlap
+    "procalcitonin": (1.5, 1.5),  # Moderately elevated, large variance
+}
+
+# Subtle sepsis labs -- barely abnormal, within sick-nonseptic range
+SUBTLE_SEPSIS_LABS = {
+    "lactate": (1.6, 0.7),        # Borderline
+    "wbc": (10.0, 3.5),           # Mildly elevated
+    "procalcitonin": (0.4, 0.4),  # Low — subtle sepsis often has low PCT
+}
+
+SEVERE_SEPSIS_LABS = {
+    "lactate": (5.0, 2.5),        # Significantly elevated
+    "wbc": (16.0, 7.0),           # High or low (bimodal in severe sepsis)
+    "procalcitonin": (12.0, 8.0), # Highly elevated
+}
+
+HYPOTHERMIC_SEPSIS_LABS = {
+    "lactate": (3.5, 1.8),
+    "wbc": (3.5, 1.5),            # Leukopenia common in hypothermic sepsis
+    "procalcitonin": (6.0, 5.0),
+}
+
+# Sick-but-not-septic lab distributions (the KEY confounder)
+# Deliberately pushed closer to early/subtle sepsis labs.  In real ICUs,
+# post-surgical patients routinely have lactate 2-4, WBC 12-18, and
+# procalcitonin 0.5-2 ng/mL -- all overlapping heavily with early sepsis.
+SICK_NONSEPTIC_LABS = {
+    "post_surgical": {"lactate": (2.8, 1.2), "wbc": (13.0, 4.0), "procalcitonin": (1.0, 0.8)},
+    "dehydration": {"lactate": (2.5, 1.0), "wbc": (9.5, 3.5), "procalcitonin": (0.15, 0.12)},
+    "pain_anxiety": {"lactate": (1.8, 0.7), "wbc": (10.5, 3.0), "procalcitonin": (0.08, 0.05)},
+    "copd_exacerbation": {"lactate": (2.2, 0.9), "wbc": (13.5, 4.5), "procalcitonin": (0.7, 0.5)},
+    "hf_exacerbation": {"lactate": (3.5, 1.5), "wbc": (10.5, 3.5), "procalcitonin": (0.4, 0.3)},
+    "viral_infection": {"lactate": (1.5, 0.6), "wbc": (4.5, 2.5), "procalcitonin": (0.15, 0.1)},
+}
+
+# Sick-but-not-septic vital distributions — DELIBERATELY overlapping with
+# early and subtle sepsis to create realistic classification difficulty.
+# In real ICUs the overlap between septic and non-septic SIRS is massive;
+# that's what makes sepsis screening genuinely hard (Seymour et al., JAMA 2016).
+SICK_NONSEPTIC_VITALS = {
+    "post_surgical": {
+        "temperature": (38.0, 0.7), "heart_rate": (98.0, 14.0),
+        "resp_rate": (20.0, 4.0), "sbp": (108.0, 18.0), "dbp": (64.0, 12.0),
+        "spo2": (95.0, 2.0), "gcs": (14.5, 0.8), "map": (79.0, 14.0),
+    },
+    "dehydration": {
+        "temperature": (37.1, 0.5), "heart_rate": (105.0, 16.0),
+        "resp_rate": (19.0, 4.0), "sbp": (95.0, 18.0), "dbp": (58.0, 13.0),
+        "spo2": (96.0, 2.0), "gcs": (14.2, 1.0), "map": (70.0, 14.0),
+    },
+    "pain_anxiety": {
+        "temperature": (37.0, 0.4), "heart_rate": (102.0, 14.0),
+        "resp_rate": (22.0, 4.5), "sbp": (135.0, 20.0), "dbp": (80.0, 12.0),
+        "spo2": (96.5, 1.5), "gcs": (15.0, 0.0), "map": (98.0, 14.0),
+    },
+    "copd_exacerbation": {
+        "temperature": (37.4, 0.6), "heart_rate": (98.0, 16.0),
+        "resp_rate": (24.0, 5.0), "sbp": (122.0, 20.0), "dbp": (70.0, 12.0),
+        "spo2": (89.0, 3.5), "gcs": (14.2, 1.0), "map": (87.0, 14.0),
+    },
+    "hf_exacerbation": {
+        "temperature": (36.6, 0.4), "heart_rate": (108.0, 18.0),
+        "resp_rate": (24.0, 5.0), "sbp": (90.0, 18.0), "dbp": (54.0, 12.0),
+        "spo2": (90.0, 3.5), "gcs": (13.8, 1.2), "map": (66.0, 14.0),
+    },
+    "viral_infection": {
+        "temperature": (38.4, 0.8), "heart_rate": (96.0, 14.0),
+        "resp_rate": (19.0, 4.0), "sbp": (115.0, 16.0), "dbp": (70.0, 12.0),
+        "spo2": (95.5, 2.0), "gcs": (15.0, 0.0), "map": (85.0, 13.0),
+    },
+}
+
+SICK_NONSEPTIC_TYPES = list(SICK_NONSEPTIC_VITALS.keys())
+
+LAB_LIMITS = {
+    "lactate": (0.1, 20.0),
+    "wbc": (0.1, 50.0),
+    "procalcitonin": (0.01, 200.0),
 }
 
 # Vital sign physiological limits
@@ -399,15 +512,14 @@ def generate_patient_trajectory(
     comorbidities: list,
     base_time: pd.Timestamp,
     sepsis_severity: str = "early",
+    sick_type: Optional[str] = None,
 ) -> list:
     """Generate a temporal trajectory of vital signs for a single patient.
 
-    For septic patients, simulates deterioration over time:
-    - Phase 1 (0-30%): Normal-ish vitals with subtle early signs
-    - Phase 2 (30-60%): Developing sepsis with worsening vitals
-    - Phase 3 (60-100%): Full sepsis presentation
-
-    For non-septic patients, generates stable vitals with normal variation.
+    For septic patients, simulates deterioration over time with variable onset.
+    For sick-but-not-septic patients, generates abnormal vitals that mimic
+    sepsis presentations (the key clinical confounder).
+    For healthy patients, generates stable vitals with normal variation.
 
     Baseline vitals are drawn from NHANES age/sex-stratified distributions,
     with ethnicity-based blood pressure adjustments applied.
@@ -420,15 +532,42 @@ def generate_patient_trajectory(
     # Ethnicity-based BP offsets
     sbp_eth_adj, dbp_eth_adj = _get_ethnicity_bp_adj(ethnicity)
 
-    # Select target vitals based on sepsis state
-    if not is_septic:
-        target_vitals = normal_vitals
-    elif sepsis_severity == "severe":
-        target_vitals = SEVERE_SEPSIS_VITALS
-    elif sepsis_severity == "hypothermic":
-        target_vitals = HYPOTHERMIC_SEPSIS_VITALS
+    # Select target vitals and labs based on patient type
+    if is_septic:
+        if sepsis_severity == "severe":
+            target_vitals = SEVERE_SEPSIS_VITALS
+            target_labs = SEVERE_SEPSIS_LABS
+        elif sepsis_severity == "hypothermic":
+            target_vitals = HYPOTHERMIC_SEPSIS_VITALS
+            target_labs = HYPOTHERMIC_SEPSIS_LABS
+        elif sepsis_severity == "subtle":
+            target_vitals = SUBTLE_SEPSIS_VITALS
+            target_labs = SUBTLE_SEPSIS_LABS
+        else:
+            target_vitals = EARLY_SEPSIS_VITALS
+            target_labs = EARLY_SEPSIS_LABS
+    elif sick_type is not None and sick_type in SICK_NONSEPTIC_VITALS:
+        target_vitals = SICK_NONSEPTIC_VITALS[sick_type]
+        target_labs = SICK_NONSEPTIC_LABS[sick_type]
     else:
-        target_vitals = EARLY_SEPSIS_VITALS
+        target_vitals = normal_vitals
+        target_labs = LAB_NORMALS
+
+    normal_labs = LAB_NORMALS
+
+    # Variable sepsis onset point (not always at 25%)
+    sepsis_onset = rng.uniform(0.15, 0.45) if is_septic else 1.0
+
+    # Per-patient severity jitter (not every sepsis patient looks textbook)
+    # Subtle sepsis gets very low jitter — these patients barely look septic
+    if is_septic and sepsis_severity == "subtle":
+        severity_jitter = rng.uniform(0.2, 0.6)
+    elif is_septic and sepsis_severity == "early":
+        severity_jitter = rng.uniform(0.4, 0.8)
+    elif is_septic:
+        severity_jitter = rng.uniform(0.5, 1.0)
+    else:
+        severity_jitter = 1.0
 
     # Compute comorbidity adjustments
     comorbidity_adj: dict[str, Tuple[float, float]] = {}
@@ -446,17 +585,17 @@ def generate_patient_trajectory(
         hours_offset = i * rng.uniform(2.0, 6.0)
         timestamp = base_time + pd.Timedelta(hours=hours_offset)
 
-        # Phase-based interpolation for septic patients
         progress = i / max(n_observations - 1, 1)
 
         if is_septic:
-            # Interpolate from normal -> septic over the trajectory
-            if progress < 0.3:
-                blend = progress / 0.3 * 0.3
-            elif progress < 0.6:
-                blend = 0.3 + (progress - 0.3) / 0.3 * 0.4
+            # Slower, more gradual deterioration.  Max blend is capped to prevent
+            # the vitals from becoming unambiguously septic late in the stay.
+            if progress < 0.4:
+                blend = progress / 0.4 * 0.25 * severity_jitter
+            elif progress < 0.7:
+                blend = (0.25 + (progress - 0.4) / 0.3 * 0.25) * severity_jitter
             else:
-                blend = 0.7 + (progress - 0.6) / 0.4 * 0.3
+                blend = (0.50 + (progress - 0.7) / 0.3 * 0.20) * severity_jitter
 
             current_vitals: dict[str, Tuple[float, float]] = {}
             for vital in normal_vitals:
@@ -465,8 +604,31 @@ def generate_patient_trajectory(
                 mean = normal_mean + blend * (target_mean - normal_mean)
                 std = normal_std + blend * (target_std - normal_std)
                 current_vitals[vital] = (mean, std)
+
+            current_labs: dict[str, Tuple[float, float]] = {}
+            for lab in normal_labs:
+                nm, ns = normal_labs[lab]
+                tm, ts = target_labs[lab]
+                current_labs[lab] = (nm + blend * (tm - nm), ns + blend * (ts - ns))
+
+        elif sick_type is not None:
+            # Sick-but-not-septic: blend toward sick vitals quickly and reach high
+            # so that they strongly resemble sepsis
+            sick_blend = min(progress * 2.5, 0.9)  # Ramp up fast, max 0.9
+            current_vitals = {}
+            for vital in normal_vitals:
+                nm, ns = normal_vitals[vital]
+                tm, ts = target_vitals[vital]
+                current_vitals[vital] = (nm + sick_blend * (tm - nm), ns + sick_blend * (ts - ns))
+
+            current_labs = {}
+            for lab in normal_labs:
+                nm, ns = normal_labs[lab]
+                tm, ts = target_labs[lab]
+                current_labs[lab] = (nm + sick_blend * (tm - nm), ns + sick_blend * (ts - ns))
         else:
             current_vitals = dict(normal_vitals)
+            current_labs = dict(normal_labs)
 
         # Generate vital values
         row: dict = {
@@ -481,105 +643,100 @@ def generate_patient_trajectory(
         generated_dbp = None
 
         for vital in [
-            "temperature",
-            "heart_rate",
-            "resp_rate",
-            "sbp",
-            "dbp",
-            "spo2",
-            "gcs",
-            "map",
+            "temperature", "heart_rate", "resp_rate",
+            "sbp", "dbp", "spo2", "gcs", "map",
         ]:
-            # MAP is computed from SBP/DBP after they are generated
             if vital == "map":
                 if generated_sbp is not None and generated_dbp is not None:
                     value = (generated_sbp + 2.0 * generated_dbp) / 3.0
                 else:
-                    # Fallback if SBP/DBP were set to NaN by missing-data logic
                     mean, std = current_vitals["map"]
                     value = rng.normal(mean, std)
                 value = _clamp_vital(vital, value)
                 value = _round_vital(vital, value)
                 if np.isnan(value):
-                    value = _round_vital(
-                        vital, current_vitals["map"][0]
-                    )
+                    value = _round_vital(vital, current_vitals["map"][0])
                 row[vital] = value
                 continue
 
             mean, std = current_vitals[vital]
 
-            # Apply ethnicity BP adjustments
             if vital == "sbp":
                 mean += sbp_eth_adj
             elif vital == "dbp":
                 mean += dbp_eth_adj
 
-            # Apply comorbidity adjustments
             c_mean, c_std = comorbidity_adj.get(vital, (0.0, 0.0))
             mean += c_mean
             std = max(std + c_std, 0.5)
 
-            # Add temporal autocorrelation (vitals don't jump randomly)
+            # Temporal autocorrelation — real ICU data is noisy.
+            # Low autocorrelation = more realistic stochastic variation.
             if (
                 i > 0
                 and vital in rows[-1]
                 and not np.isnan(rows[-1].get(vital, np.nan))
             ):
                 prev_val = rows[-1][vital]
-                # 60% previous value influence for continuity
                 raw = rng.normal(mean, std)
-                value = 0.4 * raw + 0.6 * prev_val
+                value = 0.7 * raw + 0.3 * prev_val
             else:
                 value = rng.normal(mean, std)
 
-            # Add measurement noise
-            noise = rng.normal(0, std * 0.05)
+            # Measurement noise — real bedside monitors have significant noise
+            noise = rng.normal(0, std * 0.30)
             value += noise
 
-            # Clamp and round
             value = _clamp_vital(vital, value)
             value = _round_vital(vital, value)
-
             if np.isnan(value):
                 value = _round_vital(vital, mean)
 
             row[vital] = value
 
-            # Stash raw SBP/DBP for MAP calculation
             if vital == "sbp":
                 generated_sbp = value
             elif vital == "dbp":
                 generated_dbp = value
 
-        # Introduce realistic missing data (~5% per vital for non-GCS)
-        for vital in [
-            "temperature",
-            "heart_rate",
-            "resp_rate",
-            "sbp",
-            "dbp",
-            "spo2",
-            "map",
-        ]:
-            if rng.random() < 0.05:
+        # Generate lab values
+        for lab in ["lactate", "wbc", "procalcitonin"]:
+            lab_mean, lab_std = current_labs.get(lab, LAB_NORMALS[lab])
+
+            # Add extra noise to labs (measured less precisely than vitals)
+            value = rng.normal(lab_mean, lab_std)
+            value += rng.normal(0, lab_std * 0.2)
+
+            # Special: WBC can be LOW in severe sepsis (bimodal)
+            if lab == "wbc" and is_septic and sepsis_severity == "severe":
+                if rng.random() < 0.15:
+                    value = rng.normal(2.5, 1.0)
+
+            lo, hi = LAB_LIMITS.get(lab, (0, 1e6))
+            value = float(np.clip(value, lo, hi))
+            value = round(value, 2)
+            row[lab] = value
+
+        # Labs have higher missingness than vitals (~25%)
+        # Real ICU data shows labs are often unavailable for many observations
+        for lab in ["lactate", "wbc", "procalcitonin"]:
+            if rng.random() < 0.25:
+                row[lab] = np.nan
+
+        # Vital missingness (~8% per vital for non-GCS)
+        for vital in ["temperature", "heart_rate", "resp_rate", "sbp", "dbp", "spo2", "map"]:
+            if rng.random() < 0.08:
                 row[vital] = np.nan
 
-        # GCS rarely missing
         if rng.random() < 0.02:
             row["gcs"] = np.nan
 
         # Label
         if is_septic:
-            # Label becomes positive when patient is in active sepsis phase
-            if progress >= 0.25:
-                row["sepsis_label"] = 1
-            else:
-                row["sepsis_label"] = 0
+            row["sepsis_label"] = 1 if progress >= sepsis_onset else 0
         else:
             row["sepsis_label"] = 0
 
-        # Comorbidities as binary columns
         for comorb in ["hypertension", "diabetes", "ckd", "copd", "heart_failure"]:
             row[f"has_{comorb}"] = 1 if comorb in comorbidities else 0
 
@@ -590,21 +747,30 @@ def generate_patient_trajectory(
 
 def generate_dataset(
     n_patients: int = 10000,
-    sepsis_prevalence: float = 0.15,
+    sepsis_prevalence: float = 0.20,
+    sick_nonseptic_frac: float = 0.50,
     obs_per_patient: Tuple[int, int] = (6, 24),
     seed: int = 42,
     include_demographics: bool = True,
 ) -> pd.DataFrame:
     """Generate a full synthetic dataset for sepsis model training.
 
+    The dataset has three patient categories:
+    1. **Septic** (~20%): True sepsis with progressive deterioration
+    2. **Sick-but-not-septic** (~35%): Confounders — patients with abnormal
+       vitals from non-sepsis causes (post-surgical, dehydration, pain,
+       COPD/HF exacerbation, viral infection). These are the key challenge
+       cases that prevent unrealistically high AUROC.
+    3. **Healthy** (~45%): Normal vitals with routine variation
+
     Parameters
     ----------
     n_patients : int
         Number of unique patients to generate.
     sepsis_prevalence : float
-        Target marginal fraction of patients who are septic (0.0 to 1.0).
-        Actual per-patient probability is modulated by NHANES age-dependent
-        sepsis incidence data and comorbidity burden.
+        Target fraction of septic patients.
+    sick_nonseptic_frac : float
+        Fraction of non-septic patients who are sick confounders.
     obs_per_patient : tuple of (min, max)
         Range of observations per patient.
     seed : int
@@ -617,8 +783,8 @@ def generate_dataset(
     pd.DataFrame
         DataFrame with columns: patient_id, timestamp, age_years, sex,
         ethnicity, temperature, heart_rate, resp_rate, sbp, dbp, spo2,
-        gcs, map, sepsis_label, has_hypertension, has_diabetes, has_ckd,
-        has_copd, has_heart_failure
+        gcs, map, lactate, wbc, procalcitonin, sepsis_label,
+        has_hypertension, has_diabetes, has_ckd, has_copd, has_heart_failure
     """
     rng = np.random.default_rng(seed)
     all_rows: list[dict] = []
@@ -643,33 +809,46 @@ def generate_dataset(
             if rng.random() < prevalence:
                 comorbidities.append(comorb)
 
-        # Sepsis status -- strongly age-dependent using NHANES incidence data
+        # Determine patient category: septic, sick-nonseptic, or healthy
         age_multiplier = _get_sepsis_risk_multiplier(age)
         sepsis_risk = sepsis_prevalence * age_multiplier
 
-        # Additional risk from comorbidity burden
         if len(comorbidities) >= 2:
             sepsis_risk *= 1.3
         if len(comorbidities) >= 3:
-            sepsis_risk *= 1.2  # compounding
+            sepsis_risk *= 1.2
 
         is_septic = rng.random() < min(sepsis_risk, 0.7)
+
+        # Sick-but-not-septic assignment for non-septic patients
+        sick_type = None
+        if not is_septic and rng.random() < sick_nonseptic_frac:
+            # Bias confounders based on comorbidities
+            if "copd" in comorbidities and rng.random() < 0.4:
+                sick_type = "copd_exacerbation"
+            elif "heart_failure" in comorbidities and rng.random() < 0.4:
+                sick_type = "hf_exacerbation"
+            else:
+                sick_type = rng.choice(SICK_NONSEPTIC_TYPES)
 
         # Number of observations
         min_obs, max_obs = obs_per_patient
         n_obs = int(rng.integers(min_obs, max_obs + 1))
 
-        # Sepsis severity distribution
+        # Sepsis severity distribution — 50% subtle creates realistic difficulty
+        # Only 15% are severe (easy to classify), rest are subtle/early
         if is_septic:
             severity_roll = rng.random()
-            if severity_roll < 0.5:
+            if severity_roll < 0.50:
+                severity = "subtle"
+            elif severity_roll < 0.78:
                 severity = "early"
-            elif severity_roll < 0.85:
+            elif severity_roll < 0.93:
                 severity = "severe"
             else:
                 severity = "hypothermic"
         else:
-            severity = "early"  # won't be used
+            severity = "early"
 
         # Patient-specific time offset (different admission times)
         patient_base_time = base_time + pd.Timedelta(
@@ -687,6 +866,7 @@ def generate_dataset(
             comorbidities=comorbidities,
             base_time=patient_base_time,
             sepsis_severity=severity,
+            sick_type=sick_type,
         )
         all_rows.extend(rows)
 
@@ -695,6 +875,18 @@ def generate_dataset(
     # Ensure correct dtypes
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     df["sepsis_label"] = df["sepsis_label"].astype(int)
+
+    # Label noise -- reflects real-world clinical uncertainty: retrospective
+    # chart reviews disagree on sepsis diagnosis ~10-15% of the time
+    # (Rhee et al., JAMA 2017).  Asymmetric noise:
+    #   - 5% of positives flipped to 0 (missed diagnoses — more common)
+    #   - 1% of negatives flipped to 1 (over-diagnosis — rare)
+    positive_mask = df["sepsis_label"] == 1
+    negative_mask = df["sepsis_label"] == 0
+    miss_noise = positive_mask & (rng.random(len(df)) < 0.05)
+    over_noise = negative_mask & (rng.random(len(df)) < 0.01)
+    df.loc[miss_noise, "sepsis_label"] = 0
+    df.loc[over_noise, "sepsis_label"] = 1
 
     if not include_demographics:
         df = df.drop(columns=["sex", "ethnicity"], errors="ignore")

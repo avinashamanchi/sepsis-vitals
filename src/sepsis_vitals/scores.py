@@ -213,18 +213,23 @@ def classify_risk(
     sirs: int,
     si: float | None,
     news2: int,
+    lactate: float | None = None,
 ) -> tuple[str, bool]:
-    """Classify sepsis risk level based on composite scores.
+    """Classify sepsis risk level based on composite scores and labs.
     Returns (level, alert_flag).
     """
     si_val = si if si is not None else 0.0
 
-    # Critical
+    # Critical — lactate >= 4 mmol/L is a septic shock criterion (SSC 2021)
     if qsofa_score >= 3 or news2 >= 7 or si_val >= 1.3:
         return ("critical", True)
+    if lactate is not None and lactate >= 4.0:
+        return ("critical", True)
 
-    # High
+    # High — lactate >= 2 mmol/L indicates tissue hypoperfusion
     if qsofa_score >= 2 or si_val >= 1.0 or news2 >= 5:
+        return ("high", True)
+    if lactate is not None and lactate >= 2.0:
         return ("high", True)
 
     # Moderate
@@ -268,7 +273,8 @@ def compute_scores(vitals: dict) -> ScoreBundle:
     n2 = news2_style(vitals)
     uva = uva_style(vitals)
 
-    level, alert = classify_risk(q_score, s_count, si, n2)
+    lactate = vitals.get("lactate")
+    level, alert = classify_risk(q_score, s_count, si, n2, lactate=lactate)
 
     # Merge all component flags
     component_flags = {**q_flags, **s_flags}

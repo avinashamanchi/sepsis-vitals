@@ -12,6 +12,7 @@ import pandas as pd
 
 
 CORE_VITALS = ["temperature", "heart_rate", "resp_rate", "sbp", "spo2", "gcs"]
+LAB_VALUES = ["lactate", "wbc", "procalcitonin"]
 
 # Pediatric reference ranges (mean, std) for heart rate by rough age buckets.
 # Simplified: single reference for ages < 18.
@@ -109,6 +110,18 @@ def build_feature_set(
         .dt.total_seconds()
         .div(60.0)
     )
+
+    # ── lab value features ─────────────────────────────────────────────
+    labs_present = [v for v in LAB_VALUES if v in out.columns]
+    for v in labs_present:
+        out[f"{v}_missing"] = out[v].isna()
+    if labs_present:
+        out["n_labs_missing"] = out[[f"{v}_missing" for v in labs_present]].sum(axis=1).astype(int)
+        # Lab deltas and rolling stats
+        for v in labs_present:
+            out[f"{v}_delta"] = grouped[v].diff()
+            roll = grouped[v].rolling(window=rolling_window, min_periods=1)
+            out[f"{v}_roll_mean"] = roll.mean().reset_index(level=0, drop=True)
 
     # ── score columns ────────────────────────────────────────────────────
     if score_cols:

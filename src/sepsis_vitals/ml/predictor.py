@@ -145,7 +145,7 @@ class SepsisPredictor:
     - Clinical score integration (qSOFA, SIRS, NEWS2, Shock Index)
     - SHAP-based risk factor explanations
     - Confidence intervals
-    - Deterioration detection
+    - Deterioration detection (persisted to SQLite, survives restarts)
     """
 
     def __init__(self, model_dir: str = "models"):
@@ -154,7 +154,7 @@ class SepsisPredictor:
         self.scaler = None
         self.metadata = None
         self.feature_names = None
-        self._monitors: Dict[str, PatientMonitor] = {}
+        self._state_store = None
         self._loaded = False
 
     def load(self) -> None:
@@ -186,6 +186,11 @@ class SepsisPredictor:
             scaler_path = self.model_dir / "scaler.joblib"
             if scaler_path.exists():
                 self.scaler = joblib.load(scaler_path)
+
+        # Initialize persistent state store (SQLite-backed)
+        from sepsis_vitals.ml.state_store import PatientStateStore
+        db_path = str(self.model_dir / "patient_state.db")
+        self._state_store = PatientStateStore(db_path=db_path)
 
         self._loaded = True
 
@@ -270,34 +275,22 @@ class SepsisPredictor:
             model_version=self.metadata["version"],
         )
 
-        # Track in patient monitor
-        if patient_id not in self._monitors:
-            self._monitors[patient_id] = PatientMonitor(patient_id=patient_id)
-
-        self._monitors[patient_id].add_prediction(prediction)
+        # Track in persistent state store (survives restarts)
+        if self._state_store is not None:
+            self._state_store.add_prediction(
+                patient_id=patient_id,
+                timestamp=timestamp,
+                risk_probability=risk_prob,
+                risk_level=risk_level,
+            )
 
         return prediction
 
     def get_patient_trend(self, patient_id: str) -> Optional[Dict[str, Any]]:
-        """Get the monitoring trend for a patient."""
-        monitor = self._monitors.get(patient_id)
-        if monitor is None:
+        """Get the monitoring trend for a patient (from persistent storage)."""
+        if self._state_store is None:
             return None
-
-        return {
-            "patient_id": patient_id,
-            "n_observations": len(monitor.predictions),
-            "trend": monitor._compute_trend(),
-            "risk_history": [
-                {
-                    "timestamp": p.timestamp,
-                    "risk_probability": p.risk_probability,
-                    "risk_level": p.risk_level,
-                }
-                for p in monitor.predictions
-            ],
-            "deterioration": monitor._detect_deterioration(),
-        }
+        return self._state_store.get_trend(patient_id)
 
     def _build_feature_vector(
         self,
@@ -354,6 +347,17 @@ class SepsisPredictor:
             features["has_copd"] = 0
             features["has_heart_failure"] = 0
 
+        # Lab values
+        for lab in ["lactate", "wbc", "procalcitonin"]:
+            features[lab] = vitals.get(lab, np.nan)
+            features[f"{lab}_delta"] = np.nan
+            features[f"{lab}_roll_mean"] = vitals.get(lab, np.nan)
+            features[f"{lab}_missing"] = 1 if pd.isna(vitals.get(lab)) else 0
+        features["n_labs_missing"] = sum(
+            1 for v in ["lactate", "wbc", "procalcitonin"]
+            if pd.isna(vitals.get(v))
+        )
+
         # Temporal
         features["obs_gap_min"] = np.nan
 
@@ -406,6 +410,9 @@ class SepsisPredictor:
             "qsofa": "qSOFA Score",
             "news2_computed": "NEWS2 Score",
             "sirs_computed": "SIRS Criteria",
+            "lactate": "Serum Lactate",
+            "wbc": "White Blood Cell Count",
+            "procalcitonin": "Procalcitonin",
         }
 
         # Normal ranges for context
@@ -417,6 +424,9 @@ class SepsisPredictor:
             "spo2": (95, 100),
             "gcs": (15, 15),
             "map": (70, 105),
+            "lactate": (0.5, 2.0),
+            "wbc": (4.5, 11.0),
+            "procalcitonin": (0.0, 0.1),
         }
 
         for feat_name, imp_value in list(importance.items())[:10]:

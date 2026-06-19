@@ -1,8 +1,8 @@
-# Sepsis Vitals v0.5.0
+# Sepsis Vitals v0.6.0
 
-Vitals-only sepsis prediction for low-resource district hospitals.
+Vitals + lab-augmented sepsis prediction for district hospitals.
 
-**228+ tests passing · Production-ready SaaS platform**
+**253+ tests passing · Production-hardened clinical platform**
 
 ---
 
@@ -24,20 +24,23 @@ python3 -m http.server 8000 --directory docs          # → http://localhost:800
 ```
 sepsis-vitals/
 ├── src/sepsis_vitals/
-│   ├── scores.py            # qSOFA, SIRS, NEWS2, UVA, shock index
-│   ├── features.py          # Feature engineering pipeline
+│   ├── scores.py            # qSOFA, SIRS, NEWS2, UVA, shock index + lactate integration
+│   ├── features.py          # Feature engineering pipeline (vitals + labs)
 │   ├── data_quality.py      # Site data auditing
 │   ├── model_scaffold.py    # LightGBM + logistic + SHAP + model card
-│   ├── security.py          # Rate limiting, injection guard, HMAC
-│   ├── api.py               # FastAPI clinical scoring API with authentication framework
-│   ├── auth/jwt.py          # Password hashing (bcrypt), RBAC, MFA (TOTP), account lockout
-│   ├── realtime/websocket.py# WebSocket alert streaming
+│   ├── security.py          # Rate limiting, injection guard, HMAC, security headers
+│   ├── api.py               # FastAPI API with OAuth2/JWT auth, security headers
+│   ├── auth/jwt.py          # JWT tokens, password hashing, RBAC, MFA, user store
+│   ├── realtime/websocket.py# WebSocket alert streaming (authenticated)
 │   ├── monitoring/metrics.py# Prometheus, PSI drift, alert fatigue
 │   ├── ml/
 │   │   ├── fairness.py      # Subgroup audit, conformal prediction, calibration
-│   │   ├── synthetic_data.py# NHANES-powered synthetic vital sign generation
-│   │   ├── trainer.py       # Model training pipeline
-│   │   └── predictor.py     # Inference and prediction
+│   │   ├── synthetic_data.py# NHANES + MIMIC-III synthetic data with confounders
+│   │   ├── trainer.py       # Model training pipeline (vitals + labs)
+│   │   ├── predictor.py     # Inference with persistent state (SQLite)
+│   │   └── state_store.py   # SQLite patient state persistence (replaces in-memory)
+│   ├── fhir/
+│   │   ├── listener.py      # HL7v2 MLLP + FHIR R4 webhook auto-ingestion
 │   ├── billing/            # Stripe 3-tier SaaS billing
 │   ├── patients/           # Patient CRUD + vitals persistence
 │   ├── alerts/             # SMS (Twilio + Africa's Talking), push, dispatcher
@@ -94,13 +97,20 @@ alembic upgrade head
 
 ## Model Performance
 
-NHANES-calibrated test set results (LightGBM, vitals-only features):
+Trained on synthetic data with sick-but-not-septic confounders (post-surgical,
+dehydration, pain, COPD/HF exacerbation, viral infection). Lab values
+(lactate, WBC, procalcitonin) included. **AUROC is realistic — not inflated.**
 
-| Metric      | Value  |
-|-------------|--------|
-| AUROC       | 0.9916 |
-| Sensitivity | 0.9022 |
-| F1 Score    | 0.9250 |
+> **Note:** Synthetic data provides a development baseline only. Production
+> deployment requires retrospective validation on MIMIC-IV/eICU and a
+> prospective clinical trial per FDA SaMD guidelines.
+
+| Metric      | Value  | Note |
+|-------------|--------|------|
+| AUROC       | ~0.86  | Realistic with confounders |
+| Sensitivity | ~0.59  | At default threshold (0.5) |
+| Specificity | ~0.93  | Low false-alarm rate |
+| Sens@90Spec | ~0.68  | Clinical operating point |
 
 ---
 
@@ -108,12 +118,16 @@ NHANES-calibrated test set results (LightGBM, vitals-only features):
 
 | # | Gap | Implementation |
 |---|---|---|
-| 1 | Rate limiting | Token-bucket (5 req/s API, 0.5 req/s LLM) + WAF rules |
-| 2 | Hard-coded API keys | SecretManager reads env vars only |
-| 3 | Exposed endpoints | CORS whitelist; WAF; CSP headers; no * origins |
-| 4 | Encryption | AES-256-GCM PII, RDS KMS, TLS 1.3 |
-| 5 | Prompt injection | 12-pattern regex + structural isolation + client-side pre-filter |
-| 6 | Webhook security | HMAC-SHA256 + 5-minute replay window |
+| 1 | Rate limiting | Token-bucket (10 req/s API, 2 req/s ML, 0.5 req/s copilot) |
+| 2 | Auth by default | `SEPSIS_AUTH_ENABLED=true`; JWT tokens; SQLite user store |
+| 3 | Exposed endpoints | CORS whitelist; HSTS; CSP; X-Frame-Options DENY |
+| 4 | WebSocket auth | Token-based handshake; rejects unauthenticated connections |
+| 5 | LLM isolation | Enterprise flag required; de-identified data only; BAA required |
+| 6 | Security headers | HSTS (2yr preload), CSP, nosniff, X-XSS-Protection |
+| 7 | Prompt injection | 12-pattern regex + structural isolation + client-side filter |
+| 8 | Webhook security | HMAC-SHA256 + 5-minute replay window |
+| 9 | Password security | PBKDF2-SHA256 (200K iterations) or bcrypt + account lockout |
+| 10 | Patient state | SQLite WAL mode (persists across restarts, multi-worker safe) |
 
 ---
 

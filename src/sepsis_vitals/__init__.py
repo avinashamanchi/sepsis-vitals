@@ -1,3 +1,3 @@
-"""Sepsis Vitals — vitals-only sepsis prediction for low-resource hospitals."""
+"""Sepsis Vitals — vitals + lab-augmented sepsis prediction for district hospitals."""
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"

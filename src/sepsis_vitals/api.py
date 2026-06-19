@@ -180,6 +180,9 @@ class VitalsInput(BaseModel):
     spo2: Optional[float] = Field(None, ge=0, le=100, description="Oxygen saturation %")
     gcs: Optional[float] = Field(None, ge=3, le=15, description="Glasgow Coma Scale")
     map: Optional[float] = Field(None, ge=20, le=200, description="Mean arterial pressure mmHg")
+    lactate: Optional[float] = Field(None, ge=0, le=30, description="Serum lactate mmol/L")
+    wbc: Optional[float] = Field(None, ge=0, le=100, description="White blood cell count x10^9/L")
+    procalcitonin: Optional[float] = Field(None, ge=0, le=200, description="Procalcitonin ng/mL")
 
 
 class ComorbidityInput(BaseModel):
@@ -495,14 +498,31 @@ async def model_info(user: Dict = Depends(verify_auth)):
 # AI Clinical Copilot (Anthropic-powered)
 # ---------------------------------------------------------------------------
 
+# Enterprise LLM feature gate — opt-in only, requires signed BAA
+_enterprise_llm_enabled = os.getenv("SEPSIS_ENTERPRISE_LLM", "false").lower() == "true"
+
+
+def _deidentify_vitals(vitals: dict) -> dict:
+    """Strip any patient-identifying information before sending to external LLM.
+
+    Only numeric clinical measurements are sent. No names, MRNs, DOBs, or
+    free-text fields cross the boundary.
+    """
+    safe_keys = {
+        "temperature", "heart_rate", "resp_rate", "sbp", "dbp", "spo2",
+        "gcs", "map", "lactate", "wbc", "procalcitonin",
+    }
+    return {k: v for k, v in vitals.items() if k in safe_keys}
+
+
 @app.post("/copilot", response_model=CopilotResponse, dependencies=[Depends(check_rate_limit)])
 async def clinical_copilot(body: CopilotRequest, user: Dict = Depends(verify_auth)):
-    """AI clinical decision support using Claude.
+    """AI clinical decision support.
 
-    Analyzes vitals, scores, and ML prediction to provide natural-language
-    clinical guidance. Falls back to rule-based analysis if API key unavailable.
+    Uses deterministic rule-based analysis by default. LLM-powered analysis
+    is only available when SEPSIS_ENTERPRISE_LLM=true (requires BAA with
+    Anthropic and explicit opt-in).
     """
-    ip = _client_ip(body) if hasattr(body, 'client') else "api"
     if not _copilot_limiter.allow("copilot_global"):
         raise HTTPException(status_code=429, detail="Copilot rate limit exceeded. Max 1 request per 2 seconds.")
 
@@ -525,18 +545,20 @@ async def clinical_copilot(body: CopilotRequest, user: Dict = Depends(verify_aut
         )
         ml_risk = pred.to_dict()
 
-    # Try Anthropic API, fall back to rule-based
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if api_key:
-        try:
-            analysis = await _anthropic_copilot(
-                vitals_dict, scores_dict, ml_risk, body.age_years, body.question
-            )
-            return analysis
-        except Exception:
-            pass  # Fall back to rule-based
+    # LLM copilot: ONLY available under enterprise flag with BAA
+    if _enterprise_llm_enabled:
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if api_key:
+            try:
+                safe_vitals = _deidentify_vitals(vitals_dict)
+                analysis = await _anthropic_copilot(
+                    safe_vitals, scores_dict, ml_risk, body.age_years, body.question
+                )
+                return analysis
+            except Exception:
+                logger.warning("LLM copilot failed, falling back to rule-based", exc_info=True)
 
-    # Rule-based fallback
+    # Default: deterministic rule-based analysis (legally safe, no hallucination risk)
     return _rule_based_copilot(vitals_dict, scores_dict, ml_risk, body.age_years)
 
 
@@ -640,6 +662,27 @@ def _rule_based_copilot(
     if gcs and gcs < 15:
         concerns.append(f"Altered consciousness (GCS {gcs}/15) — qSOFA criterion")
 
+    # Lab value analysis
+    lactate = vitals.get("lactate")
+    if lactate is not None:
+        if lactate >= 4.0:
+            concerns.append(f"CRITICAL lactate ({lactate} mmol/L) — tissue hypoperfusion, septic shock criterion")
+            risk_level = "critical"
+        elif lactate >= 2.0:
+            concerns.append(f"Elevated lactate ({lactate} mmol/L) — possible tissue hypoperfusion")
+
+    wbc = vitals.get("wbc")
+    if wbc is not None:
+        if wbc > 12.0:
+            concerns.append(f"Leukocytosis (WBC {wbc} x10^9/L) — possible infection")
+        elif wbc < 4.0:
+            concerns.append(f"Leukopenia (WBC {wbc} x10^9/L) — immunosuppression or severe infection")
+
+    pct = vitals.get("procalcitonin")
+    if pct is not None and pct > 0.5:
+        concerns.append(f"Elevated procalcitonin ({pct} ng/mL) — bacterial infection likely")
+        actions.append("Consider antibiotic initiation based on procalcitonin guidance")
+
     qsofa = scores.get("qsofa", 0)
     sirs = scores.get("sirs_count", 0)
 
@@ -652,12 +695,12 @@ def _rule_based_copilot(
     if risk_level == "critical" or qsofa >= 2:
         risk_level = "critical"
         actions.insert(0, "IMMEDIATE clinical assessment — activate sepsis protocol")
-        actions.append("Obtain serum lactate level")
+        actions.append("Obtain serum lactate level" if lactate is None else "Repeat lactate in 2-4 hours")
         actions.append("Administer broad-spectrum antibiotics within 1 hour")
         actions.append("Initiate Surviving Sepsis Campaign hour-1 bundle")
     elif risk_level == "high" or qsofa >= 1:
         actions.insert(0, "Urgent clinical review within 30 minutes")
-        actions.append("Check serum lactate and complete blood count")
+        actions.append("Check serum lactate and complete blood count" if lactate is None else "Monitor lactate trend")
     elif risk_level == "moderate" or sirs >= 2:
         actions.append("Reassess vitals in 1-2 hours")
         actions.append("Consider infection workup if clinical suspicion")

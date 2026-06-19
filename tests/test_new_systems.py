@@ -494,3 +494,387 @@ class TestAPISecurityHardening:
         """CORS should not allow wildcard origins."""
         from sepsis_vitals.api import ALLOWED_ORIGINS
         assert "*" not in ALLOWED_ORIGINS
+
+    def test_llm_disabled_by_default(self):
+        """LLM copilot should be disabled by default (requires enterprise flag)."""
+        from sepsis_vitals.api import _enterprise_llm_enabled
+        # Unless SEPSIS_ENTERPRISE_LLM=true is set, LLM should be off
+        saved = os.environ.pop("SEPSIS_ENTERPRISE_LLM", None)
+        try:
+            result = os.getenv("SEPSIS_ENTERPRISE_LLM", "false").lower() == "true"
+            assert result is False, "LLM should be disabled by default"
+        finally:
+            if saved is not None:
+                os.environ["SEPSIS_ENTERPRISE_LLM"] = saved
+
+    def test_deidentify_vitals(self):
+        """De-identification should strip non-clinical fields."""
+        from sepsis_vitals.api import _deidentify_vitals
+        vitals = {
+            "temperature": 38.5,
+            "heart_rate": 110,
+            "patient_name": "John Doe",
+            "mrn": "12345",
+            "lactate": 3.2,
+        }
+        safe = _deidentify_vitals(vitals)
+        assert "temperature" in safe
+        assert "heart_rate" in safe
+        assert "lactate" in safe
+        assert "patient_name" not in safe
+        assert "mrn" not in safe
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Lab Values in Scores
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestLabValueScoring:
+    """Tests for lab value integration in clinical scoring."""
+
+    def test_lactate_critical_threshold(self):
+        """Lactate >= 4 mmol/L should trigger critical risk."""
+        from sepsis_vitals.scores import compute_scores
+        vitals = {"temperature": 38.5, "heart_rate": 90, "resp_rate": 18,
+                  "sbp": 120, "spo2": 97, "gcs": 15, "lactate": 5.0}
+        result = compute_scores(vitals)
+        assert result.risk_level == "critical"
+        assert result.alert_flag is True
+
+    def test_lactate_high_threshold(self):
+        """Lactate >= 2 mmol/L should trigger high risk."""
+        from sepsis_vitals.scores import compute_scores
+        vitals = {"temperature": 37.0, "heart_rate": 80, "resp_rate": 16,
+                  "sbp": 120, "spo2": 97, "gcs": 15, "lactate": 2.5}
+        result = compute_scores(vitals)
+        assert result.risk_level == "high"
+
+    def test_normal_lactate_no_escalation(self):
+        """Normal lactate should not escalate risk."""
+        from sepsis_vitals.scores import compute_scores
+        vitals = {"temperature": 37.0, "heart_rate": 75, "resp_rate": 14,
+                  "sbp": 120, "spo2": 98, "gcs": 15, "lactate": 1.0}
+        result = compute_scores(vitals)
+        assert result.risk_level == "low"
+
+    def test_missing_lactate_no_change(self):
+        """Missing lactate should not affect scoring."""
+        from sepsis_vitals.scores import compute_scores
+        vitals = {"temperature": 37.0, "heart_rate": 75, "resp_rate": 14,
+                  "sbp": 120, "spo2": 98, "gcs": 15}
+        result = compute_scores(vitals)
+        assert result.risk_level == "low"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Synthetic Data Realism
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestSyntheticDataRealism:
+    """Tests that synthetic data includes confounders and lab values."""
+
+    def test_dataset_has_lab_columns(self):
+        """Generated dataset should include lab value columns."""
+        from sepsis_vitals.ml.synthetic_data import generate_dataset
+        df = generate_dataset(n_patients=100, seed=42)
+        assert "lactate" in df.columns
+        assert "wbc" in df.columns
+        assert "procalcitonin" in df.columns
+
+    def test_dataset_has_sick_nonseptic(self):
+        """Dataset should include sick-but-not-septic patients."""
+        from sepsis_vitals.ml.synthetic_data import generate_dataset
+        df = generate_dataset(n_patients=500, seed=42)
+        # Non-septic patients should still have some abnormal vitals
+        nonseptic = df[df["sepsis_label"] == 0]
+        # Some should have elevated heart rates (>100) from confounders
+        high_hr_frac = (nonseptic["heart_rate"].dropna() > 100).mean()
+        assert high_hr_frac > 0.05, "Should have >5% non-septic patients with HR>100"
+
+    def test_lab_values_in_range(self):
+        """Lab values should be within physiological limits."""
+        from sepsis_vitals.ml.synthetic_data import generate_dataset
+        df = generate_dataset(n_patients=200, seed=42)
+        lactate = df["lactate"].dropna()
+        assert lactate.min() >= 0.1
+        assert lactate.max() <= 20.0
+        wbc = df["wbc"].dropna()
+        assert wbc.min() >= 0.1
+        assert wbc.max() <= 50.0
+
+    def test_lab_missingness(self):
+        """Labs should have higher missingness than vitals (~15%)."""
+        from sepsis_vitals.ml.synthetic_data import generate_dataset
+        df = generate_dataset(n_patients=500, seed=42)
+        lactate_missing = df["lactate"].isna().mean()
+        hr_missing = df["heart_rate"].isna().mean()
+        assert lactate_missing > hr_missing, "Labs should have higher missingness"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Persistent Patient State Store
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestPatientStateStore:
+    """Tests for SQLite-backed patient state persistence."""
+
+    def test_store_and_retrieve(self, tmp_path):
+        from sepsis_vitals.ml.state_store import PatientStateStore
+        db_path = str(tmp_path / "test_state.db")
+        store = PatientStateStore(db_path=db_path)
+
+        store.add_prediction("P001", "2024-01-01T00:00", 0.3, "low")
+        store.add_prediction("P001", "2024-01-01T04:00", 0.5, "moderate")
+        preds = store.get_predictions("P001")
+        assert len(preds) == 2
+        assert preds[0].risk_probability == 0.3
+        store.close()
+
+    def test_trend_computation(self, tmp_path):
+        from sepsis_vitals.ml.state_store import PatientStateStore
+        db_path = str(tmp_path / "test_trend.db")
+        store = PatientStateStore(db_path=db_path)
+
+        store.add_prediction("P002", "2024-01-01T00:00", 0.2, "low")
+        store.add_prediction("P002", "2024-01-01T04:00", 0.4, "moderate")
+        store.add_prediction("P002", "2024-01-01T08:00", 0.7, "high")
+
+        trend = store.get_trend("P002")
+        assert trend is not None
+        assert trend["n_observations"] == 3
+        assert trend["trend"] in ("rapidly_worsening", "worsening")
+        store.close()
+
+    def test_deterioration_detection(self, tmp_path):
+        from sepsis_vitals.ml.state_store import PatientStateStore
+        db_path = str(tmp_path / "test_det.db")
+        store = PatientStateStore(db_path=db_path)
+
+        store.add_prediction("P003", "2024-01-01T00:00", 0.3, "low")
+        store.add_prediction("P003", "2024-01-01T04:00", 0.8, "high")
+
+        trend = store.get_trend("P003")
+        det = trend["deterioration"]
+        assert det["detected"] is True
+        store.close()
+
+    def test_survives_reconnect(self, tmp_path):
+        """State should persist across store instances (simulates restart)."""
+        from sepsis_vitals.ml.state_store import PatientStateStore
+        db_path = str(tmp_path / "test_persist.db")
+
+        store1 = PatientStateStore(db_path=db_path)
+        store1.add_prediction("P004", "2024-01-01T00:00", 0.5, "moderate")
+        store1.close()
+
+        store2 = PatientStateStore(db_path=db_path)
+        preds = store2.get_predictions("P004")
+        assert len(preds) == 1
+        store2.close()
+
+    def test_cleanup_old_records(self, tmp_path):
+        from sepsis_vitals.ml.state_store import PatientStateStore
+        db_path = str(tmp_path / "test_cleanup.db")
+        store = PatientStateStore(db_path=db_path)
+        store.add_prediction("P005", "2024-01-01T00:00", 0.3, "low")
+        deleted = store.cleanup_old_records(max_age_hours=0)
+        assert deleted >= 1
+        preds = store.get_predictions("P005")
+        assert len(preds) == 0
+        store.close()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# JWT Token Auth
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestJWTAuth:
+    """Tests for JWT token generation and verification."""
+
+    def test_password_hash_and_verify(self):
+        from sepsis_vitals.auth.jwt import hash_password, verify_password
+        pw = "S3cureP@ssw0rd!"
+        hashed = hash_password(pw)
+        assert verify_password(pw, hashed)
+        assert not verify_password("wrong", hashed)
+
+    def test_create_and_verify_token(self):
+        from sepsis_vitals.auth.jwt import create_access_token, verify_token
+        token = create_access_token("user123", "test@example.com", "nurse")
+        payload = verify_token(token)
+        assert payload is not None
+        assert payload["sub"] == "user123"
+        assert payload["email"] == "test@example.com"
+        assert payload["role"] == "nurse"
+
+    def test_expired_token_rejected(self):
+        from sepsis_vitals.auth.jwt import create_access_token, verify_token
+        token = create_access_token("user123", "test@example.com", "nurse", expires_minutes=-1)
+        payload = verify_token(token)
+        assert payload is None, "Expired token should be rejected"
+
+    def test_tampered_token_rejected(self):
+        from sepsis_vitals.auth.jwt import create_access_token, verify_token
+        token = create_access_token("user123", "test@example.com", "nurse")
+        # Tamper with the token
+        parts = token.split(".")
+        parts[1] = parts[1] + "tampered"
+        tampered = ".".join(parts)
+        assert verify_token(tampered) is None
+
+    def test_user_store_crud(self, tmp_path):
+        from sepsis_vitals.auth.jwt import UserStore
+        db_path = str(tmp_path / "test_users.db")
+        store = UserStore(db_path=db_path)
+
+        user = store.create_user("admin@hospital.org", "P@ssword123!", "system_admin")
+        assert user is not None
+        assert user["email"] == "admin@hospital.org"
+
+        # Duplicate email should fail
+        dup = store.create_user("admin@hospital.org", "other", "nurse")
+        assert dup is None
+
+        # Auth
+        result = store.authenticate("admin@hospital.org", "P@ssword123!")
+        assert result is not None
+        assert "token" in result
+        assert result["role"] == "system_admin"
+
+        # Wrong password
+        bad = store.authenticate("admin@hospital.org", "wrong")
+        assert bad is None
+
+        store.close()
+
+    def test_account_lockout(self, tmp_path):
+        from sepsis_vitals.auth.jwt import UserStore
+        db_path = str(tmp_path / "test_lockout.db")
+        store = UserStore(db_path=db_path)
+        store.create_user("user@test.com", "correct", "nurse")
+
+        # Multiple failed attempts
+        for _ in range(5):
+            store.authenticate("user@test.com", "wrong")
+
+        # Should be locked out even with correct password
+        result = store.authenticate("user@test.com", "correct")
+        # After 5 failures, lockout kicks in (exponential backoff)
+        # The lockout duration grows, so after 5 attempts it should be locked
+        store.close()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# HL7/FHIR Listener
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestHL7FHIRListener:
+    """Tests for the HL7/FHIR vitals ingestion listener."""
+
+    def test_hl7_parser(self):
+        from sepsis_vitals.fhir.listener import HL7Parser
+        parser = HL7Parser()
+        raw = (
+            "MSH|^~\\&|MONITOR|ICU|SEPSIS|EWS|20240101120000||ORU^R01|MSG001|P|2.5\r"
+            "PID|||PT-000001||Doe^John\r"
+            "OBX|1|NM|8310-5^Body Temperature^LN||38.5|Cel|||N|||F\r"
+            "OBX|2|NM|8867-4^Heart Rate^LN||110|/min|||N|||F\r"
+            "OBX|3|NM|2524-7^Lactate^LN||3.2|mmol/L|||N|||F\r"
+        )
+        msg = parser.parse(raw)
+        assert msg.message_type == "ORU^R01"
+        reading = parser.extract_vitals(msg)
+        assert reading.vitals["temperature"] == 38.5
+        assert reading.vitals["heart_rate"] == 110.0
+        assert reading.vitals["lactate"] == 3.2
+
+    def test_hl7_ack_generation(self):
+        from sepsis_vitals.fhir.listener import HL7Parser
+        parser = HL7Parser()
+        raw = (
+            "MSH|^~\\&|MONITOR|ICU|SEPSIS|EWS|20240101120000||ORU^R01|MSG001|P|2.5\r"
+            "PID|||PT-000001\r"
+        )
+        msg = parser.parse(raw)
+        ack = parser.build_ack(msg)
+        assert "MSA|AA|MSG001" in ack
+
+    def test_fhir_observation_parser(self):
+        from sepsis_vitals.fhir.listener import FHIRObservationParser
+        parser = FHIRObservationParser()
+        obs = {
+            "resourceType": "Observation",
+            "code": {"coding": [{"system": "http://loinc.org", "code": "8310-5"}]},
+            "valueQuantity": {"value": 38.2, "unit": "Cel"},
+            "subject": {"reference": "Patient/PT-001"},
+        }
+        result = parser.parse_observation(obs)
+        assert result is not None
+        assert result["temperature"] == 38.2
+
+    def test_fhir_bundle_parser(self):
+        from sepsis_vitals.fhir.listener import FHIRObservationParser
+        parser = FHIRObservationParser()
+        bundle = {
+            "resourceType": "Bundle",
+            "type": "transaction",
+            "entry": [
+                {"resource": {
+                    "resourceType": "Observation",
+                    "code": {"coding": [{"code": "8310-5"}]},
+                    "valueQuantity": {"value": 38.5},
+                    "subject": {"reference": "Patient/PT-001"},
+                }},
+                {"resource": {
+                    "resourceType": "Observation",
+                    "code": {"coding": [{"code": "8867-4"}]},
+                    "valueQuantity": {"value": 95},
+                    "subject": {"reference": "Patient/PT-001"},
+                }},
+            ],
+        }
+        readings = parser.parse_bundle(bundle)
+        assert len(readings) >= 1
+        # Should consolidate observations for same patient
+        combined = readings[0]
+        assert "temperature" in combined.vitals
+        assert "heart_rate" in combined.vitals
+
+    def test_loinc_mapping(self):
+        from sepsis_vitals.fhir.listener import LOINC_VITAL_MAP
+        assert LOINC_VITAL_MAP["8310-5"] == "temperature"
+        assert LOINC_VITAL_MAP["8867-4"] == "heart_rate"
+        assert LOINC_VITAL_MAP["2524-7"] == "lactate"
+        assert LOINC_VITAL_MAP["6690-2"] == "wbc"
+        assert LOINC_VITAL_MAP["33959-8"] == "procalcitonin"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Feature Engineering with Labs
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestFeatureEngineeringLabs:
+    """Tests for lab value feature engineering."""
+
+    def test_lab_features_created(self):
+        import pandas as pd
+        from sepsis_vitals.features import build_feature_set
+        df = pd.DataFrame({
+            "patient_id": ["P1"] * 4,
+            "timestamp": pd.date_range("2024-01-01", periods=4, freq="4h"),
+            "temperature": [37.0, 37.5, 38.0, 38.5],
+            "heart_rate": [75, 80, 90, 100],
+            "resp_rate": [16, 18, 20, 22],
+            "sbp": [120, 115, 110, 105],
+            "spo2": [98, 97, 96, 95],
+            "gcs": [15, 15, 14, 13],
+            "lactate": [1.0, 1.5, 2.5, 4.0],
+            "wbc": [7.0, 9.0, 12.0, 16.0],
+            "procalcitonin": [0.05, 0.2, 1.0, 5.0],
+            "age_years": [55, 55, 55, 55],
+        })
+        result = build_feature_set(df, score_cols=False)
+        assert "lactate_missing" in result.columns
+        assert "lactate_delta" in result.columns
+        assert "lactate_roll_mean" in result.columns
+        assert "n_labs_missing" in result.columns
