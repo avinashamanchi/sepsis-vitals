@@ -196,10 +196,11 @@
       "val_npv": 0.876938686766198,
       "val_ppv": 0.7496995708154507
     },
-    "intended_use": "Sepsis risk screening in district hospitals",
-    "limitations": "Vitals + labs (lactate, WBC, procalcitonin) \u2014 no imaging features; trained on synthetic data only",
-    "training_data": "Synthetic dataset calibrated to NHANES population distributions",
-    "fairness_notes": "Trained with demographic features; fairness audit recommended"
+    "intended_use": "Sepsis risk screening in district hospitals. NOT cleared for autonomous clinical decisions — requires clinician review.",
+    "limitations": "Vitals + labs (lactate, WBC, procalcitonin) only — no imaging, culture, or medication features. Trained on synthetic data; must be validated on MIMIC-IV or local EHR cohort before clinical deployment. Performance metrics are pre-validation estimates and may not generalize. Fairness audit across demographic subgroups not yet completed.",
+    "training_data": "Synthetic dataset (10K patients) calibrated to NHANES population distributions. NOT trained on real patient data. Clinical validation on MIMIC-IV or institutional EHR data is REQUIRED before any deployment.",
+    "regulatory_status": "Research use only. Not FDA-cleared, not CE-marked. Must complete 510(k) or De Novo pathway before clinical use.",
+    "fairness_notes": "Trained with demographic features (age); fairness audit across race, sex, and age subgroups required before deployment"
   },
   "timestamp": "2026-06-19T00:16:42.284641"
 }

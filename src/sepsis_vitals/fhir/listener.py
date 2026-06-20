@@ -33,7 +33,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
+import ssl
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -873,6 +875,9 @@ class MLLPServer:
         host: str = "0.0.0.0",
         port: int = 2575,
         queue: Optional[VitalsIngestionQueue] = None,
+        tls_cert: Optional[str] = None,
+        tls_key: Optional[str] = None,
+        tls_ca: Optional[str] = None,
     ) -> None:
         self.host = host
         self.port = port
@@ -880,6 +885,10 @@ class MLLPServer:
         self._parser = HL7Parser()
         self._server: Optional[asyncio.AbstractServer] = None
         self._active_connections: int = 0
+        # TLS configuration — read from params or environment
+        self._tls_cert = tls_cert or os.environ.get("MLLP_TLS_CERT")
+        self._tls_key = tls_key or os.environ.get("MLLP_TLS_KEY")
+        self._tls_ca = tls_ca or os.environ.get("MLLP_TLS_CA")
         self._stats = {
             "connections": 0,
             "messages_received": 0,
@@ -897,21 +906,68 @@ class MLLPServer:
         """Start the MLLP server.
 
         This coroutine starts the TCP server and serves connections until
-        ``stop()`` is called or the task is cancelled.
+        ``stop()`` is called or the task is cancelled.  When TLS certificate
+        and key paths are configured (via constructor args or MLLP_TLS_CERT /
+        MLLP_TLS_KEY environment variables), the server wraps connections in
+        TLS to satisfy HIPAA transit encryption requirements.
         """
+        ssl_ctx = self._create_ssl_context()
+
         self._server = await asyncio.start_server(
-            self._handle_client, self.host, self.port
+            self._handle_client, self.host, self.port, ssl=ssl_ctx,
         )
 
+        proto = "MLLP+TLS" if ssl_ctx else "MLLP (plaintext)"
         addrs = [
             str(sock.getsockname()) for sock in self._server.sockets
         ]
         logger.info(
-            "MLLP server started on %s (HL7v2 ingestion active)", addrs
+            "%s server started on %s (HL7v2 ingestion active)", proto, addrs
         )
+        if not ssl_ctx and os.environ.get("SEPSIS_ENV") == "production":
+            logger.warning(
+                "MLLP running WITHOUT TLS in production. "
+                "Transmitting PHI over unencrypted TCP violates HIPAA "
+                "Security Rule §164.312(e)(1). Set MLLP_TLS_CERT and "
+                "MLLP_TLS_KEY or route traffic through a TLS tunnel."
+            )
 
         async with self._server:
             await self._server.serve_forever()
+
+    def _create_ssl_context(self) -> Optional[ssl.SSLContext]:
+        """Build an SSL context if TLS cert/key are configured.
+
+        Returns ``None`` when TLS is not configured, causing the server
+        to fall back to plaintext TCP.
+        """
+        if not self._tls_cert or not self._tls_key:
+            return None
+
+        try:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+            ctx.load_cert_chain(self._tls_cert, self._tls_key)
+
+            if self._tls_ca:
+                # Mutual TLS: require client certificate
+                ctx.load_verify_locations(self._tls_ca)
+                ctx.verify_mode = ssl.CERT_REQUIRED
+                logger.info(
+                    "MLLP TLS: mutual authentication enabled (CA: %s)",
+                    self._tls_ca,
+                )
+            else:
+                ctx.verify_mode = ssl.CERT_NONE
+
+            logger.info(
+                "MLLP TLS enabled (cert: %s, min version: TLSv1.2)",
+                self._tls_cert,
+            )
+            return ctx
+        except Exception:
+            logger.exception("Failed to create MLLP TLS context")
+            raise
 
     async def _handle_client(
         self,

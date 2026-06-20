@@ -108,67 +108,68 @@ async def check_ml_rate_limit(request: Request) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Authentication (JWT-style token auth)
+# Authentication (JWT with short-lived access tokens + RBAC)
 # ---------------------------------------------------------------------------
 
-# Simple token-based auth. In production, replace with proper JWT RS256.
-API_KEYS: Dict[str, Dict[str, str]] = {}
 _auth_enabled = os.getenv("SEPSIS_AUTH_ENABLED", "true").lower() == "true"
 
 
-def _load_api_keys():
-    """Load API keys from environment."""
-    keys_json = os.getenv("SEPSIS_API_KEYS", "")
-    if keys_json:
-        try:
-            parsed = json.loads(keys_json)
-            for key, info in parsed.items():
-                API_KEYS[key] = info
-        except (json.JSONDecodeError, TypeError):
-            pass
+def _anonymous_user() -> Dict[str, Any]:
+    """Return a synthetic admin user dict when auth is disabled (dev only)."""
+    return {"id": "anonymous", "email": "dev@localhost", "role": "system_admin", "org_id": None}
 
 
-_load_api_keys()
+async def verify_auth(request: Request) -> Dict[str, Any]:
+    """Verify JWT access token from Authorization header.
 
-
-async def verify_auth(request: Request) -> Optional[Dict[str, str]]:
-    """Verify authorization header. Returns user info or None if auth disabled."""
+    Uses the real JWT middleware (short-lived HS256 tokens issued by
+    /auth/login) when auth is enabled.  Falls back to an anonymous
+    system_admin identity when SEPSIS_AUTH_ENABLED=false (development only).
+    """
     if not _auth_enabled:
-        return {"role": "system_admin", "user": "anonymous"}
+        return _anonymous_user()
 
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401,
-            detail="Missing or invalid Authorization header. Use 'Bearer <api_key>'.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    try:
+        from sepsis_vitals.auth.middleware import get_current_user
+        from sepsis_vitals.db import get_db
 
-    token = auth_header[7:]
-    user_info = API_KEYS.get(token)
-    if user_info is None:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid API key.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    return user_info
-
-
-def require_permission(permission: str):
-    """Dependency factory that checks RBAC permissions."""
-    async def _check(user: Dict = Depends(verify_auth)):
-        from sepsis_vitals.auth.jwt import check_permission, AuthorizationError
+        # Resolve the DB session dependency manually since we're not in
+        # a standard Depends() chain for this legacy shim.
+        db_gen = get_db()
+        db = next(db_gen)
         try:
-            check_permission(user.get("role", ""), permission)
-        except (AuthorizationError, Exception):
-            if _auth_enabled:
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"Insufficient permissions. Required: {permission}",
-                )
+            return get_current_user(request, db)
+        finally:
+            try:
+                next(db_gen)
+            except StopIteration:
+                pass
+    except ImportError:
+        logger.warning("Auth middleware not available — falling back to anonymous")
+        return _anonymous_user()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Auth verification failed: %s", exc)
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication failed",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+def require_role_dep(*roles: str):
+    """Dependency factory that ensures the current user has one of the given roles."""
+    allowed = set(roles)
+
+    async def _check(user: Dict = Depends(verify_auth)) -> Dict[str, Any]:
+        if user.get("role") not in allowed:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Insufficient permissions. Required role: {', '.join(sorted(allowed))}",
+            )
         return user
+
     return _check
 
 
@@ -494,7 +495,7 @@ async def model_info(user: Dict = Depends(verify_auth)):
         "version": predictor.metadata["version"],
         "is_calibrated": predictor.metadata.get("is_calibrated", False),
         "feature_count": len(predictor.feature_names),
-        "training_data": "NHANES-calibrated synthetic (10K patients)",
+        "training_data": predictor.metadata.get("model_card", {}).get("training_data", "Unknown"),
         "metrics": predictor.metadata.get("metrics", {}),
         "feature_importance": dict(list(
             predictor.metadata.get("feature_importance", {}).items()
@@ -747,10 +748,19 @@ async def websocket_alerts(websocket: WebSocket):
     Clients receive JSON messages when any patient triggers a high/critical alert.
     Requires a valid API key via ``?token=<key>`` query parameter when auth is enabled.
     """
-    # Authenticate WebSocket handshake
+    # Authenticate WebSocket handshake via JWT
     if _auth_enabled:
         token = websocket.query_params.get("token")
-        if not token or token not in API_KEYS:
+        if not token:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        try:
+            from sepsis_vitals.auth.tokens import decode_token, TokenError
+            payload = decode_token(token)
+            if payload.get("type") != "access":
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
+        except (TokenError, Exception):
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
 

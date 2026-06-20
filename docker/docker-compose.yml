@@ -75,9 +75,13 @@ services:
       SEPSIS_CONFIG_KEY:    ${SEPSIS_CONFIG_KEY}
       SEPSIS_ENV:           development
       SEPSIS_ALLOWED_ORIGINS: http://localhost:8000,http://localhost:3000
+      MLLP_TLS_CERT:        ${MLLP_TLS_CERT:-}
+      MLLP_TLS_KEY:         ${MLLP_TLS_KEY:-}
+      MLLP_TLS_CA:          ${MLLP_TLS_CA:-}
       LOG_LEVEL:            INFO
     ports:
       - "8080:8080"
+      - "2575:2575"
     networks: [sepsis_net]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -117,16 +121,19 @@ services:
       - "3001:3000"
     networks: [sepsis_net]
 
-  # ── Dashboard static files ─────────────────────────────────────────────────
+  # ── Dashboard (React frontend via nginx) ────────────────────────────────────
   dashboard:
-    image: nginx:1.25-alpine
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
     restart: unless-stopped
-    volumes:
-      - ../docs:/usr/share/nginx/html:ro
-      - ./docker/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      api: { condition: service_healthy }
     ports:
       - "8000:80"
     networks: [sepsis_net]
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost/health"]
       interval: 30s
+      timeout: 5s
+      retries: 3

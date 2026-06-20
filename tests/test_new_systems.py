@@ -989,3 +989,298 @@ class TestSecurityHardeningV2:
         """Billing router should have a deduplication cache."""
         from sepsis_vitals.billing.router import _processed_webhook_events
         assert isinstance(_processed_webhook_events, dict)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Production Audit Fixes
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestRedisPatientStateStore:
+    """Tests for Fix 1: Redis/in-memory patient state store."""
+
+    @pytest.mark.asyncio
+    async def test_inmemory_store_record_and_retrieve(self):
+        """InMemoryPatientStateStore should record vitals and compute rolling stats."""
+        from sepsis_vitals.state import InMemoryPatientStateStore
+        store = InMemoryPatientStateStore()
+        await store.connect()
+
+        await store.record_vital("P-001", "heart_rate", 80.0, timestamp=1000.0)
+        await store.record_vital("P-001", "heart_rate", 90.0, timestamp=1001.0)
+        await store.record_vital("P-001", "heart_rate", 100.0, timestamp=1002.0)
+
+        state = await store.get_patient_state("P-001")
+        assert state.patient_id == "P-001"
+        assert state.latest_vitals["heart_rate"] == 100.0
+        assert abs(state.rolling_means["heart_rate_roll_mean"] - 90.0) < 0.01
+        assert state.deltas["heart_rate_delta"] == 10.0
+        assert state.observation_count == 3
+
+    @pytest.mark.asyncio
+    async def test_inmemory_store_batch_record(self):
+        """Batch recording should store multiple vitals at once."""
+        from sepsis_vitals.state import InMemoryPatientStateStore
+        store = InMemoryPatientStateStore()
+
+        await store.record_vitals_batch("P-002", {
+            "temperature": 38.5,
+            "heart_rate": 110.0,
+            "sbp": 90.0,
+        }, timestamp=2000.0)
+
+        state = await store.get_patient_state("P-002")
+        assert state.latest_vitals["temperature"] == 38.5
+        assert state.latest_vitals["heart_rate"] == 110.0
+        assert state.latest_vitals["sbp"] == 90.0
+
+    @pytest.mark.asyncio
+    async def test_inmemory_store_baseline_risk(self):
+        """Baseline risk should persist and be retrievable."""
+        from sepsis_vitals.state import InMemoryPatientStateStore
+        store = InMemoryPatientStateStore()
+
+        await store.set_baseline_risk("P-003", 0.75)
+        state = await store.get_patient_state("P-003")
+        assert state.baseline_risk == 0.75
+
+    @pytest.mark.asyncio
+    async def test_inmemory_store_delete_patient(self):
+        """Deleting a patient should clear all state."""
+        from sepsis_vitals.state import InMemoryPatientStateStore
+        store = InMemoryPatientStateStore()
+
+        await store.record_vital("P-004", "heart_rate", 80.0)
+        await store.set_baseline_risk("P-004", 0.5)
+        await store.delete_patient("P-004")
+
+        state = await store.get_patient_state("P-004")
+        assert state.latest_vitals == {}
+        assert state.baseline_risk == 0.0
+
+    @pytest.mark.asyncio
+    async def test_create_state_store_falls_back_to_inmemory(self):
+        """Without REDIS_URL, factory should return InMemoryPatientStateStore."""
+        from sepsis_vitals.state import create_state_store, InMemoryPatientStateStore
+        saved = os.environ.pop("REDIS_URL", None)
+        try:
+            store = await create_state_store()
+            assert isinstance(store, InMemoryPatientStateStore)
+        finally:
+            if saved is not None:
+                os.environ["REDIS_URL"] = saved
+
+    def test_state_store_interfaces_match(self):
+        """Redis and InMemory stores should have the same public methods."""
+        from sepsis_vitals.state import RedisPatientStateStore, InMemoryPatientStateStore
+        redis_methods = {m for m in dir(RedisPatientStateStore) if not m.startswith("_")}
+        inmem_methods = {m for m in dir(InMemoryPatientStateStore) if not m.startswith("_")}
+        # InMemory should have at least all the methods Redis has (minus redis-specific internals)
+        public_api = {"connect", "close", "record_vital", "record_vitals_batch",
+                      "get_patient_state", "set_baseline_risk", "get_recent_patients",
+                      "delete_patient"}
+        assert public_api.issubset(redis_methods)
+        assert public_api.issubset(inmem_methods)
+
+
+class TestJWTAuthWiring:
+    """Tests for Fix 2: Real JWT auth wiring in api.py."""
+
+    @pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
+    def test_verify_auth_returns_anonymous_when_disabled(self):
+        """With auth disabled, verify_auth should return anonymous admin."""
+        from sepsis_vitals.api import _anonymous_user
+        user = _anonymous_user()
+        assert user["role"] == "system_admin"
+        assert user["email"] == "dev@localhost"
+        assert user["id"] == "anonymous"
+
+    @pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
+    def test_api_no_static_api_keys(self):
+        """api.py should no longer contain a static API_KEYS dictionary."""
+        import inspect
+        from sepsis_vitals import api
+        source = inspect.getsource(api)
+        assert "API_KEYS: Dict" not in source
+        assert "API_KEYS.get(token)" not in source
+        assert "Simple token-based auth" not in source
+
+    @pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
+    def test_websocket_auth_uses_jwt(self):
+        """WebSocket auth should validate JWT tokens, not static API keys."""
+        import inspect
+        from sepsis_vitals.api import websocket_alerts
+        source = inspect.getsource(websocket_alerts)
+        assert "decode_token" in source
+        assert "API_KEYS" not in source
+
+    @pytest.mark.skipif(not HAS_FASTAPI, reason="PyJWT not installed")
+    def test_token_creation_and_decode_roundtrip(self):
+        """JWT tokens should be creatable and decodable."""
+        saved = os.environ.get("SEPSIS_JWT_SECRET")
+        os.environ["SEPSIS_JWT_SECRET"] = "test-secret-key-for-unit-tests-32chars"
+        try:
+            # Force reload of secret
+            from sepsis_vitals.auth import tokens
+            tokens._SECRET_KEY = None
+
+            token = tokens.create_access_token(
+                user_id="user-123",
+                email="test@hospital.org",
+                role="nurse",
+                org_id="org-456",
+            )
+            payload = tokens.decode_token(token)
+            assert payload["sub"] == "user-123"
+            assert payload["email"] == "test@hospital.org"
+            assert payload["role"] == "nurse"
+            assert payload["type"] == "access"
+        finally:
+            tokens._SECRET_KEY = None
+            if saved is not None:
+                os.environ["SEPSIS_JWT_SECRET"] = saved
+            else:
+                os.environ.pop("SEPSIS_JWT_SECRET", None)
+
+
+class TestModelMetadataHonesty:
+    """Tests for Fix 3: Model metadata honesty about synthetic data."""
+
+    def test_metadata_states_synthetic_data(self):
+        """Model card must clearly state data is synthetic and not validated."""
+        metadata = json.load(open("models/model_metadata.json"))
+        card = metadata["model_card"]
+
+        # Must NOT claim real patient data
+        training_data = card["training_data"]
+        assert "Synthetic" in training_data or "synthetic" in training_data
+
+        # Must state validation is REQUIRED
+        assert "REQUIRED" in training_data or "required" in card["limitations"]
+
+    def test_metadata_has_regulatory_status(self):
+        """Model card must declare regulatory status."""
+        metadata = json.load(open("models/model_metadata.json"))
+        card = metadata["model_card"]
+        assert "regulatory_status" in card
+        assert "Research use only" in card["regulatory_status"]
+        assert "FDA" in card["regulatory_status"]
+
+    def test_metadata_limitations_comprehensive(self):
+        """Limitations must mention key gaps."""
+        metadata = json.load(open("models/model_metadata.json"))
+        limitations = metadata["model_card"]["limitations"]
+        assert "synthetic" in limitations.lower()
+        assert "validation" in limitations.lower() or "validated" in limitations.lower()
+
+    def test_mimic_loader_exists(self):
+        """MIMIC-IV loader must exist as path to real clinical data."""
+        from sepsis_vitals.ml.mimic_loader import MIMICLoader
+        assert MIMICLoader is not None
+
+
+class TestMLLPTLS:
+    """Tests for Fix 4: TLS on the MLLP HL7v2 listener."""
+
+    def test_mllp_server_accepts_tls_params(self):
+        """MLLPServer should accept tls_cert, tls_key, tls_ca parameters."""
+        import inspect
+        from sepsis_vitals.fhir.listener import MLLPServer
+        sig = inspect.signature(MLLPServer.__init__)
+        params = list(sig.parameters.keys())
+        assert "tls_cert" in params
+        assert "tls_key" in params
+        assert "tls_ca" in params
+
+    def test_mllp_server_reads_tls_env_vars(self):
+        """MLLPServer should read TLS config from environment variables."""
+        saved_cert = os.environ.get("MLLP_TLS_CERT")
+        saved_key = os.environ.get("MLLP_TLS_KEY")
+        try:
+            os.environ["MLLP_TLS_CERT"] = "/etc/ssl/mllp.crt"
+            os.environ["MLLP_TLS_KEY"] = "/etc/ssl/mllp.key"
+
+            from sepsis_vitals.fhir.listener import MLLPServer
+            server = MLLPServer()
+            assert server._tls_cert == "/etc/ssl/mllp.crt"
+            assert server._tls_key == "/etc/ssl/mllp.key"
+        finally:
+            if saved_cert is not None:
+                os.environ["MLLP_TLS_CERT"] = saved_cert
+            else:
+                os.environ.pop("MLLP_TLS_CERT", None)
+            if saved_key is not None:
+                os.environ["MLLP_TLS_KEY"] = saved_key
+            else:
+                os.environ.pop("MLLP_TLS_KEY", None)
+
+    def test_mllp_ssl_context_none_without_certs(self):
+        """Without TLS certs, _create_ssl_context should return None."""
+        from sepsis_vitals.fhir.listener import MLLPServer
+        server = MLLPServer(tls_cert=None, tls_key=None)
+        ctx = server._create_ssl_context()
+        assert ctx is None
+
+    def test_mllp_start_method_uses_ssl(self):
+        """start() should pass ssl context to asyncio.start_server."""
+        import inspect
+        from sepsis_vitals.fhir.listener import MLLPServer
+        source = inspect.getsource(MLLPServer.start)
+        assert "ssl=" in source
+        assert "_create_ssl_context" in source
+
+    def test_mllp_hipaa_warning_in_source(self):
+        """Production plaintext warning should reference HIPAA."""
+        import inspect
+        from sepsis_vitals.fhir.listener import MLLPServer
+        source = inspect.getsource(MLLPServer.start)
+        assert "HIPAA" in source
+        assert "164.312" in source
+
+
+class TestDockerVPCDeployment:
+    """Tests for Fix 5: Docker/VPC deployment (not GitHub Pages)."""
+
+    def test_frontend_dockerfile_exists(self):
+        """A dedicated frontend Dockerfile should exist."""
+        from pathlib import Path
+        dockerfile = Path("docker/Dockerfile.frontend")
+        assert dockerfile.exists(), "docker/Dockerfile.frontend is missing"
+        content = dockerfile.read_text()
+        assert "node" in content.lower()  # Uses Node to build
+        assert "nginx" in content.lower()  # Serves via nginx
+
+    def test_nginx_config_has_api_proxy(self):
+        """Nginx config should proxy /api/ to the backend."""
+        from pathlib import Path
+        conf = Path("docker/nginx/nginx.conf").read_text()
+        assert "proxy_pass http://api:8080" in conf
+        assert "/ws/" in conf  # WebSocket proxy
+        assert "upgrade" in conf  # WebSocket upgrade header
+
+    def test_nginx_config_has_security_headers(self):
+        """Nginx config should include security headers."""
+        from pathlib import Path
+        conf = Path("docker/nginx/nginx.conf").read_text()
+        assert "X-Frame-Options" in conf
+        assert "Strict-Transport-Security" in conf
+        assert "X-Content-Type-Options" in conf
+
+    def test_docker_compose_dashboard_builds_from_dockerfile(self):
+        """docker-compose dashboard service should build, not use plain nginx image."""
+        from pathlib import Path
+        compose = Path("docker/docker-compose.yml").read_text()
+        assert "Dockerfile.frontend" in compose
+
+    def test_docker_compose_mllp_port_exposed(self):
+        """docker-compose should expose MLLP port 2575."""
+        from pathlib import Path
+        compose = Path("docker/docker-compose.yml").read_text()
+        assert "2575:2575" in compose
+
+    def test_docker_compose_tls_env_vars(self):
+        """docker-compose should pass MLLP TLS environment variables."""
+        from pathlib import Path
+        compose = Path("docker/docker-compose.yml").read_text()
+        assert "MLLP_TLS_CERT" in compose
+        assert "MLLP_TLS_KEY" in compose
