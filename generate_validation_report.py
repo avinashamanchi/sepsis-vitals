@@ -280,6 +280,18 @@ def generate_html_report(artifacts: dict, output_path: str) -> str:
 <body>
 <div class="container">
 
+<nav style="margin-bottom:1.5rem;display:flex;gap:1rem;align-items:center;flex-wrap:wrap;">
+  <a href="/sepsis-vitals/" style="color:var(--accent);text-decoration:none;font-size:0.85rem;display:inline-flex;align-items:center;gap:0.4rem;">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+    Dashboard
+  </a>
+  <span style="color:var(--border);">|</span>
+  <a href="/sepsis-vitals/predict" style="color:var(--muted);text-decoration:none;font-size:0.85rem;">AI Predict</a>
+  <a href="/sepsis-vitals/analytics" style="color:var(--muted);text-decoration:none;font-size:0.85rem;">Analytics</a>
+  <a href="/sepsis-vitals/patients" style="color:var(--muted);text-decoration:none;font-size:0.85rem;">Patients</a>
+  <a href="/sepsis-vitals/alerts" style="color:var(--muted);text-decoration:none;font-size:0.85rem;">Alerts</a>
+</nav>
+
 <h1>Sepsis Vitals</h1>
 <p class="subtitle">
   Model Validation Report &mdash; v{version} &mdash; {generated}

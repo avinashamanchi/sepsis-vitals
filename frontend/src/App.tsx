@@ -1,6 +1,7 @@
 import { Routes, Route } from 'react-router-dom'
 import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
+import { BottomNav } from './components/BottomNav'
 import { Dashboard } from './pages/Dashboard'
 import { Patients } from './pages/Patients'
 import { ScoreLab } from './pages/ScoreLab'
@@ -15,7 +16,7 @@ export default function App() {
       <Sidebar />
       <div className="lg:ml-[220px] min-h-screen flex flex-col">
         <TopBar />
-        <main className="flex-1 p-4 lg:p-6">
+        <main className="flex-1 p-4 lg:p-6 pb-20 lg:pb-6">
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/patients" element={<Patients />} />
@@ -27,6 +28,7 @@ export default function App() {
           </Routes>
         </main>
       </div>
+      <BottomNav />
     </div>
   )
 }

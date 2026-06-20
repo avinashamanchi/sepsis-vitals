@@ -1,18 +1,36 @@
+import { useLocation } from 'react-router-dom'
 import { Menu, Bell } from 'lucide-react'
 import { useStore } from '../stores/useStore'
+
+const PAGE_TITLES: Record<string, string> = {
+  '/': 'Dashboard',
+  '/patients': 'Patients',
+  '/scores': 'Score Lab',
+  '/predict': 'AI Predict',
+  '/analytics': 'Analytics',
+  '/alerts': 'Alerts',
+  '/admin': 'Admin',
+}
 
 export function TopBar() {
   const { setSidebarOpen, alerts } = useStore()
   const unread = alerts.filter((a) => !a.dismissed).length
+  const { pathname } = useLocation()
+  const pageTitle = PAGE_TITLES[pathname] || 'Sepsis Vitals'
 
   return (
     <header className="sticky top-0 z-30 bg-surface/80 backdrop-blur-md border-b border-border px-4 lg:px-6 h-14 flex items-center justify-between">
-      <button
-        onClick={() => setSidebarOpen(true)}
-        className="lg:hidden p-2 -ml-2 text-text-secondary hover:text-text-primary"
-      >
-        <Menu className="w-5 h-5" />
-      </button>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => setSidebarOpen(true)}
+          className="lg:hidden p-2 -ml-2 text-text-secondary hover:text-text-primary"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
+        <span className="lg:hidden font-heading text-sm font-semibold text-text-primary">
+          {pageTitle}
+        </span>
+      </div>
 
       <div className="flex-1" />
 
