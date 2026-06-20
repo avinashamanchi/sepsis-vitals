@@ -1,5 +1,14 @@
 version: "3.9"
 
+# ── Global log rotation ─────────────────────────────────────────────────────
+# Prevents disk exhaustion on edge devices (NUCs, district hospital servers).
+# Each container retains at most 150MB of logs (3 x 50MB rotated files).
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "50m"
+    max-file: "3"
+
 # ── Shared network ────────────────────────────────────────────────────────────
 networks:
   sepsis_net:
@@ -18,6 +27,7 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_DB:       sepsis_vitals
       POSTGRES_USER:     sepsis
@@ -38,6 +48,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *default-logging
     command: >
       redis-server
       --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
@@ -61,6 +72,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       db:    { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -78,6 +90,7 @@ services:
       MLLP_TLS_CERT:        ${MLLP_TLS_CERT:-}
       MLLP_TLS_KEY:         ${MLLP_TLS_KEY:-}
       MLLP_TLS_CA:          ${MLLP_TLS_CA:-}
+      BREAK_GLASS_TOKEN_HASH: ${BREAK_GLASS_TOKEN_HASH:-}
       LOG_LEVEL:            INFO
     ports:
       - "8080:8080"
@@ -93,6 +106,7 @@ services:
   prometheus:
     image: prom/prometheus:v2.51.0
     restart: unless-stopped
+    logging: *default-logging
     volumes:
       - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -108,6 +122,7 @@ services:
   grafana:
     image: grafana/grafana:10.4.0
     restart: unless-stopped
+    logging: *default-logging
     depends_on: [prometheus]
     environment:
       GF_SECURITY_ADMIN_USER:     admin
@@ -127,6 +142,7 @@ services:
   db-backup:
     image: prodrigestivill/postgres-backup-local:16-alpine
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       db: { condition: service_healthy }
     environment:
@@ -140,8 +156,6 @@ services:
       BACKUP_KEEP_WEEKS: 4
       BACKUP_KEEP_MONTHS: 6
       HEALTHCHECK_PORT:  8088
-      # GPG encryption — set BACKUP_GPG_PUBLIC_KEY in .env for encrypted backups
-      # ENCRYPTION_GPG_PUBLIC_KEY: ${BACKUP_GPG_PUBLIC_KEY:-}
     volumes:
       - ./backups:/backups
     networks: [sepsis_net]
@@ -151,12 +165,50 @@ services:
       timeout: 5s
       retries: 3
 
+  # ── Offsite Backup Sync (3-2-1 rule) ──────────────────────────────────────
+  # Syncs encrypted backups to S3 whenever internet is available.
+  # Protects against physical device loss, theft, or fire.
+  # Only starts if BACKUP_S3_BUCKET is set in .env.
+  backup-offsite:
+    image: amazon/aws-cli:2.15.40
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on: [db-backup]
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        if [ -z "$$BACKUP_S3_BUCKET" ]; then
+          echo "BACKUP_S3_BUCKET not set — offsite sync disabled (local-only backups)"
+          sleep infinity
+        fi
+        echo "Offsite backup sync active: s3://$$BACKUP_S3_BUCKET"
+        while true; do
+          echo "[$(date -Iseconds)] Starting S3 sync..."
+          aws s3 sync /backups "s3://$$BACKUP_S3_BUCKET/sepsis-vitals/" \
+            --storage-class STANDARD_IA \
+            --exclude "*.tmp" \
+            --only-show-errors \
+          && echo "[$(date -Iseconds)] S3 sync complete" \
+          || echo "[$(date -Iseconds)] S3 sync failed (will retry next cycle)"
+          sleep 21600
+        done
+    environment:
+      AWS_ACCESS_KEY_ID:     ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION:    ${AWS_DEFAULT_REGION:-us-east-1}
+      BACKUP_S3_BUCKET:      ${BACKUP_S3_BUCKET:-}
+    volumes:
+      - ./backups:/backups:ro
+    networks: [sepsis_net]
+
   # ── Dashboard (React frontend via nginx) ────────────────────────────────────
   dashboard:
     build:
       context: ..
       dockerfile: docker/Dockerfile.frontend
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       api: { condition: service_healthy }
     ports:

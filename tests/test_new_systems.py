@@ -1438,3 +1438,254 @@ class TestDatabaseBackup:
         from pathlib import Path
         gitignore = Path(".gitignore").read_text()
         assert "backups" in gitignore.lower()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Production Audit Round 3
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestDockerLogRotation:
+    """Fix 1: Docker log rotation prevents disk exhaustion on edge devices."""
+
+    def test_docker_compose_has_logging_anchor(self):
+        """docker-compose must define x-logging anchor with rotation."""
+        from pathlib import Path
+        compose = Path("docker/docker-compose.yml").read_text()
+        assert "x-logging:" in compose
+        assert "default-logging" in compose
+        assert "max-size" in compose
+        assert "max-file" in compose
+
+    def test_all_services_use_log_rotation(self):
+        """Every service must reference the default-logging anchor."""
+        from pathlib import Path
+        compose = Path("docker/docker-compose.yml").read_text()
+        # Count services and logging references
+        services = ["db:", "redis:", "api:", "prometheus:", "grafana:",
+                     "db-backup:", "backup-offsite:", "dashboard:"]
+        for svc in services:
+            assert svc in compose, f"Service {svc} missing from docker-compose"
+        # Each service should have logging: *default-logging
+        logging_refs = compose.count("*default-logging")
+        assert logging_refs >= 7, (
+            f"Expected at least 7 services with *default-logging, found {logging_refs}"
+        )
+
+    def test_log_rotation_limits_reasonable(self):
+        """Log rotation should limit to reasonable sizes (not unlimited)."""
+        from pathlib import Path
+        compose = Path("docker/docker-compose.yml").read_text()
+        # Should use json-file driver
+        assert "json-file" in compose
+        # Max size should be reasonable (50MB or less)
+        assert '"50m"' in compose or "'50m'" in compose
+
+
+class TestBreakGlassEmergencyAccess:
+    """Fix 2: HIPAA § 164.312(a)(2)(ii) break-glass emergency access."""
+
+    def test_break_glass_env_var_in_docker_compose(self):
+        """docker-compose must pass BREAK_GLASS_TOKEN_HASH to API."""
+        from pathlib import Path
+        compose = Path("docker/docker-compose.yml").read_text()
+        assert "BREAK_GLASS_TOKEN_HASH" in compose
+
+    @pytest.mark.skipif(not HAS_SQLALCHEMY, reason="sqlalchemy not installed")
+    def test_break_glass_service_function_exists(self):
+        """break_glass_login must exist in auth service."""
+        from sepsis_vitals.auth.service import break_glass_login
+        assert callable(break_glass_login)
+
+    @pytest.mark.skipif(not HAS_SQLALCHEMY, reason="sqlalchemy not installed")
+    def test_break_glass_error_class_exists(self):
+        """BreakGlassError exception class must exist."""
+        from sepsis_vitals.auth.service import BreakGlassError
+        assert issubclass(BreakGlassError, Exception)
+
+    @pytest.mark.skipif(not HAS_SQLALCHEMY, reason="sqlalchemy not installed")
+    def test_break_glass_rejects_without_config(self):
+        """Break-glass should fail if BREAK_GLASS_TOKEN_HASH is not set."""
+        from sepsis_vitals.auth.service import (
+            BreakGlassError,
+            break_glass_login,
+            _BREAK_GLASS_TOKEN_HASH,
+        )
+        import sepsis_vitals.auth.service as bg_mod
+        saved = os.environ.pop("BREAK_GLASS_TOKEN_HASH", None)
+        bg_mod._BREAK_GLASS_TOKEN_HASH = None  # reset cache
+        try:
+            with pytest.raises(BreakGlassError, match="not configured"):
+                break_glass_login("some-token", "Clinical emergency reason", "127.0.0.1")
+        finally:
+            bg_mod._BREAK_GLASS_TOKEN_HASH = None
+            if saved is not None:
+                os.environ["BREAK_GLASS_TOKEN_HASH"] = saved
+
+    @pytest.mark.skipif(not HAS_SQLALCHEMY, reason="sqlalchemy not installed")
+    def test_break_glass_rejects_short_reason(self):
+        """Break-glass should require a clinical justification >= 10 chars."""
+        import hashlib
+        from sepsis_vitals.auth.service import BreakGlassError, break_glass_login
+        import sepsis_vitals.auth.service as bg_mod
+
+        token = "emergency-test-token-12345"
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        saved = os.environ.get("BREAK_GLASS_TOKEN_HASH")
+        os.environ["BREAK_GLASS_TOKEN_HASH"] = token_hash
+        bg_mod._BREAK_GLASS_TOKEN_HASH = None
+        try:
+            with pytest.raises(BreakGlassError, match="justification"):
+                break_glass_login(token, "short", "127.0.0.1")
+        finally:
+            bg_mod._BREAK_GLASS_TOKEN_HASH = None
+            if saved is not None:
+                os.environ["BREAK_GLASS_TOKEN_HASH"] = saved
+            else:
+                os.environ.pop("BREAK_GLASS_TOKEN_HASH", None)
+
+    @pytest.mark.skipif(not HAS_SQLALCHEMY, reason="sqlalchemy not installed")
+    def test_break_glass_rejects_wrong_token(self):
+        """Break-glass should reject an incorrect emergency token."""
+        import hashlib
+        from sepsis_vitals.auth.service import BreakGlassError, break_glass_login
+        import sepsis_vitals.auth.service as bg_mod
+
+        real_token = "correct-sealed-envelope-token"
+        token_hash = hashlib.sha256(real_token.encode()).hexdigest()
+        saved = os.environ.get("BREAK_GLASS_TOKEN_HASH")
+        os.environ["BREAK_GLASS_TOKEN_HASH"] = token_hash
+        bg_mod._BREAK_GLASS_TOKEN_HASH = None
+        try:
+            with pytest.raises(BreakGlassError, match="Invalid emergency token"):
+                break_glass_login(
+                    "wrong-token",
+                    "Patient in cardiac arrest, need vitals access",
+                    "10.0.0.5",
+                )
+        finally:
+            bg_mod._BREAK_GLASS_TOKEN_HASH = None
+            if saved is not None:
+                os.environ["BREAK_GLASS_TOKEN_HASH"] = saved
+            else:
+                os.environ.pop("BREAK_GLASS_TOKEN_HASH", None)
+
+    @pytest.mark.skipif(not HAS_PYJWT, reason="PyJWT not installed")
+    def test_break_glass_grants_read_only_access(self):
+        """Successful break-glass should return nurse (read-only) role token."""
+        import hashlib
+        from sepsis_vitals.auth.service import break_glass_login
+        import sepsis_vitals.auth.service as bg_mod
+
+        token = "sealed-envelope-emergency-token-xyz"
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+        saved_hash = os.environ.get("BREAK_GLASS_TOKEN_HASH")
+        saved_jwt = os.environ.get("SEPSIS_JWT_SECRET")
+        os.environ["BREAK_GLASS_TOKEN_HASH"] = token_hash
+        os.environ["SEPSIS_JWT_SECRET"] = "test-break-glass-jwt-secret-32chars"
+        bg_mod._BREAK_GLASS_TOKEN_HASH = None
+
+        # Reset JWT secret cache
+        from sepsis_vitals.auth import tokens
+        tokens._SECRET_KEY = None
+
+        try:
+            result = break_glass_login(
+                token,
+                "Patient desatting, nurse unable to log in, need immediate vitals",
+                "192.168.1.50",
+            )
+            assert result["token_type"] == "bearer"
+            assert result["expires_minutes"] == 60
+            assert result["role"] == "nurse"
+            assert "warning" in result
+            assert "access_token" in result
+
+            # Decode and verify the JWT
+            payload = tokens.decode_token(result["access_token"])
+            assert payload["sub"] == "break-glass-emergency"
+            assert payload["role"] == "nurse"
+            assert payload["type"] == "access"
+        finally:
+            bg_mod._BREAK_GLASS_TOKEN_HASH = None
+            tokens._SECRET_KEY = None
+            if saved_hash is not None:
+                os.environ["BREAK_GLASS_TOKEN_HASH"] = saved_hash
+            else:
+                os.environ.pop("BREAK_GLASS_TOKEN_HASH", None)
+            if saved_jwt is not None:
+                os.environ["SEPSIS_JWT_SECRET"] = saved_jwt
+            else:
+                os.environ.pop("SEPSIS_JWT_SECRET", None)
+
+    @pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
+    def test_break_glass_endpoint_exists_in_router(self):
+        """Router must have a /auth/break-glass POST endpoint."""
+        from sepsis_vitals.auth.router import router
+        routes = {(r.path, list(r.methods)[0]) for r in router.routes if hasattr(r, "methods")}
+        assert ("/auth/break-glass", "POST") in routes
+
+    @pytest.mark.skipif(not HAS_SQLALCHEMY, reason="sqlalchemy not installed")
+    def test_break_glass_fires_compliance_alerts(self):
+        """Successful break-glass must call _fire_break_glass_alerts."""
+        import inspect
+        from sepsis_vitals.auth.service import break_glass_login
+        source = inspect.getsource(break_glass_login)
+        assert "_fire_break_glass_alerts" in source
+
+    @pytest.mark.skipif(not HAS_SQLALCHEMY, reason="sqlalchemy not installed")
+    def test_break_glass_logs_at_critical_level(self):
+        """Break-glass must log at CRITICAL level for alerting."""
+        import inspect
+        from sepsis_vitals.auth.service import break_glass_login
+        source = inspect.getsource(break_glass_login)
+        assert ".critical(" in source
+        assert "BREAK-GLASS" in source
+
+
+class TestOffsiteBackupSync:
+    """Fix 3: Offsite S3 backup sync for 3-2-1 backup rule."""
+
+    def test_docker_compose_has_offsite_backup_service(self):
+        """docker-compose must include a backup-offsite service."""
+        from pathlib import Path
+        compose = Path("docker/docker-compose.yml").read_text()
+        assert "backup-offsite:" in compose
+
+    def test_offsite_backup_uses_aws_cli(self):
+        """Offsite backup should use the AWS CLI for S3 sync."""
+        from pathlib import Path
+        compose = Path("docker/docker-compose.yml").read_text()
+        assert "aws-cli" in compose or "amazon/aws-cli" in compose
+
+    def test_offsite_backup_graceful_without_bucket(self):
+        """Offsite backup should no-op gracefully if BACKUP_S3_BUCKET is empty."""
+        from pathlib import Path
+        compose = Path("docker/docker-compose.yml").read_text()
+        assert "BACKUP_S3_BUCKET" in compose
+        assert "sleep infinity" in compose  # Graceful no-op
+
+    def test_offsite_backup_depends_on_db_backup(self):
+        """Offsite backup must depend on db-backup service."""
+        from pathlib import Path
+        compose = Path("docker/docker-compose.yml").read_text()
+        # Find the backup-offsite section and check depends_on
+        lines = compose.split("\n")
+        in_offsite = False
+        has_dep = False
+        for line in lines:
+            if "backup-offsite:" in line:
+                in_offsite = True
+            elif in_offsite and "db-backup" in line:
+                has_dep = True
+                break
+            elif in_offsite and line.strip() and not line.startswith(" ") and not line.startswith("\t"):
+                break
+        assert has_dep, "backup-offsite must depend on db-backup"
+
+    def test_offsite_backup_mounts_backups_readonly(self):
+        """Offsite backup should mount backups directory as read-only."""
+        from pathlib import Path
+        compose = Path("docker/docker-compose.yml").read_text()
+        assert "/backups:ro" in compose

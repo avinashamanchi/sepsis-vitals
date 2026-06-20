@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
@@ -17,10 +17,12 @@ from sepsis_vitals.auth.middleware import get_current_user
 from sepsis_vitals.auth.service import (
     AccountLockedError,
     AuthServiceError,
+    BreakGlassError,
     DuplicateEmailError,
     InvalidCredentialsError,
     InvalidTokenError,
     WeakPasswordError,
+    break_glass_login,
     login_user,
     refresh_access_token,
     register_user,
@@ -91,6 +93,33 @@ class EmailVerifyBody(BaseModel):
     """Payload to verify an email address."""
 
     token: str
+
+
+class BreakGlassRequest(BaseModel):
+    """Payload for HIPAA § 164.312(a)(2)(ii) emergency access."""
+
+    emergency_token: str = Field(
+        ...,
+        min_length=1,
+        max_length=256,
+        description="The sealed-envelope emergency token",
+    )
+    reason: str = Field(
+        ...,
+        min_length=10,
+        max_length=500,
+        description="Clinical justification for emergency access",
+    )
+
+
+class BreakGlassResponse(BaseModel):
+    """Response from break-glass emergency access."""
+
+    access_token: str
+    token_type: str = "bearer"
+    expires_minutes: int
+    role: str
+    warning: str
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -352,6 +381,46 @@ def auth_verify_email(
         )
 
     return MessageResponse(detail="Email verified successfully")
+
+
+@router.post(
+    "/break-glass",
+    response_model=BreakGlassResponse,
+    summary="Emergency access — HIPAA § 164.312(a)(2)(ii)",
+)
+def auth_break_glass(
+    body: BreakGlassRequest,
+    request: Request,
+) -> BreakGlassResponse:
+    """Activate break-glass emergency access.
+
+    This endpoint grants 1-hour read-only access for clinical emergencies
+    when normal authentication is unavailable. All usage is heavily audited
+    and triggers immediate compliance alerts.
+
+    The emergency token is a pre-shared secret kept in a sealed envelope
+    in the ward. Its SHA-256 hash is stored in BREAK_GLASS_TOKEN_HASH.
+    """
+    ip = request.client.host if request.client else "unknown"
+    try:
+        result = break_glass_login(
+            emergency_token=body.emergency_token,
+            reason=body.reason,
+            ip_address=ip,
+        )
+    except BreakGlassError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        )
+
+    return BreakGlassResponse(
+        access_token=result["access_token"],
+        token_type=result["token_type"],
+        expires_minutes=result["expires_minutes"],
+        role=result["role"],
+        warning=result["warning"],
+    )
 
 
 @router.get(

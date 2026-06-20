@@ -59,6 +59,10 @@ class InvalidTokenError(AuthServiceError):
     """Raised when a verification or reset token is invalid."""
 
 
+class BreakGlassError(AuthServiceError):
+    """Raised when a break-glass emergency access attempt fails."""
+
+
 # ---------------------------------------------------------------------------
 # Password policy
 # ---------------------------------------------------------------------------
@@ -520,3 +524,144 @@ def verify_email(
     db_session.commit()
 
     return True
+
+
+# ---------------------------------------------------------------------------
+# Break-glass emergency access — HIPAA § 164.312(a)(2)(ii)
+# ---------------------------------------------------------------------------
+
+_BREAK_GLASS_TOKEN_HASH: str | None = None
+_BREAK_GLASS_EXPIRY_MINUTES = 60  # 1 hour read-only access
+
+
+def _get_break_glass_hash() -> str | None:
+    """Return the SHA-256 hash of the sealed-envelope emergency token.
+
+    Read from BREAK_GLASS_TOKEN_HASH env var. Returns None if not configured.
+    """
+    global _BREAK_GLASS_TOKEN_HASH  # noqa: PLW0603
+    if _BREAK_GLASS_TOKEN_HASH is None:
+        _BREAK_GLASS_TOKEN_HASH = os.environ.get("BREAK_GLASS_TOKEN_HASH", "")
+    return _BREAK_GLASS_TOKEN_HASH or None
+
+
+def break_glass_login(
+    emergency_token: str,
+    reason: str,
+    ip_address: str,
+) -> dict[str, Any]:
+    """Authenticate via break-glass emergency override.
+
+    HIPAA § 164.312(a)(2)(ii) requires an emergency access procedure.
+    This implements a sealed-envelope token approach:
+
+    1. A pre-shared emergency token is generated offline and its SHA-256
+       hash is stored in BREAK_GLASS_TOKEN_HASH.
+    2. The physical token is kept in a sealed envelope in the ward.
+    3. When used, this function validates the token, issues a 1-hour
+       read-only JWT, and fires compliance alerts.
+
+    Parameters
+    ----------
+    emergency_token:
+        The raw emergency token from the sealed envelope.
+    reason:
+        Free-text clinical justification (required, audited).
+    ip_address:
+        The requestor's IP address (for audit trail).
+
+    Returns
+    -------
+    dict
+        ``{"access_token": ..., "token_type": "bearer", "expires_minutes": 60}``
+
+    Raises
+    ------
+    BreakGlassError
+        If the token is invalid, not configured, or reason is empty.
+    """
+    import logging
+
+    bg_logger = logging.getLogger("sepsis_vitals.break_glass")
+
+    # Always log the attempt, even if it fails
+    bg_logger.critical(
+        "BREAK-GLASS ATTEMPT | ip=%s | reason=%s",
+        ip_address,
+        reason[:200],
+    )
+
+    expected_hash = _get_break_glass_hash()
+    if expected_hash is None:
+        bg_logger.error(
+            "BREAK-GLASS DENIED — not configured | ip=%s", ip_address
+        )
+        raise BreakGlassError(
+            "Emergency access is not configured. Contact system administrator."
+        )
+
+    if not reason or len(reason.strip()) < 10:
+        bg_logger.warning(
+            "BREAK-GLASS DENIED — insufficient reason | ip=%s | reason=%s",
+            ip_address,
+            reason[:200],
+        )
+        raise BreakGlassError(
+            "A clinical justification of at least 10 characters is required."
+        )
+
+    # Validate token: SHA-256 hash comparison (constant-time)
+    token_hash = hashlib.sha256(emergency_token.encode("utf-8")).hexdigest()
+    if not hmac.compare_digest(token_hash, expected_hash):
+        bg_logger.critical(
+            "BREAK-GLASS DENIED — invalid token | ip=%s", ip_address
+        )
+        raise BreakGlassError("Invalid emergency token.")
+
+    # Token is valid — issue a restricted 1-hour read-only JWT
+    access_token = create_access_token(
+        user_id="break-glass-emergency",
+        email="emergency-override@system",
+        role="nurse",  # read-only clinical role, not admin
+        org_id=None,
+        expires_minutes=_BREAK_GLASS_EXPIRY_MINUTES,
+    )
+
+    bg_logger.critical(
+        "BREAK-GLASS GRANTED | ip=%s | reason=%s | expires_minutes=%d",
+        ip_address,
+        reason[:200],
+        _BREAK_GLASS_EXPIRY_MINUTES,
+    )
+
+    # Fire compliance alerts (in production, this would send SMS/email
+    # to the compliance officer and system administrators)
+    _fire_break_glass_alerts(reason, ip_address)
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_minutes": _BREAK_GLASS_EXPIRY_MINUTES,
+        "role": "nurse",
+        "warning": "Emergency read-only access granted. All actions are being audited. "
+                   "This access will expire in 60 minutes.",
+    }
+
+
+def _fire_break_glass_alerts(reason: str, ip_address: str) -> None:
+    """Fire high-priority compliance alerts for break-glass access.
+
+    In production this would integrate with SMS (Twilio), email, and
+    PagerDuty. For now it logs at CRITICAL level for log aggregator
+    alerting (Grafana/PagerDuty alert rules on this log pattern).
+    """
+    import logging
+
+    alert_logger = logging.getLogger("sepsis_vitals.compliance_alert")
+    alert_logger.critical(
+        "COMPLIANCE ALERT: Break-glass emergency access activated | "
+        "ip=%s | reason=%s | "
+        "ACTION REQUIRED: Verify clinical justification within 24 hours",
+        ip_address,
+        reason[:200],
+    )
