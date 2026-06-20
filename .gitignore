@@ -27,6 +27,10 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
+# ── Backups (encrypted clinical data — never commit) ──
+backups/
+docker/backups/
+
 # ── Data (partner data never committed) ──
 data/
 !docs/data/

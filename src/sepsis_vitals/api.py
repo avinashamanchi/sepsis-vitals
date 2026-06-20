@@ -312,6 +312,50 @@ def _track_prediction(duration_ms: float, alert: bool):
     _metrics["avg_prediction_ms"] = sum(times) / len(times)
 
 
+def _persist_prediction(
+    patient_id: str,
+    user_id: Optional[str],
+    result: Dict[str, Any],
+    input_vitals: Dict[str, Any],
+    ip_address: str,
+    model_version: Optional[str] = None,
+) -> None:
+    """Write prediction to Postgres as immutable audit record.
+
+    Runs synchronously in a background-safe manner.  Failures are logged
+    but never block the API response — the prediction is the priority.
+    """
+    try:
+        from sepsis_vitals.db import SessionLocal, PredictionRecord
+        db = SessionLocal()
+        try:
+            ci = result.get("confidence_interval", {})
+            record = PredictionRecord(
+                patient_id=patient_id,
+                user_id=user_id if user_id != "anonymous" else None,
+                risk_probability=result["risk_probability"],
+                risk_level=result["risk_level"],
+                alert_fired=result.get("alert", False),
+                input_vitals=json.dumps(input_vitals),
+                output_scores=json.dumps(result.get("clinical_scores", {})),
+                top_risk_factors=json.dumps(result.get("top_risk_factors", [])),
+                confidence_lower=ci.get("lower"),
+                confidence_upper=ci.get("upper"),
+                model_version=model_version,
+                recommendation=result.get("recommendation"),
+                ip_address=ip_address,
+            )
+            db.add(record)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.warning("Failed to persist prediction record", exc_info=True)
+        finally:
+            db.close()
+    except ImportError:
+        pass  # DB module not available (e.g., minimal install)
+
+
 # ---------------------------------------------------------------------------
 # WebSocket manager (real-time alerts)
 # ---------------------------------------------------------------------------
@@ -378,6 +422,117 @@ async def count_requests(request: Request, call_next):
 
 
 # ---------------------------------------------------------------------------
+# HIPAA Audit Controls — 45 CFR § 164.312(b)
+# ---------------------------------------------------------------------------
+# Structured, append-only audit log for every access to PHI.
+# Answers: "Who accessed what patient data, when, from where?"
+
+# Path patterns that access PHI and require audit logging
+_PHI_AUDIT_PATTERNS = {
+    "/predict": "ml_prediction",
+    "/predict/batch": "ml_prediction_batch",
+    "/patient/": "view_patient_data",
+    "/copilot": "copilot_query",
+    "/score": "score_calculation",
+}
+
+
+def _emit_audit_event(
+    action: str,
+    user_id: Optional[str],
+    ip_address: str,
+    path: str,
+    patient_id: Optional[str] = None,
+    status_code: int = 200,
+) -> None:
+    """Write a HIPAA audit event to both structured log and database.
+
+    Events are emitted as structured JSON to stdout (for log aggregators
+    like Datadog, Splunk, or CloudWatch) AND persisted to the audit_log
+    table in Postgres for regulatory queries.
+    """
+    event = {
+        "audit": True,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "user_id": user_id,
+        "action": action,
+        "resource_type": "patient_phi",
+        "resource_id": patient_id,
+        "path": path,
+        "ip_address": ip_address,
+        "status_code": status_code,
+    }
+
+    # Structured log output (picked up by log aggregators)
+    logger.info("HIPAA_AUDIT %s", json.dumps(event))
+
+    # Persist to database (best-effort, never blocks)
+    try:
+        from sepsis_vitals.db import SessionLocal, AuditLog
+        db = SessionLocal()
+        try:
+            record = AuditLog(
+                user_id=user_id if user_id and user_id != "anonymous" else None,
+                action=action,
+                resource_type="patient_phi",
+                resource_id=patient_id,
+                details=json.dumps({"path": path, "status_code": status_code}),
+                ip_address=ip_address,
+            )
+            db.add(record)
+            db.commit()
+        except Exception:
+            db.rollback()
+        finally:
+            db.close()
+    except ImportError:
+        pass
+
+
+@app.middleware("http")
+async def hipaa_audit_middleware(request: Request, call_next):
+    """Log all PHI access for HIPAA § 164.312(b) compliance."""
+    response = await call_next(request)
+
+    path = request.url.path
+    audit_action = None
+    for pattern, action in _PHI_AUDIT_PATTERNS.items():
+        if path.startswith(pattern) or (pattern.endswith("/") and pattern[:-1] in path):
+            audit_action = action
+            break
+
+    if audit_action:
+        # Extract user_id from request state if available
+        user_id = None
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            try:
+                from sepsis_vitals.auth.tokens import decode_token
+                payload = decode_token(auth_header[7:])
+                user_id = payload.get("sub")
+            except Exception:
+                user_id = "unauthenticated"
+
+        # Extract patient_id from path if present
+        patient_id = None
+        if "/patient/" in path:
+            parts = path.split("/patient/")
+            if len(parts) > 1:
+                patient_id = parts[1].split("/")[0]
+
+        _emit_audit_event(
+            action=audit_action,
+            user_id=user_id,
+            ip_address=_client_ip(request),
+            path=path,
+            patient_id=patient_id,
+            status_code=response.status_code,
+        )
+
+    return response
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -410,7 +565,7 @@ async def score_vitals(vitals: VitalsInput):
 
 
 @app.post("/predict", response_model=PredictionResponse, dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
-async def predict_sepsis(body: PredictRequest, user: Dict = Depends(verify_auth)):
+async def predict_sepsis(body: PredictRequest, request: Request, user: Dict = Depends(verify_auth)):
     """ML-powered sepsis risk prediction with SHAP explanations."""
     predictor = _get_predictor()
     if predictor is None:
@@ -433,6 +588,19 @@ async def predict_sepsis(body: PredictRequest, user: Dict = Depends(verify_auth)
 
     result = prediction.to_dict()
     _track_prediction(elapsed_ms, result.get("alert", False))
+
+    # ── Permanent audit trail (Postgres) ─────────────────────────────
+    # Redis handles ephemeral rolling windows; Postgres is the immutable
+    # ledger.  Every prediction is recorded so legal/risk-management can
+    # reconstruct the decision history for any patient at any time.
+    _persist_prediction(
+        patient_id=body.patient_id,
+        user_id=user.get("id"),
+        result=result,
+        input_vitals=vitals_dict,
+        ip_address=_client_ip(request),
+        model_version=predictor.metadata.get("version") if predictor.metadata else None,
+    )
 
     # Broadcast alert via WebSocket if high/critical
     if result.get("alert"):

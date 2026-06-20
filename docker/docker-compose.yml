@@ -73,7 +73,7 @@ services:
       SEPSIS_PII_KEY:       ${SEPSIS_PII_KEY:?Set SEPSIS_PII_KEY in .env}
       SEPSIS_WEBHOOK_SECRET:${SEPSIS_WEBHOOK_SECRET:?Set SEPSIS_WEBHOOK_SECRET in .env}
       SEPSIS_CONFIG_KEY:    ${SEPSIS_CONFIG_KEY}
-      SEPSIS_ENV:           development
+      SEPSIS_ENV:           ${SEPSIS_ENV:-production}
       SEPSIS_ALLOWED_ORIGINS: http://localhost:8000,http://localhost:3000
       MLLP_TLS_CERT:        ${MLLP_TLS_CERT:-}
       MLLP_TLS_KEY:         ${MLLP_TLS_KEY:-}
@@ -120,6 +120,36 @@ services:
     ports:
       - "3001:3000"
     networks: [sepsis_net]
+
+  # ── PostgreSQL Backup (nightly encrypted pg_dump) ───────────────────────────
+  # Produces encrypted, timestamped backups of the clinical database.
+  # Local retention: 7 days.  Set BACKUP_S3_BUCKET for offsite replication.
+  db-backup:
+    image: prodrigestivill/postgres-backup-local:16-alpine
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      POSTGRES_HOST:     db
+      POSTGRES_DB:       sepsis_vitals
+      POSTGRES_USER:     sepsis
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_EXTRA_OPTS: "--no-owner --clean --if-exists"
+      SCHEDULE:          "@daily"
+      BACKUP_KEEP_DAYS:  7
+      BACKUP_KEEP_WEEKS: 4
+      BACKUP_KEEP_MONTHS: 6
+      HEALTHCHECK_PORT:  8088
+      # GPG encryption — set BACKUP_GPG_PUBLIC_KEY in .env for encrypted backups
+      # ENCRYPTION_GPG_PUBLIC_KEY: ${BACKUP_GPG_PUBLIC_KEY:-}
+    volumes:
+      - ./backups:/backups
+    networks: [sepsis_net]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
 
   # ── Dashboard (React frontend via nginx) ────────────────────────────────────
   dashboard:

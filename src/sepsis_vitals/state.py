@@ -1,8 +1,19 @@
 """
-sepsis_vitals.state — Centralized patient state store.
+sepsis_vitals.state — Ephemeral patient state store (rolling windows).
 
 Uses Redis for production (distributed, survives container restarts)
 with in-memory fallback for development.
+
+IMPORTANT: This store is the *fast, ephemeral* layer for computing
+rolling means, deltas, and observation gaps.  Data here expires after
+24 hours (VITALS_WINDOW_TTL).  It is NOT the system of record.
+
+The *permanent* clinical audit trail lives in Postgres:
+- ``prediction_records`` table (every ML prediction, immutable)
+- ``audit_log`` table (every PHI access, HIPAA § 164.312(b))
+- ``vitals`` table (raw vital sign observations)
+
+Redis = fast math.  Postgres = legal truth.
 """
 
 import asyncio

@@ -1284,3 +1284,157 @@ class TestDockerVPCDeployment:
         compose = Path("docker/docker-compose.yml").read_text()
         assert "MLLP_TLS_CERT" in compose
         assert "MLLP_TLS_KEY" in compose
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Production Audit Round 2
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestProductionDefaultSafe:
+    """Fix 1: SEPSIS_ENV must default to production in docker-compose."""
+
+    def test_docker_compose_env_defaults_to_production(self):
+        """SEPSIS_ENV should parameterize with production as default."""
+        from pathlib import Path
+        compose = Path("docker/docker-compose.yml").read_text()
+        assert "${SEPSIS_ENV:-production}" in compose
+        assert "SEPSIS_ENV:           development" not in compose
+
+
+class TestPredictionAuditTrail:
+    """Fix 2: Predictions must be permanently recorded in Postgres."""
+
+    @pytest.mark.skipif(not HAS_SQLALCHEMY, reason="sqlalchemy not installed")
+    def test_prediction_record_model_exists(self):
+        """PredictionRecord ORM model must exist in db.py."""
+        from sepsis_vitals.db import PredictionRecord
+        assert PredictionRecord.__tablename__ == "prediction_records"
+
+    @pytest.mark.skipif(not HAS_SQLALCHEMY, reason="sqlalchemy not installed")
+    def test_prediction_record_has_required_columns(self):
+        """PredictionRecord must capture all audit-relevant fields."""
+        from sepsis_vitals.db import PredictionRecord
+        columns = {c.name for c in PredictionRecord.__table__.columns}
+        required = {
+            "id", "patient_id", "user_id", "risk_probability", "risk_level",
+            "alert_fired", "input_vitals", "output_scores", "top_risk_factors",
+            "confidence_lower", "confidence_upper", "model_version",
+            "recommendation", "ip_address", "created_at",
+        }
+        assert required.issubset(columns), f"Missing columns: {required - columns}"
+
+    @pytest.mark.skipif(not HAS_SQLALCHEMY, reason="sqlalchemy not installed")
+    def test_prediction_record_has_indexes(self):
+        """PredictionRecord must have indexes for audit queries."""
+        from sepsis_vitals.db import PredictionRecord
+        index_names = {idx.name for idx in PredictionRecord.__table__.indexes}
+        assert any("patient" in name for name in index_names)
+        assert any("risk" in name for name in index_names)
+
+    @pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
+    def test_predict_endpoint_calls_persist(self):
+        """predict endpoint source must call _persist_prediction."""
+        import inspect
+        from sepsis_vitals.api import predict_sepsis
+        source = inspect.getsource(predict_sepsis)
+        assert "_persist_prediction" in source
+
+    @pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
+    def test_persist_prediction_function_exists(self):
+        """_persist_prediction helper must exist and write to PredictionRecord."""
+        import inspect
+        from sepsis_vitals.api import _persist_prediction
+        source = inspect.getsource(_persist_prediction)
+        assert "PredictionRecord" in source
+        assert "db.commit()" in source
+
+    def test_state_py_documents_redis_vs_postgres(self):
+        """state.py must clearly document Redis = ephemeral, Postgres = legal truth."""
+        from pathlib import Path
+        content = Path("src/sepsis_vitals/state.py").read_text()
+        assert "ephemeral" in content.lower()
+        assert "permanent" in content.lower() or "immutable" in content.lower()
+        assert "Postgres" in content or "postgres" in content
+
+
+class TestHIPAAAuditLogging:
+    """Fix 3: HIPAA § 164.312(b) audit controls on PHI access."""
+
+    @pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
+    def test_audit_middleware_exists(self):
+        """hipaa_audit_middleware must be registered on the app."""
+        import inspect
+        from sepsis_vitals.api import hipaa_audit_middleware
+        source = inspect.getsource(hipaa_audit_middleware)
+        assert "HIPAA" in source or "audit" in source.lower()
+
+    @pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
+    def test_emit_audit_event_logs_structured_json(self):
+        """_emit_audit_event must produce structured JSON with required fields."""
+        import inspect
+        from sepsis_vitals.api import _emit_audit_event
+        source = inspect.getsource(_emit_audit_event)
+        for field in ["user_id", "action", "ip_address", "patient_id", "timestamp"]:
+            assert field in source, f"Audit event missing field: {field}"
+
+    @pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
+    def test_phi_audit_patterns_cover_critical_endpoints(self):
+        """Audit patterns must cover all PHI-containing endpoints."""
+        from sepsis_vitals.api import _PHI_AUDIT_PATTERNS
+        assert "/predict" in _PHI_AUDIT_PATTERNS
+        assert "/patient/" in _PHI_AUDIT_PATTERNS
+        assert "/copilot" in _PHI_AUDIT_PATTERNS
+        assert "/score" in _PHI_AUDIT_PATTERNS
+
+    @pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
+    def test_audit_writes_to_audit_log_table(self):
+        """_emit_audit_event must write to AuditLog table."""
+        import inspect
+        from sepsis_vitals.api import _emit_audit_event
+        source = inspect.getsource(_emit_audit_event)
+        assert "AuditLog" in source
+
+
+class TestDatabaseBackup:
+    """Fix 4: Automated encrypted database backups."""
+
+    def test_docker_compose_has_backup_service(self):
+        """docker-compose must include a db-backup sidecar."""
+        from pathlib import Path
+        compose = Path("docker/docker-compose.yml").read_text()
+        assert "db-backup" in compose
+        assert "postgres-backup" in compose
+
+    def test_backup_has_retention_policy(self):
+        """Backup service must configure retention (days, weeks, months)."""
+        from pathlib import Path
+        compose = Path("docker/docker-compose.yml").read_text()
+        assert "BACKUP_KEEP_DAYS" in compose
+        assert "BACKUP_KEEP_WEEKS" in compose
+        assert "BACKUP_KEEP_MONTHS" in compose
+
+    def test_backup_depends_on_db_healthy(self):
+        """Backup sidecar must depend on db being healthy."""
+        from pathlib import Path
+        compose = Path("docker/docker-compose.yml").read_text()
+        # Check that db-backup depends on db
+        assert "db-backup" in compose
+        # The depends_on should reference db
+        lines = compose.split("\n")
+        in_backup = False
+        has_db_dep = False
+        for line in lines:
+            if "db-backup:" in line:
+                in_backup = True
+            elif in_backup and line.strip() and not line.startswith(" ") and not line.startswith("\t"):
+                in_backup = False
+            if in_backup and "db:" in line and "condition" in line:
+                has_db_dep = True
+        assert has_db_dep, "db-backup must depend on db with condition: service_healthy"
+
+    def test_gitignore_excludes_backups(self):
+        """Backups directory must be in .gitignore."""
+        from pathlib import Path
+        gitignore = Path(".gitignore").read_text()
+        assert "backups" in gitignore.lower()

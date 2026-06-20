@@ -351,6 +351,63 @@ class AuditLog(Base):
         )
 
 
+class PredictionRecord(Base):
+    """Immutable ledger of every ML prediction for clinical audit trail.
+
+    Redis handles ephemeral rolling-window math (24h TTL), but every
+    prediction must be permanently recorded here so that risk-management
+    and legal teams can reconstruct the algorithmic decision history
+    for any patient at any point in time.
+    """
+
+    __tablename__ = "prediction_records"
+
+    id: Mapped[str] = mapped_column(
+        UUIDType, primary_key=True, default=_uuid_default
+    )
+    patient_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    user_id: Mapped[Optional[str]] = mapped_column(UUIDType, nullable=True)
+    risk_probability: Mapped[float] = mapped_column(Float, nullable=False)
+    risk_level: Mapped[str] = mapped_column(String(16), nullable=False)
+    alert_fired: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
+    input_vitals: Mapped[Optional[Any]] = mapped_column(
+        JsonType, nullable=True
+    )
+    output_scores: Mapped[Optional[Any]] = mapped_column(
+        JsonType, nullable=True
+    )
+    top_risk_factors: Mapped[Optional[Any]] = mapped_column(
+        JsonType, nullable=True
+    )
+    confidence_lower: Mapped[Optional[float]] = mapped_column(
+        Float, nullable=True
+    )
+    confidence_upper: Mapped[Optional[float]] = mapped_column(
+        Float, nullable=True
+    )
+    model_version: Mapped[Optional[str]] = mapped_column(
+        String(32), nullable=True
+    )
+    recommendation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ip_address: Mapped[Optional[str]] = mapped_column(InetType, nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), server_default="now()" if not _is_sqlite else None
+    )
+
+    __table_args__ = (
+        Index("idx_predictions_patient_time", "patient_id", created_at.desc()),
+        Index("idx_predictions_risk", "risk_level", "alert_fired"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<PredictionRecord id={self.id!r} patient={self.patient_id!r} "
+            f"risk={self.risk_level!r} prob={self.risk_probability:.2f}>"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Dependency injection helper (FastAPI compatible)
 # ---------------------------------------------------------------------------
