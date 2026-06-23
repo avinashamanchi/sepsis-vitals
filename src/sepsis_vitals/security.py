@@ -34,7 +34,10 @@ class Bucket:
 
 
 class RateLimiter:
-    """Token-bucket rate limiter.
+    """Token-bucket rate limiter with optional Redis backend.
+
+    Uses Redis when ``REDIS_URL`` is configured (shared across workers).
+    Falls back to in-process dict for single-worker / dev mode.
 
     Parameters
     ----------
@@ -44,33 +47,93 @@ class RateLimiter:
         Maximum tokens (i.e. the bucket capacity).
     """
 
+    _redis_client = None
+    _redis_checked = False
+
     def __init__(self, rate: float, burst: int) -> None:
         self.rate = rate
         self.burst = burst
         self._buckets: dict[str, Bucket] = {}
+
+    @classmethod
+    def _get_redis(cls):
+        """Lazy-initialize a shared Redis client for all limiters."""
+        if not cls._redis_checked:
+            cls._redis_checked = True
+            redis_url = os.getenv("REDIS_URL")
+            if redis_url:
+                try:
+                    import redis
+                    cls._redis_client = redis.from_url(redis_url, decode_responses=True)
+                    cls._redis_client.ping()
+                except Exception:
+                    cls._redis_client = None
+        return cls._redis_client
 
     def _get_bucket(self, key: str) -> Bucket:
         if key not in self._buckets:
             self._buckets[key] = Bucket(tokens=float(self.burst), last_refill=time.monotonic())
         return self._buckets[key]
 
-    def allow(self, key: str) -> bool:
-        """Consume one token from *key*'s bucket. Return True if allowed."""
-        bucket = self._get_bucket(key)
+    def _allow_redis(self, key: str) -> bool:
+        """Redis-backed token bucket using a Lua script for atomicity."""
+        r = self._get_redis()
+        if r is None:
+            return self._allow_local(key)
+        try:
+            lua = """
+            local key = KEYS[1]
+            local rate = tonumber(ARGV[1])
+            local burst = tonumber(ARGV[2])
+            local now = tonumber(ARGV[3])
+            local data = redis.call('HMGET', key, 'tokens', 'last')
+            local tokens = tonumber(data[1]) or burst
+            local last = tonumber(data[2]) or now
+            local elapsed = now - last
+            tokens = math.min(burst, tokens + elapsed * rate)
+            if tokens >= 1 then
+                tokens = tokens - 1
+                redis.call('HMSET', key, 'tokens', tokens, 'last', now)
+                redis.call('EXPIRE', key, math.ceil(burst / rate) + 10)
+                return 1
+            else
+                redis.call('HMSET', key, 'tokens', tokens, 'last', now)
+                redis.call('EXPIRE', key, math.ceil(burst / rate) + 10)
+                return 0
+            end
+            """
+            result = r.eval(lua, 1, f"rl:{key}", self.rate, self.burst, time.time())
+            return bool(result)
+        except Exception:
+            return self._allow_local(key)
 
+    def _allow_local(self, key: str) -> bool:
+        """In-process token bucket fallback."""
+        bucket = self._get_bucket(key)
         now = time.monotonic()
         elapsed = now - bucket.last_refill
         bucket.tokens = min(self.burst, bucket.tokens + elapsed * self.rate)
         bucket.last_refill = now
-
         if bucket.tokens >= 1:
             bucket.tokens -= 1
             return True
         return False
 
+    def allow(self, key: str) -> bool:
+        """Consume one token from *key*'s bucket. Return True if allowed."""
+        if self._get_redis() is not None:
+            return self._allow_redis(key)
+        return self._allow_local(key)
+
     def reset(self, key: str) -> None:
         """Remove *key*'s bucket so the next ``allow()`` starts fresh."""
         self._buckets.pop(key, None)
+        r = self._get_redis()
+        if r:
+            try:
+                r.delete(f"rl:{key}")
+            except Exception:
+                pass
 
     def limit(self, key: str):
         """Decorator that raises :class:`RateLimitExceeded` if the rate limit is hit."""

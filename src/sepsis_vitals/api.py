@@ -55,10 +55,15 @@ app = FastAPI(
     openapi_url=None if _is_production else "/openapi.json",
 )
 
-ALLOWED_ORIGINS = os.getenv(
+_raw_origins = os.getenv(
     "SEPSIS_ALLOWED_ORIGINS",
     "http://localhost:8000,http://localhost:3000,https://avinashamanchi.github.io",
-).split(",")
+)
+# Parse, strip whitespace, drop empty strings, reject wildcard with credentials
+ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.replace(" ", ",").split(",") if o.strip()]
+if "*" in ALLOWED_ORIGINS:
+    logger.warning("CORS wildcard '*' with allow_credentials is insecure — removing wildcard")
+    ALLOWED_ORIGINS = [o for o in ALLOWED_ORIGINS if o != "*"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -1002,6 +1007,25 @@ async def prometheus_metrics(user: Dict = Depends(verify_auth)):
 # Sub-routers — auth, patients, billing, alerts, FHIR
 # ---------------------------------------------------------------------------
 
+def _init_database():
+    """Initialize database tables on startup.
+
+    Imports billing models so they register with Base.metadata, then
+    creates all tables. Safe to call multiple times.
+    """
+    try:
+        # Import billing models so their tables are registered with Base.metadata
+        import sepsis_vitals.billing.models  # noqa: F401
+    except ImportError:
+        logger.info("Billing models not available — skipping")
+    except Exception as exc:
+        logger.error("Failed to import billing models: %s", exc)
+
+    from sepsis_vitals.db import init_db
+    init_db()
+    logger.info("Database tables initialized")
+
+
 def _include_routers():
     """Include sub-routers with graceful handling if optional deps are missing."""
     routers = [
@@ -1021,4 +1045,5 @@ def _include_routers():
         except Exception as exc:
             logger.error("Failed to load %s router: %s", tag, exc, exc_info=True)
 
+_init_database()
 _include_routers()

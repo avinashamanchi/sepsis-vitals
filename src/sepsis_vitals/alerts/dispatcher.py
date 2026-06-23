@@ -292,6 +292,23 @@ class AlertDispatcher:
 
         # --- SMS ---
         sms_contacts = [c for c in contacts if c.channel == CHANNEL_SMS]
+        if sms_contacts and self._sms_provider is None:
+            logger.warning(
+                "SMS alert for %s dropped — %d SMS contacts registered but no SMS provider "
+                "configured (set TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_FROM_NUMBER)",
+                alert.get("patient_id", "unknown"),
+                len(sms_contacts),
+            )
+            for contact in sms_contacts:
+                self._record(
+                    DeliveryRecord(
+                        alert_id=alert_id,
+                        channel=CHANNEL_SMS,
+                        destination=contact.destination,
+                        status="failed",
+                        error="SMS provider not configured",
+                    )
+                )
         if sms_contacts and self._sms_provider is not None:
             sms_body = _format_sms(alert)
             for contact in sms_contacts:
@@ -309,6 +326,13 @@ class AlertDispatcher:
                 )
 
         # --- Web Push ---
+        push_contacts = [c for c in contacts if c.channel == CHANNEL_PUSH]
+        if push_contacts and self._push_service is None:
+            logger.warning(
+                "Push alert for %s dropped — push contacts registered but VAPID_PRIVATE_KEY "
+                "not configured",
+                alert.get("patient_id", "unknown"),
+            )
         if self._push_service is not None:
             push_title, push_body, push_data = _format_push(alert)
             patient_id = alert.get("patient_id", "")

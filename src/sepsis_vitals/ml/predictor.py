@@ -242,9 +242,10 @@ class SepsisPredictor:
         # Predict
         risk_prob = float(self.model.predict_proba(feature_vector)[:, 1][0])
 
-        # Confidence interval (simple bootstrap-style estimate)
-        ci_lower = max(0.0, risk_prob - 0.08)
-        ci_upper = min(1.0, risk_prob + 0.08)
+        # Confidence interval using ensemble variance
+        ci_lower, ci_upper = self._compute_confidence_interval(
+            feature_vector, risk_prob
+        )
 
         # Risk level classification
         risk_level = self._classify_risk(risk_prob, scores)
@@ -371,6 +372,49 @@ class SepsisPredictor:
             vector.append(features.get(feat_name, np.nan))
 
         return np.array([vector], dtype=np.float64)
+
+    def _compute_confidence_interval(
+        self, feature_vector: np.ndarray, risk_prob: float
+    ) -> tuple:
+        """Compute confidence interval using ensemble stage variance.
+
+        For GradientBoosting: uses staged_predict_proba to get predictions
+        at each boosting stage, then computes variance across stages.
+        For other models: uses calibration ECE from metadata as uncertainty.
+        """
+        try:
+            if hasattr(self.model, "staged_predict_proba"):
+                # Use last 20% of stages to estimate prediction variance
+                staged = list(self.model.staged_predict_proba(feature_vector))
+                n_stages = len(staged)
+                tail_start = max(0, int(n_stages * 0.8))
+                tail_probs = [float(s[:, 1][0]) for s in staged[tail_start:]]
+                if len(tail_probs) > 1:
+                    std = float(np.std(tail_probs))
+                    # 95% CI using ~2 standard deviations
+                    ci_lower = max(0.0, risk_prob - 1.96 * std)
+                    ci_upper = min(1.0, risk_prob + 1.96 * std)
+                    return ci_lower, ci_upper
+        except Exception:
+            pass
+
+        # Fallback: use ECE from model metadata as uncertainty width
+        ece = 0.02  # default
+        if self.metadata:
+            cal = self.metadata.get("calibration", {})
+            if isinstance(cal, dict):
+                ece = cal.get("ece", 0.02)
+            else:
+                metrics = self.metadata.get("metrics", {})
+                ece = metrics.get("val_brier", 0.08) ** 0.5
+
+        # Scale uncertainty: wider at mid-range, narrower at extremes
+        base_width = max(ece, 0.01) * 3
+        distance_from_edge = min(risk_prob, 1.0 - risk_prob)
+        width = base_width * (0.5 + distance_from_edge)
+        ci_lower = max(0.0, risk_prob - width)
+        ci_upper = min(1.0, risk_prob + width)
+        return ci_lower, ci_upper
 
     def _classify_risk(self, prob: float, scores: Any) -> str:
         """Classify risk using both ML probability and clinical scores."""

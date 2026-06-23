@@ -3,6 +3,7 @@ import { EulaGate } from './components/EulaGate'
 import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
 import { BottomNav } from './components/BottomNav'
+import { useWebSocket } from './hooks/useWebSocket'
 import { Dashboard } from './pages/Dashboard'
 import { Patients } from './pages/Patients'
 import { ScoreLab } from './pages/ScoreLab'
@@ -12,6 +13,8 @@ import { Alerts } from './pages/Alerts'
 import { Admin } from './pages/Admin'
 
 export default function App() {
+  useWebSocket()
+
   return (
     <EulaGate>
       <div className="min-h-screen bg-background text-text-primary font-mono">

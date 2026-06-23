@@ -1,11 +1,13 @@
+import { useEffect, useState } from 'react'
 import { StatCard } from '../components/StatCard'
 import { BarChart3 } from 'lucide-react'
+import { api, isDemo } from '../lib/api'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, PieChart, Pie, Cell,
 } from 'recharts'
 
-const WEEKLY_DATA = [
+const DEMO_WEEKLY = [
   { day: 'Mon', predictions: 142, alerts: 8, dismissed: 3 },
   { day: 'Tue', predictions: 168, alerts: 12, dismissed: 5 },
   { day: 'Wed', predictions: 155, alerts: 6, dismissed: 2 },
@@ -15,7 +17,7 @@ const WEEKLY_DATA = [
   { day: 'Sun', predictions: 121, alerts: 5, dismissed: 1 },
 ]
 
-const RISK_DIST = [
+const DEMO_RISK_DIST = [
   { name: 'Low', value: 58, color: '#00ff9d' },
   { name: 'Moderate', value: 24, color: '#ffb830' },
   { name: 'High', value: 12, color: '#ff6b35' },
@@ -33,6 +35,34 @@ const CHART_TOOLTIP = {
 }
 
 export function Analytics() {
+  const weeklyData = DEMO_WEEKLY
+  const riskDist = DEMO_RISK_DIST
+  const [stats, setStats] = useState({
+    totalPredictions: '1,110',
+    alertsGenerated: '66',
+    alertRate: '6.0%',
+    truePositives: '48',
+    ppv: '72.7%',
+    avgResponse: '4.2m',
+  })
+
+  useEffect(() => {
+    if (isDemo) return
+    api.dashboardStats()
+      .then((data) => {
+        const total = data.predictions_today * 7
+        const alertCount = data.active_alerts * 7
+        const rate = total > 0 ? ((alertCount / total) * 100).toFixed(1) : '0.0'
+        setStats((s) => ({
+          ...s,
+          totalPredictions: total.toLocaleString(),
+          alertsGenerated: String(alertCount),
+          alertRate: `${rate}%`,
+          avgResponse: data.avg_response_min ? `${data.avg_response_min.toFixed(1)}m` : s.avgResponse,
+        }))
+      })
+      .catch(() => {})
+  }, [])
   return (
     <div className="space-y-6 animate-fade-in">
       <div>
@@ -40,14 +70,17 @@ export function Analytics() {
           <BarChart3 className="w-6 h-6 text-info" />
           Analytics
         </h1>
-        <p className="text-sm text-text-secondary mt-1">7-day performance overview</p>
+        <p className="text-sm text-text-secondary mt-1">
+          7-day performance overview
+          {isDemo && <span className="ml-2 text-xs text-warning">(Demo Mode)</span>}
+        </p>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Total Predictions" value="1,110" sublabel="This week" color="info" />
-        <StatCard label="Alerts Generated" value="66" sublabel="6.0% alert rate" color="warning" />
-        <StatCard label="True Positives" value="48" sublabel="72.7% PPV" color="accent" />
-        <StatCard label="Avg Response" value="4.2m" sublabel="Alert to action" color="default" />
+        <StatCard label="Total Predictions" value={stats.totalPredictions} sublabel="This week" color="info" />
+        <StatCard label="Alerts Generated" value={stats.alertsGenerated} sublabel={`${stats.alertRate} alert rate`} color="warning" />
+        <StatCard label="True Positives" value={stats.truePositives} sublabel={`${stats.ppv} PPV`} color="accent" />
+        <StatCard label="Avg Response" value={stats.avgResponse} sublabel="Alert to action" color="default" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -58,7 +91,7 @@ export function Analytics() {
           </div>
           <div className="p-4 h-[280px]">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={WEEKLY_DATA}>
+              <BarChart data={weeklyData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                 <XAxis dataKey="day" stroke="#4a6080" tick={{ fill: '#4a6080', fontSize: 11 }} tickLine={false} />
                 <YAxis stroke="#4a6080" tick={{ fill: '#4a6080', fontSize: 11 }} tickLine={false} axisLine={false} />
@@ -79,8 +112,8 @@ export function Analytics() {
             <div className="w-1/2 h-full">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={RISK_DIST} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" paddingAngle={3}>
-                    {RISK_DIST.map((entry, i) => (
+                  <Pie data={riskDist} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" paddingAngle={3}>
+                    {riskDist.map((entry, i) => (
                       <Cell key={i} fill={entry.color} />
                     ))}
                   </Pie>
@@ -89,7 +122,7 @@ export function Analytics() {
               </ResponsiveContainer>
             </div>
             <div className="w-1/2 space-y-3">
-              {RISK_DIST.map((d) => (
+              {riskDist.map((d) => (
                 <div key={d.name} className="flex items-center gap-2">
                   <span className="w-3 h-3 rounded-full" style={{ background: d.color }} />
                   <span className="text-sm text-text-secondary flex-1">{d.name}</span>
@@ -108,7 +141,7 @@ export function Analytics() {
         </div>
         <div className="p-4 h-[240px]">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={WEEKLY_DATA}>
+            <LineChart data={weeklyData}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
               <XAxis dataKey="day" stroke="#4a6080" tick={{ fill: '#4a6080', fontSize: 11 }} tickLine={false} />
               <YAxis stroke="#4a6080" tick={{ fill: '#4a6080', fontSize: 11 }} tickLine={false} axisLine={false} />

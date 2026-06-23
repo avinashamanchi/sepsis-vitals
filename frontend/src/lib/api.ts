@@ -14,6 +14,9 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json()
 }
 
+/** True when running on GitHub Pages (no backend available). */
+export const isDemo = window.location.hostname.includes('github.io')
+
 export const api = {
   health: () => request<{ status: string; version: string }>('/health'),
 
@@ -32,5 +35,32 @@ export const api = {
   patientTrend: (patientId: string) =>
     request(`/patient/${patientId}/trend`),
 
-  modelInfo: () => request('/model/info'),
+  modelInfo: () =>
+    request<{
+      model_name: string
+      version: string
+      is_calibrated: boolean
+      feature_count: number
+      metrics: Record<string, number>
+      feature_importance: Record<string, number>
+    }>('/model/info'),
+
+  dashboardStats: (siteId: string = 'default') =>
+    request<{
+      patient_count: number
+      active_alerts: number
+      predictions_today: number
+      avg_response_min: number | null
+    }>(`/patients/dashboard/stats?site_id=${siteId}`),
+
+  systemHealth: () =>
+    request<{
+      status: string
+      version: string
+      model_loaded: boolean
+      database: string
+      redis: string
+      websocket_connections: number
+      uptime_seconds: number
+    }>('/health'),
 }

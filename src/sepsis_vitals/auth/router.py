@@ -7,6 +7,7 @@ refresh, password reset, and user profile management.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -325,8 +326,16 @@ def auth_password_reset_request(
     """
     token = request_password_reset(email=body.email, db_session=db)
     if token is not None:
-        # In production, send the token via email.
-        logger.info("Password-reset token generated for %s", body.email)
+        smtp_configured = bool(os.getenv("SMTP_HOST"))
+        if smtp_configured:
+            # TODO: send email via SMTP when configured
+            logger.info("Password-reset token generated for %s", body.email)
+        else:
+            logger.warning(
+                "Password-reset token generated for %s but SMTP is not configured — "
+                "token cannot be delivered. Set SMTP_HOST to enable email delivery.",
+                body.email,
+            )
     return MessageResponse(
         detail="If an account with that email exists, a password-reset link has been sent."
     )
