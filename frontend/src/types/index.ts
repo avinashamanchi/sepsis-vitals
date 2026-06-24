@@ -33,6 +33,8 @@ export interface Alert {
   message: string
   timestamp: string
   dismissed: boolean
+  acknowledged?: boolean
+  note?: string
 }
 
 export interface Prediction {
@@ -58,10 +60,3 @@ export interface ScoreResult {
   explanations: string[]
 }
 
-export interface CopilotResponse {
-  analysis: string
-  risk_level: RiskLevel
-  key_concerns: string[]
-  suggested_actions: string[]
-  disclaimer: string
-}

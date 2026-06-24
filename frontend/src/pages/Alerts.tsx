@@ -3,7 +3,8 @@ import { useStore } from '../stores/useStore'
 import { Activity, Trash2 } from 'lucide-react'
 
 export function Alerts() {
-  const { alerts, clearAlerts } = useStore()
+  const alerts = useStore((s) => s.alerts)
+  const clearAlerts = useStore((s) => s.clearAlerts)
   const active = alerts.filter((a) => !a.dismissed).length
 
   return (
@@ -22,6 +23,7 @@ export function Alerts() {
           <button
             onClick={clearAlerts}
             className="flex items-center gap-2 px-3 py-2 text-xs text-text-muted hover:text-danger border border-border rounded-lg transition-colors"
+            aria-label="Clear all alerts"
           >
             <Trash2 className="w-3.5 h-3.5" />
             Clear All

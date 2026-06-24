@@ -1,12 +1,18 @@
-import { X } from 'lucide-react'
+import { useState } from 'react'
+import { X, Check, MessageSquare } from 'lucide-react'
 import clsx from 'clsx'
 import { useStore } from '../stores/useStore'
 import { RISK_BORDER } from '../lib/risk'
 import { RiskBadge } from './RiskBadge'
 
 export function AlertFeed({ limit = 5 }: { limit?: number }) {
-  const { alerts, dismissAlert } = useStore()
+  const alerts = useStore((s) => s.alerts)
+  const dismissAlert = useStore((s) => s.dismissAlert)
+  const acknowledgeAlert = useStore((s) => s.acknowledgeAlert)
+  const setAlertNote = useStore((s) => s.setAlertNote)
   const visible = alerts.filter((a) => !a.dismissed).slice(0, limit)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [noteText, setNoteText] = useState('')
 
   if (visible.length === 0) {
     return (
@@ -17,31 +23,89 @@ export function AlertFeed({ limit = 5 }: { limit?: number }) {
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" role="log" aria-live="polite" aria-label="Alert feed">
       {visible.map((alert) => (
         <div
           key={alert.id}
           className={clsx(
-            'flex items-start gap-3 p-3 bg-surface border-l-3 rounded-r-lg animate-fade-in',
+            'p-3 bg-surface border-l-3 rounded-r-lg animate-fade-in',
             RISK_BORDER[alert.riskLevel],
             alert.riskLevel === 'critical' && 'glow-danger',
           )}
+          role="alert"
         >
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <RiskBadge level={alert.riskLevel} pulse={alert.riskLevel === 'critical'} />
-              <span className="text-xs text-text-muted">
-                {new Date(alert.timestamp).toLocaleTimeString()}
-              </span>
+          <div className="flex items-start gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <RiskBadge level={alert.riskLevel} pulse={alert.riskLevel === 'critical'} />
+                {alert.acknowledged && (
+                  <span className="text-xs text-accent flex items-center gap-1">
+                    <Check className="w-3 h-3" /> Ack
+                  </span>
+                )}
+                <span className="text-xs text-text-muted">
+                  {new Date(alert.timestamp).toLocaleTimeString()}
+                </span>
+              </div>
+              <p className="text-sm text-text-secondary">{alert.message}</p>
+              {alert.note && (
+                <p className="text-xs text-text-muted mt-1 italic">Note: {alert.note}</p>
+              )}
             </div>
-            <p className="text-sm text-text-secondary truncate">{alert.message}</p>
+            <div className="flex items-center gap-1 shrink-0">
+              {!alert.acknowledged && (
+                <button
+                  onClick={() => acknowledgeAlert(alert.id)}
+                  className="p-1 text-text-muted hover:text-accent transition-colors"
+                  aria-label="Acknowledge alert"
+                  title="Acknowledge"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  setExpandedId(expandedId === alert.id ? null : alert.id)
+                  setNoteText(alert.note ?? '')
+                }}
+                className="p-1 text-text-muted hover:text-info transition-colors"
+                aria-label="Add note to alert"
+                title="Add note"
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => dismissAlert(alert.id)}
+                className="p-1 text-text-muted hover:text-text-primary transition-colors"
+                aria-label="Dismiss alert"
+                title="Dismiss"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
-          <button
-            onClick={() => dismissAlert(alert.id)}
-            className="p-1 text-text-muted hover:text-text-primary transition-colors shrink-0"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
+          {/* Note input */}
+          {expandedId === alert.id && (
+            <div className="mt-2 flex gap-2">
+              <input
+                type="text"
+                value={noteText}
+                onChange={(e) => setNoteText(e.target.value)}
+                placeholder="Add a clinical note..."
+                className="flex-1 bg-elevated border border-border rounded px-2 py-1 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50"
+                aria-label="Alert note"
+              />
+              <button
+                onClick={() => {
+                  setAlertNote(alert.id, noteText)
+                  setExpandedId(null)
+                }}
+                className="px-2 py-1 text-xs text-accent bg-accent/10 border border-accent/30 rounded hover:bg-accent/20"
+              >
+                Save
+              </button>
+            </div>
+          )}
         </div>
       ))}
     </div>

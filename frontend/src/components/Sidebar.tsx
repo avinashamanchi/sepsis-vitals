@@ -17,7 +17,10 @@ const NAV_ITEMS = [
 ]
 
 export function Sidebar() {
-  const { wsConnected, logout, sidebarOpen, setSidebarOpen } = useStore()
+  const wsConnected = useStore((s) => s.wsConnected)
+  const logout = useStore((s) => s.logout)
+  const sidebarOpen = useStore((s) => s.sidebarOpen)
+  const setSidebarOpen = useStore((s) => s.setSidebarOpen)
 
   return (
     <>
@@ -26,6 +29,10 @@ export function Sidebar() {
         <div
           className="fixed inset-0 bg-black/50 z-40 lg:hidden"
           onClick={() => setSidebarOpen(false)}
+          aria-label="Close navigation"
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Escape') setSidebarOpen(false) }}
         />
       )}
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { StatCard } from '../components/StatCard'
 import { AlertFeed } from '../components/AlertFeed'
 import { RiskBadge } from '../components/RiskBadge'
@@ -26,7 +27,10 @@ const DEMO_TREND = Array.from({ length: 24 }, (_, i) => ({
 }))
 
 export function Dashboard() {
-  const { alerts, patients, wsConnected } = useStore()
+  const navigate = useNavigate()
+  const alerts = useStore((s) => s.alerts)
+  const patients = useStore((s) => s.patients)
+  const wsConnected = useStore((s) => s.wsConnected)
   const activeAlerts = alerts.filter((a) => !a.dismissed).length
 
   const [stats, setStats] = useState({
@@ -48,7 +52,7 @@ export function Dashboard() {
           modelName: info.model_name ?? s.modelName,
         }))
       })
-      .catch(() => {}) // fallback to defaults on error
+      .catch((err: unknown) => console.error('Failed to load model info:', err))
     // Fetch real dashboard stats
     api.dashboardStats()
       .then((data) => {
@@ -58,7 +62,7 @@ export function Dashboard() {
           predictionsToday: data.predictions_today,
         }))
       })
-      .catch(() => {})
+      .catch((err: unknown) => console.error('Failed to load dashboard stats:', err))
   }, [])
 
   return (
@@ -76,7 +80,7 @@ export function Dashboard() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           label="Active Patients"
-          value={patients.length || stats.patientCount}
+          value={patients.length > 0 ? patients.length : stats.patientCount}
           sublabel="Being monitored"
           color="accent"
         />
@@ -209,7 +213,7 @@ export function Dashboard() {
             </thead>
             <tbody>
               {DEMO_PATIENTS.map((p) => (
-                <tr key={p.id} className="border-b border-border/50 hover:bg-elevated/50 transition-colors">
+                <tr key={p.id} className="border-b border-border/50 hover:bg-elevated/50 transition-colors cursor-pointer" onClick={() => navigate(`/patients/${p.id}`)}>
                   <td className="px-4 py-3 font-medium">{p.id}</td>
                   <td className="px-4 py-3 text-text-secondary">{p.temp}°</td>
                   <td className="px-4 py-3 text-text-secondary">{p.hr}</td>

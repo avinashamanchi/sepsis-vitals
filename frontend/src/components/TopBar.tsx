@@ -13,7 +13,9 @@ const PAGE_TITLES: Record<string, string> = {
 }
 
 export function TopBar() {
-  const { setSidebarOpen, alerts } = useStore()
+  const setSidebarOpen = useStore((s) => s.setSidebarOpen)
+  const alerts = useStore((s) => s.alerts)
+  const sidebarOpen = useStore((s) => s.sidebarOpen)
   const unread = alerts.filter((a) => !a.dismissed).length
   const { pathname } = useLocation()
   const pageTitle = PAGE_TITLES[pathname] || 'Sepsis Vitals'
@@ -24,6 +26,8 @@ export function TopBar() {
         <button
           onClick={() => setSidebarOpen(true)}
           className="lg:hidden p-2 -ml-2 text-text-secondary hover:text-text-primary"
+          aria-label="Open navigation menu"
+          aria-expanded={sidebarOpen}
         >
           <Menu className="w-5 h-5" />
         </button>

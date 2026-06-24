@@ -16,8 +16,8 @@ export function ScoreLab() {
     try {
       const res = await api.score(vitals) as ScoreResult
       setResult(res)
-    } catch (e: any) {
-      setError(e.message)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'An error occurred')
     } finally {
       setLoading(false)
     }

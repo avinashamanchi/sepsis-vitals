@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import {
   Activity, BarChart3, Brain,
-  LayoutDashboard, Users,
+  LayoutDashboard, Settings, Users,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { to: '/predict', icon: Brain, label: 'Predict' },
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
   { to: '/alerts', icon: Activity, label: 'Alerts' },
+  { to: '/admin', icon: Settings, label: 'Admin' },
 ]
 
 export function BottomNav() {

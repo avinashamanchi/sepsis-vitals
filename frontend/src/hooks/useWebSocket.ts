@@ -4,6 +4,22 @@ import { useStore } from '../stores/useStore'
 const WS_RECONNECT_DELAY = 3000
 const WS_MAX_RECONNECT_DELAY = 30000
 
+function playAlertSound(level: string) {
+  try {
+    const ctx = new AudioContext()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.frequency.value = level === 'critical' ? 880 : 660
+    gain.gain.value = 0.3
+    osc.start()
+    osc.stop(ctx.currentTime + (level === 'critical' ? 0.3 : 0.15))
+  } catch {
+    // AudioContext not available
+  }
+}
+
 export function useWebSocket() {
   const setWsConnected = useStore((s) => s.setWsConnected)
   const addAlert = useStore((s) => s.addAlert)
@@ -40,15 +56,20 @@ export function useWebSocket() {
           try {
             const data = JSON.parse(event.data)
             if (data.type === 'sepsis_alert') {
+              const riskLevel = data.risk_level ?? 'high'
               addAlert({
-                id: `ws-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                id: `ws-${Date.now()}-${crypto.randomUUID?.() ?? Math.random().toString(36).slice(2, 10)}`,
                 patientId: data.patient_id ?? '',
-                riskLevel: data.risk_level ?? 'high',
+                riskLevel,
                 riskProbability: data.risk_probability ?? 0,
-                message: data.recommendation ?? `Sepsis alert: ${data.risk_level}`,
+                message: data.recommendation ?? `Sepsis alert: ${riskLevel}`,
                 timestamp: data.timestamp ?? new Date().toISOString(),
                 dismissed: false,
               })
+              // Play sound for high/critical alerts
+              if (riskLevel === 'critical' || riskLevel === 'high') {
+                playAlertSound(riskLevel)
+              }
             }
           } catch {
             // ignore malformed messages

@@ -19,8 +19,8 @@ export function Predict() {
     try {
       const res = await api.predict({ vitals, patient_id: patientId }) as Prediction
       setResult(res)
-    } catch (e: any) {
-      setError(e.message)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'An error occurred')
     } finally {
       setLoading(false)
     }

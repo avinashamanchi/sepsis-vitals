@@ -103,12 +103,12 @@ export function Admin() {
           </h2>
           <div className="space-y-3">
             {[
-              { label: 'Auth', value: 'JWT + PBKDF2' },
-              { label: 'Rate Limiting', value: '10/s API, 2/s ML, 1/s Billing' },
-              { label: 'HSTS', value: '2yr + Preload' },
-              { label: 'CSP', value: 'Strict' },
-              { label: 'Injection Guard', value: '21 Patterns' },
-              { label: 'LLM Copilot', value: 'Enterprise-only' },
+              { label: 'Auth', value: 'JWT + PBKDF2 (configured)' },
+              { label: 'Rate Limiting', value: isDemo ? 'Not verified (demo)' : '10/s API, 2/s ML' },
+              { label: 'Security Headers', value: isDemo ? 'Not verified (demo)' : 'HSTS + CSP' },
+              { label: 'Input Validation', value: 'Parameterized queries + sanitization' },
+              { label: 'Session Timeout', value: '15 min inactivity (HIPAA)' },
+              { label: 'LLM Copilot', value: 'Enterprise-only (env gated)' },
             ].map((item) => (
               <div key={item.label} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
                 <span className="text-sm text-text-secondary">{item.label}</span>
@@ -140,11 +140,11 @@ export function Admin() {
           </h2>
           <div className="space-y-3">
             {[
-              { label: 'HL7v2 MLLP', value: 'Ready (port 2575)' },
-              { label: 'FHIR R4 Webhook', value: 'Ready' },
-              { label: 'Stripe Billing', value: '3 Plans' },
-              { label: 'Twilio SMS', value: 'Configured' },
-              { label: 'Prometheus', value: '/metrics' },
+              { label: 'HL7v2 MLLP', value: isDemo ? 'Not deployed (demo)' : 'Port 2575' },
+              { label: 'FHIR R4', value: isDemo ? 'Not deployed (demo)' : 'Webhook ready' },
+              { label: 'Stripe Billing', value: isDemo ? 'Not deployed (demo)' : 'Env configured' },
+              { label: 'SMS Alerts', value: isDemo ? 'Not deployed (demo)' : 'Env configured' },
+              { label: 'Prometheus', value: '/metrics endpoint' },
             ].map((item) => (
               <div key={item.label} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
                 <span className="text-sm text-text-secondary">{item.label}</span>

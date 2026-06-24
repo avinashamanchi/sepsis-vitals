@@ -61,7 +61,7 @@ export function Analytics() {
           avgResponse: data.avg_response_min ? `${data.avg_response_min.toFixed(1)}m` : s.avgResponse,
         }))
       })
-      .catch(() => {})
+      .catch((err: unknown) => console.error('Failed to load analytics stats:', err))
   }, [])
   return (
     <div className="space-y-6 animate-fade-in">
