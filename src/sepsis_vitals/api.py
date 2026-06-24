@@ -13,10 +13,13 @@ Wires together all security, ML, real-time, and monitoring subsystems:
 
 from __future__ import annotations
 
+import asyncio
+import ipaddress
 import json
 import logging
 import os
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -46,6 +49,35 @@ from sepsis_vitals.security import RateLimiter, RateLimitExceeded, sanitise_stri
 
 _is_production = os.getenv("SEPSIS_ENV", "development") == "production"
 
+# ---------------------------------------------------------------------------
+# Trusted proxy configuration for X-Forwarded-For validation
+# ---------------------------------------------------------------------------
+
+_TRUSTED_PROXIES: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+_raw_trusted = os.getenv("TRUSTED_PROXIES", "")
+if _raw_trusted:
+    for cidr in _raw_trusted.split(","):
+        cidr = cidr.strip()
+        if cidr:
+            try:
+                _TRUSTED_PROXIES.append(ipaddress.ip_network(cidr, strict=False))
+            except ValueError:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# Lifespan — database init and router wiring at startup
+# ---------------------------------------------------------------------------
+
+
+@asynccontextmanager
+async def _lifespan(application: FastAPI):
+    """Startup/shutdown lifecycle for the FastAPI application."""
+    _init_database()
+    _include_routers()
+    yield
+
+
 app = FastAPI(
     title="Sepsis Vitals API",
     version=__version__,
@@ -53,6 +85,7 @@ app = FastAPI(
     docs_url=None if _is_production else "/docs",
     redoc_url=None if _is_production else "/redoc",
     openapi_url=None if _is_production else "/openapi.json",
+    lifespan=_lifespan,
 )
 
 _raw_origins = os.getenv(
@@ -86,10 +119,25 @@ _webhook_limiter = RateLimiter(rate=5.0, burst=10)  # Stripe webhooks: 5/s
 
 
 def _client_ip(request: Request) -> str:
+    """Extract the real client IP, only trusting X-Forwarded-For when the
+    immediate client is in ``TRUSTED_PROXIES``."""
+    direct_ip = request.client.host if request.client else "unknown"
+    if direct_ip == "unknown":
+        return direct_ip
+
     forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    if forwarded and _TRUSTED_PROXIES:
+        try:
+            addr = ipaddress.ip_address(direct_ip)
+            if any(addr in net for net in _TRUSTED_PROXIES):
+                return forwarded.split(",")[0].strip()
+        except ValueError:
+            pass
+    elif forwarded and not _TRUSTED_PROXIES:
+        # No trusted proxies configured — fall back to direct IP
+        return direct_ip
+
+    return direct_ip
 
 
 async def check_rate_limit(request: Request) -> None:
@@ -525,7 +573,8 @@ async def hipaa_audit_middleware(request: Request, call_next):
             if len(parts) > 1:
                 patient_id = parts[1].split("/")[0]
 
-        _emit_audit_event(
+        await asyncio.to_thread(
+            _emit_audit_event,
             action=audit_action,
             user_id=user_id,
             ip_address=_client_ip(request),
@@ -598,7 +647,8 @@ async def predict_sepsis(body: PredictRequest, request: Request, user: Dict = De
     # Redis handles ephemeral rolling windows; Postgres is the immutable
     # ledger.  Every prediction is recorded so legal/risk-management can
     # reconstruct the decision history for any patient at any time.
-    _persist_prediction(
+    await asyncio.to_thread(
+        _persist_prediction,
         patient_id=body.patient_id,
         user_id=user.get("id"),
         result=result,
@@ -1045,5 +1095,5 @@ def _include_routers():
         except Exception as exc:
             logger.error("Failed to load %s router: %s", tag, exc, exc_info=True)
 
-_init_database()
-_include_routers()
+# Database init and router wiring now happen via the lifespan context
+# manager (see _lifespan above) instead of at module import time.

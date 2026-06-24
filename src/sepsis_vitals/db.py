@@ -8,8 +8,13 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Generator, Optional
+
+
+def _utcnow() -> datetime:
+    """Return the current UTC datetime (used as Python-side column default)."""
+    return datetime.now(timezone.utc)
 
 from sqlalchemy import (
     Boolean,
@@ -61,11 +66,17 @@ def _uuid_default() -> str:
 # Engine & session
 # ---------------------------------------------------------------------------
 
-engine = create_engine(
-    DATABASE_URL,
-    echo=False,
-    **({"connect_args": {"check_same_thread": False}} if _is_sqlite else {}),
-)
+_engine_kwargs: dict = {"echo": False}
+
+if _is_sqlite:
+    _engine_kwargs["connect_args"] = {"check_same_thread": False}
+else:
+    pool_size = int(os.getenv("DB_POOL_SIZE", "10"))
+    max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "20"))
+    _engine_kwargs["pool_size"] = pool_size
+    _engine_kwargs["max_overflow"] = max_overflow
+
+engine = create_engine(DATABASE_URL, **_engine_kwargs)
 
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
@@ -109,7 +120,8 @@ class User(Base):
         DateTime(timezone=True), nullable=True
     )
     created_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True), server_default="now()" if not _is_sqlite else None
+        DateTime(timezone=True), default=_utcnow,
+        server_default="now()" if not _is_sqlite else None
     )
     last_login: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
