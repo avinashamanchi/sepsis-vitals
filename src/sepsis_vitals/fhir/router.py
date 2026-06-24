@@ -9,12 +9,13 @@ the ``application/fhir+json`` content type.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
+from sepsis_vitals.api import verify_auth
 from sepsis_vitals.db import Patient, Score, VitalReading, get_db
 from sepsis_vitals.fhir.loinc import INTERNAL_TO_ENTRY
 from sepsis_vitals.fhir.resources import (
@@ -73,6 +74,7 @@ def _error(
 async def create_patient(
     request: Request,
     db: Session = Depends(get_db),
+    current_user: Dict[str, Any] = Depends(verify_auth),
 ) -> JSONResponse:
     """Receive a FHIR Patient resource and create or update an internal patient."""
     try:
@@ -123,6 +125,7 @@ async def create_patient(
 async def create_observation(
     request: Request,
     db: Session = Depends(get_db),
+    current_user: Dict[str, Any] = Depends(verify_auth),
 ) -> JSONResponse:
     """Receive a FHIR Observation resource and record the vital sign."""
     try:
@@ -180,6 +183,7 @@ async def create_observation(
 async def create_bundle(
     request: Request,
     db: Session = Depends(get_db),
+    current_user: Dict[str, Any] = Depends(verify_auth),
 ) -> JSONResponse:
     """Receive a FHIR Bundle with Patient and Observation resources.
 
@@ -283,6 +287,7 @@ async def create_bundle(
 async def get_patient(
     patient_id: str,
     db: Session = Depends(get_db),
+    current_user: Dict[str, Any] = Depends(verify_auth),
 ) -> JSONResponse:
     """Return a patient as a FHIR Patient resource."""
     patient = _find_patient(patient_id, db)
@@ -303,6 +308,7 @@ async def get_patient(
 async def get_observations(
     patient_id: str,
     db: Session = Depends(get_db),
+    current_user: Dict[str, Any] = Depends(verify_auth),
 ) -> JSONResponse:
     """Return the patient's vital-sign readings as a FHIR searchset Bundle."""
     patient = _find_patient(patient_id, db)
@@ -349,6 +355,7 @@ async def get_observations(
 async def get_risk_assessment(
     patient_id: str,
     db: Session = Depends(get_db),
+    current_user: Dict[str, Any] = Depends(verify_auth),
 ) -> JSONResponse:
     """Return the latest sepsis risk as a FHIR RiskAssessment resource."""
     patient = _find_patient(patient_id, db)
@@ -406,6 +413,7 @@ async def get_risk_assessment(
 async def process_vitals(
     request: Request,
     db: Session = Depends(get_db),
+    current_user: Dict[str, Any] = Depends(verify_auth),
 ) -> JSONResponse:
     """Custom FHIR operation: receive a vitals Bundle, compute scores, and
     return a RiskAssessment.

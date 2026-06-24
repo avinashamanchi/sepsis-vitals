@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from sepsis_vitals.api import verify_auth
 from sepsis_vitals.db import get_db
 from sepsis_vitals.patients import service
 
@@ -164,20 +165,6 @@ class DashboardStats(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Dependency: current user stub
-# ---------------------------------------------------------------------------
-# Accept an optional auth dependency.  The actual implementation is owned by
-# the authentication module wired at application startup.  Here we define a
-# lightweight no-op so the router can function standalone during development
-# and testing.
-
-
-async def _current_user_stub() -> Dict[str, str]:
-    """Fallback auth dependency returning an anonymous admin user."""
-    return {"role": "system_admin", "user": "anonymous"}
-
-
-# ---------------------------------------------------------------------------
 # Endpoints — Patient CRUD
 # ---------------------------------------------------------------------------
 
@@ -191,7 +178,7 @@ async def _current_user_stub() -> Dict[str, str]:
 def create_patient(
     body: PatientCreate,
     db: Session = Depends(get_db),
-    user: Dict[str, str] = Depends(_current_user_stub),
+    user: Dict[str, Any] = Depends(verify_auth),
 ) -> PatientOut:
     """Register a new patient."""
     try:
@@ -220,7 +207,7 @@ def list_patients(
     skip: int = Query(0, ge=0, description="Records to skip"),
     limit: int = Query(50, ge=1, le=200, description="Max records to return"),
     db: Session = Depends(get_db),
-    user: Dict[str, str] = Depends(_current_user_stub),
+    user: Dict[str, Any] = Depends(verify_auth),
 ) -> List[PatientOut]:
     """Return a paginated list of patients, optionally filtered by site."""
     patients = service.list_patients(site_id=site_id, db=db, skip=skip, limit=limit)
@@ -235,7 +222,7 @@ def list_patients(
 def get_patient(
     patient_id: str,
     db: Session = Depends(get_db),
-    user: Dict[str, str] = Depends(_current_user_stub),
+    user: Dict[str, Any] = Depends(verify_auth),
 ) -> PatientOut:
     """Retrieve a single patient by ID."""
     patient = service.get_patient(patient_id, db)
@@ -256,7 +243,7 @@ def update_patient(
     patient_id: str,
     body: PatientUpdate,
     db: Session = Depends(get_db),
-    user: Dict[str, str] = Depends(_current_user_stub),
+    user: Dict[str, Any] = Depends(verify_auth),
 ) -> PatientOut:
     """Update mutable fields on a patient record."""
     updates = body.model_dump(exclude_unset=True)
@@ -290,7 +277,7 @@ def record_vitals(
     patient_id: str,
     body: VitalsRecord,
     db: Session = Depends(get_db),
-    user: Dict[str, str] = Depends(_current_user_stub),
+    user: Dict[str, Any] = Depends(verify_auth),
 ) -> VitalsResponse:
     """Record a new set of vital signs.
 
@@ -332,7 +319,7 @@ def get_patient_vitals(
     patient_id: str,
     hours_back: int = Query(24, ge=1, le=8760, description="Look-back window in hours"),
     db: Session = Depends(get_db),
-    user: Dict[str, str] = Depends(_current_user_stub),
+    user: Dict[str, Any] = Depends(verify_auth),
 ) -> List[VitalReadingOut]:
     """Return vital-sign readings for a patient within the look-back window."""
     patient = service.get_patient(patient_id, db)
@@ -358,7 +345,7 @@ def get_patient_vitals(
 def get_patient_history(
     patient_id: str,
     db: Session = Depends(get_db),
-    user: Dict[str, str] = Depends(_current_user_stub),
+    user: Dict[str, Any] = Depends(verify_auth),
 ) -> PatientHistoryOut:
     """Return the full clinical history (vitals, scores, alerts) for a patient."""
     patient = service.get_patient(patient_id, db)
@@ -386,7 +373,7 @@ alerts_router = APIRouter(prefix="/alerts", tags=["alerts"])
 def list_active_alerts(
     site_id: Optional[str] = Query(None, description="Filter by site"),
     db: Session = Depends(get_db),
-    user: Dict[str, str] = Depends(_current_user_stub),
+    user: Dict[str, Any] = Depends(verify_auth),
 ) -> List[AlertOut]:
     """Return all currently active (unacknowledged) alerts."""
     alerts = service.get_active_alerts(site_id=site_id, db=db)
@@ -402,7 +389,7 @@ def acknowledge_alert(
     alert_id: str,
     body: AlertAcknowledge,
     db: Session = Depends(get_db),
-    user: Dict[str, str] = Depends(_current_user_stub),
+    user: Dict[str, Any] = Depends(verify_auth),
 ) -> AlertOut:
     """Acknowledge an active alert with a reason."""
     try:
@@ -441,7 +428,7 @@ dashboard_router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 def get_dashboard_stats(
     site_id: str = Query(..., min_length=1, description="Site to query"),
     db: Session = Depends(get_db),
-    user: Dict[str, str] = Depends(_current_user_stub),
+    user: Dict[str, Any] = Depends(verify_auth),
 ) -> DashboardStats:
     """Return aggregate statistics for the site dashboard."""
     stats = service.get_site_dashboard_stats(site_id=site_id, db=db)
