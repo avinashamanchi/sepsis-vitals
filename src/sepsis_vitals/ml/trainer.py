@@ -497,6 +497,114 @@ def select_best_model(results: List[ModelResult]) -> ModelResult:
     )
 
 
+def lopocv_evaluate(
+    df: pd.DataFrame,
+    feature_cols: List[str],
+    model_type: str = "gradient_boosting",
+    model_params: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Leave-one-patient-out cross-validation.
+
+    More appropriate than k-fold CV for small clinical datasets (<200 patients)
+    because it prevents data leakage between observations from the same patient.
+
+    Parameters
+    ----------
+    df : DataFrame
+        Must have 'patient_id', 'sepsis_label', and all feature_cols.
+    feature_cols : list of str
+        Feature column names.
+    model_type : str
+        'gradient_boosting' or 'logistic'.
+    model_params : dict, optional
+        Override default model hyperparameters.
+
+    Returns
+    -------
+    dict with keys: auroc, auprc, brier, patient_predictions, n_patients
+    """
+    if model_params is None:
+        if model_type == "gradient_boosting":
+            model_params = {
+                "n_estimators": 100, "max_depth": 3, "learning_rate": 0.05,
+                "min_samples_leaf": 20, "subsample": 0.8, "random_state": 42,
+            }
+        else:
+            model_params = {"C": 0.1, "max_iter": 2000, "random_state": 42, "solver": "lbfgs"}
+
+    patient_ids = df["patient_id"].unique()
+    all_y_true = []
+    all_y_prob = []
+    patient_predictions = {}
+
+    for pid in patient_ids:
+        test_mask = df["patient_id"] == pid
+        train_mask = ~test_mask
+
+        X_train = df.loc[train_mask, feature_cols].values.astype(np.float64)
+        y_train = df.loc[train_mask, "sepsis_label"].values.astype(int)
+        X_test = df.loc[test_mask, feature_cols].values.astype(np.float64)
+        y_test = df.loc[test_mask, "sepsis_label"].values.astype(int)
+
+        # Impute NaN with training medians
+        col_medians = np.nanmedian(X_train, axis=0)
+        col_medians = np.where(np.isnan(col_medians), 0.0, col_medians)
+        for j in range(X_train.shape[1]):
+            X_train[np.isnan(X_train[:, j]), j] = col_medians[j]
+            X_test[np.isnan(X_test[:, j]), j] = col_medians[j]
+
+        # Skip if training set has only one class
+        if len(np.unique(y_train)) < 2:
+            continue
+
+        if model_type == "gradient_boosting":
+            model = GradientBoostingClassifier(**model_params)
+        else:
+            scaler = StandardScaler()
+            X_train = scaler.fit_transform(X_train)
+            X_test = scaler.transform(X_test)
+            model = LogisticRegression(**model_params)
+
+        model.fit(X_train, y_train)
+        y_prob = model.predict_proba(X_test)[:, 1]
+
+        all_y_true.extend(y_test.tolist())
+        all_y_prob.extend(y_prob.tolist())
+        patient_predictions[str(pid)] = {
+            "y_true": y_test.tolist(),
+            "y_prob": y_prob.tolist(),
+        }
+
+    # Compute aggregate metrics
+    all_y_true = np.array(all_y_true)
+    all_y_prob = np.array(all_y_prob)
+
+    results = {
+        "n_patients": len(patient_ids),
+        "n_evaluated": len(patient_predictions),
+        "patient_predictions": patient_predictions,
+    }
+
+    if len(np.unique(all_y_true)) >= 2 and len(all_y_true) > 0:
+        results["auroc"] = float(roc_auc_score(all_y_true, all_y_prob))
+        results["auprc"] = float(average_precision_score(all_y_true, all_y_prob))
+        results["brier"] = float(brier_score_loss(all_y_true, all_y_prob))
+
+        # Sensitivity at operating points
+        fpr, tpr, thresholds = roc_curve(all_y_true, all_y_prob)
+        for target_spec in [0.95, 0.99]:
+            target_fpr = 1 - target_spec
+            idx = np.searchsorted(fpr, target_fpr)
+            sens = float(tpr[idx]) if idx < len(tpr) else float(tpr[-1])
+            thresh = float(thresholds[idx]) if idx < len(thresholds) else 0.5
+            results[f"sensitivity_at_{int(target_spec*100)}spec"] = sens
+            results[f"threshold_at_{int(target_spec*100)}spec"] = thresh
+    else:
+        results["auroc"] = float("nan")
+
+    return results
+
+
 def calibrate_model(
     result: ModelResult,
     X_val: np.ndarray,
