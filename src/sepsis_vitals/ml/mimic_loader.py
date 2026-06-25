@@ -731,8 +731,27 @@ class MIMICLoader:
             records.append(row)
 
         df = pd.DataFrame(records)
+
+        if df.empty:
+            logger.warning("No training data produced")
+            return df
+
+        # Add timestamp column if not present
+        if "timestamp" not in df.columns:
+            # Use ICU intime as the timestamp for per-stay records
+            stay_intime = stays.set_index("stay_id")["intime"].to_dict()
+            df["timestamp"] = df["patient_id"].map(stay_intime)
+
+        # Bin observations into 1-hour epochs
+        from sepsis_vitals.ml.data_unifier import bin_to_epochs
+        df = bin_to_epochs(df, epoch_minutes=60, patient_col="patient_id", time_col="timestamp")
+
+        # Rename epoch to timestamp for downstream compatibility
+        if "epoch" in df.columns and "timestamp" not in df.columns:
+            df = df.rename(columns={"epoch": "timestamp"})
+
         logger.info(
-            "Built training dataset: %d stays, %.1f%% sepsis",
+            "Built training dataset: %d rows, %.1f%% sepsis",
             len(df), 100 * df["sepsis_label"].mean() if len(df) > 0 else 0,
         )
         return df
