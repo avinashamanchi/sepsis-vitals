@@ -605,6 +605,44 @@ def lopocv_evaluate(
     return results
 
 
+def compute_dual_thresholds(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+) -> Dict[str, Dict[str, float]]:
+    """Compute dual operating point thresholds.
+
+    - Continuous monitoring: >=99% specificity (~1% FPR). When this alerts,
+      pay attention. ~1 false alarm per patient per 4 days.
+    - On-demand assessment: >=95% specificity. Higher sensitivity acceptable
+      since clinician is already engaged.
+
+    Returns dict with 'continuous' and 'on_demand' keys, each containing
+    threshold, target_specificity, achieved_specificity, sensitivity.
+    """
+    fpr, tpr, thresholds = roc_curve(y_true, y_prob)
+
+    result = {}
+    for name, target_spec in [("continuous", 0.99), ("on_demand", 0.95)]:
+        target_fpr = 1.0 - target_spec
+        # Find the threshold that gives us <= target_fpr
+        idx = np.searchsorted(fpr, target_fpr)
+        if idx >= len(thresholds):
+            idx = len(thresholds) - 1
+
+        threshold = float(thresholds[idx])
+        achieved_fpr = float(fpr[idx])
+        sensitivity = float(tpr[idx])
+
+        result[name] = {
+            "threshold": threshold,
+            "target_specificity": target_spec,
+            "achieved_specificity": round(1.0 - achieved_fpr, 4),
+            "sensitivity": round(sensitivity, 4),
+        }
+
+    return result
+
+
 def calibrate_model(
     result: ModelResult,
     X_val: np.ndarray,

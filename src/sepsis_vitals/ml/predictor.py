@@ -137,6 +137,35 @@ class PatientMonitor:
         }
 
 
+def classify_risk_dual(
+    risk_prob: float,
+    thresholds: Dict[str, Dict[str, float]],
+    mode: str = "continuous",
+) -> str:
+    """Classify risk level using dual operating point thresholds.
+
+    Parameters
+    ----------
+    risk_prob : float
+        Predicted probability of sepsis.
+    thresholds : dict
+        Must have 'continuous' and 'on_demand' keys with 'threshold' values.
+    mode : str
+        'continuous' (>=99% spec) or 'on_demand' (>=95% spec).
+    """
+    continuous_thresh = thresholds["continuous"]["threshold"]
+    on_demand_thresh = thresholds["on_demand"]["threshold"]
+
+    if risk_prob >= continuous_thresh + 0.15:
+        return "critical"
+    elif risk_prob >= continuous_thresh:
+        return "high"
+    elif risk_prob >= on_demand_thresh:
+        return "moderate"
+    else:
+        return "low"
+
+
 class SepsisPredictor:
     """Autonomous sepsis prediction engine.
 
