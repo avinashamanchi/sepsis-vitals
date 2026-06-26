@@ -384,3 +384,55 @@ class TestFHIRIngestion:
         assert result is not None
         assert result["risk_probability"] == 0.55
         assert registry.is_registered("fhir-123")
+
+
+class TestMonitorIntegration:
+    """End-to-end integration test for the monitoring pipeline."""
+
+    def test_full_pipeline_flow(self):
+        """Vitals in → prediction → deterioration tracking → alert."""
+        from sepsis_vitals.ml.monitor import VitalsIngester, PatientRegistry, DeteriorationTracker
+
+        predictor = MagicMock()
+        ws = MagicMock()
+        ws.broadcast = AsyncMock()
+        registry = PatientRegistry(debounce_seconds=0)  # disable debounce for test
+        tracker = DeteriorationTracker(risk_floor=0.40)
+
+        call_count = 0
+        def mock_predict(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            pred = MagicMock()
+            # Simulate escalating risk
+            risks = [0.3, 0.45, 0.55, 0.65]
+            levels = ["low", "moderate", "moderate", "high"]
+            idx = min(call_count - 1, len(risks) - 1)
+            pred.risk_probability = risks[idx]
+            pred.risk_level = levels[idx]
+            pred.to_dict.return_value = {
+                "risk_probability": risks[idx],
+                "risk_level": levels[idx],
+                "patient_id": kwargs.get("patient_id", "P001"),
+                "timestamp": f"2026-06-25T12:{call_count:02d}:00",
+            }
+            return pred
+        predictor.predict.side_effect = mock_predict
+
+        ingester = VitalsIngester(predictor, registry, tracker, ws)
+
+        import asyncio
+
+        # Ingest 4 sets of vitals
+        for i in range(4):
+            asyncio.get_event_loop().run_until_complete(
+                ingester.ingest_single("P001", {"heart_rate": 80 + i * 10})
+            )
+
+        # Verify state
+        assert registry.is_registered("P001")
+        info = registry.get_patient_info("P001")
+        assert info["risk_level"] == "high"
+
+        # Verify WebSocket was called 4 times
+        assert ws.broadcast.call_count == 4
