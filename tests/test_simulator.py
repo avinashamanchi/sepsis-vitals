@@ -358,3 +358,106 @@ class TestSimulationManager:
         status = manager.get_session(session_id)
         assert status is not None
         assert status["session_id"] == session_id
+
+
+class TestSimulatorIntegration:
+    """End-to-end integration test for the simulator pipeline."""
+
+    def test_ward_flows_through_prediction_pipeline(self):
+        """Ward sim → VitalsIngester → predict → DeteriorationTracker → WebSocket."""
+        from sepsis_vitals.ml.monitor import VitalsIngester, PatientRegistry, DeteriorationTracker
+        from sepsis_vitals.ml.simulator import WardSimulator
+
+        predictor = MagicMock()
+        call_count = 0
+
+        def mock_predict(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            pred = MagicMock()
+            pred.risk_probability = 0.3 + (call_count % 5) * 0.1
+            level = "low" if pred.risk_probability < 0.5 else "moderate"
+            pred.risk_level = level
+            pred.to_dict.return_value = {
+                "risk_probability": pred.risk_probability,
+                "risk_level": level,
+                "patient_id": kwargs.get("patient_id", "test"),
+                "timestamp": "2026-01-01T08:00:00",
+            }
+            return pred
+
+        predictor.predict.side_effect = mock_predict
+
+        ws = MagicMock()
+        ws.broadcast = AsyncMock()
+        registry = PatientRegistry(debounce_seconds=0)
+        tracker = DeteriorationTracker(risk_floor=0.40)
+        ingester = VitalsIngester(predictor, registry, tracker, ws)
+
+        ward = WardSimulator(
+            ingester=ingester,
+            n_patients=4,
+            speed=720,
+            sepsis_count=1,
+            seed=42,
+            obs_per_patient=3,
+        )
+
+        # Run all steps
+        for _ in range(ward.total_steps + 5):
+            if ward.is_complete:
+                break
+            asyncio.get_event_loop().run_until_complete(ward.step())
+
+        # Verify: all patients registered
+        for pid in ward.patient_ids:
+            assert registry.is_registered(pid)
+
+        # Verify: predictions were made
+        assert predictor.predict.call_count == ward.position
+
+        # Verify: WebSocket broadcasts happened
+        assert ws.broadcast.call_count == ward.position
+
+    def test_case_replay_flows_through_pipeline(self):
+        """CaseReplay → VitalsIngester → predict → tracking."""
+        from sepsis_vitals.ml.monitor import VitalsIngester, PatientRegistry, DeteriorationTracker
+        from sepsis_vitals.ml.simulator import CaseReplay
+
+        predictor = MagicMock()
+        pred = MagicMock()
+        pred.risk_probability = 0.6
+        pred.risk_level = "moderate"
+        pred.to_dict.return_value = {
+            "risk_probability": 0.6, "risk_level": "moderate",
+            "patient_id": "mimic-1001", "timestamp": "2026-01-01T08:00:00",
+        }
+        predictor.predict.return_value = pred
+
+        ws = MagicMock()
+        ws.broadcast = AsyncMock()
+        registry = PatientRegistry(debounce_seconds=0)
+        tracker = DeteriorationTracker()
+        ingester = VitalsIngester(predictor, registry, tracker, ws)
+
+        base = pd.Timestamp("2150-01-01 08:00")
+        timeline = pd.DataFrame({
+            "charttime": [base + pd.Timedelta(hours=i) for i in range(4)],
+            "vital_name": ["heart_rate"] * 4,
+            "valuenum": [80, 90, 100, 110],
+        })
+        meta = {
+            "subject_id": 1001, "stay_id": 3001,
+            "age_years": 65, "sex": "M",
+            "sepsis_label": 1, "icu_los_hours": 24.0,
+        }
+
+        replay = CaseReplay(meta, timeline, ingester, speed=720)
+
+        for _ in range(4):
+            asyncio.get_event_loop().run_until_complete(replay.step())
+
+        assert replay.is_complete
+        assert registry.is_registered("mimic-1001")
+        assert predictor.predict.call_count == 4
+        assert ws.broadcast.call_count == 4
