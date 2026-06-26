@@ -174,3 +174,118 @@ class TestCaseReplay:
         assert "temperature" in vitals
         assert vitals["heart_rate"] == 80
         assert vitals["temperature"] == 37.2
+
+
+class TestWardSimulator:
+    """Test synthetic ward simulation."""
+
+    @pytest.fixture
+    def mock_ingester(self):
+        ingester = MagicMock()
+        ingester.ingest_single = AsyncMock(return_value={
+            "risk_probability": 0.3,
+            "risk_level": "low",
+        })
+        return ingester
+
+    def test_create_ward(self, mock_ingester):
+        from sepsis_vitals.ml.simulator import WardSimulator
+
+        ward = WardSimulator(
+            ingester=mock_ingester,
+            n_patients=8,
+            speed=360,
+            sepsis_count=2,
+            seed=42,
+        )
+
+        assert ward.session_id is not None
+        assert ward.n_patients == 8
+        assert ward.speed == 360
+        assert len(ward.patient_ids) == 8
+
+    def test_ward_generates_trajectories(self, mock_ingester):
+        from sepsis_vitals.ml.simulator import WardSimulator
+
+        ward = WardSimulator(
+            ingester=mock_ingester,
+            n_patients=6,
+            speed=360,
+            sepsis_count=1,
+            seed=42,
+        )
+
+        # Should have generated trajectories for all patients
+        assert len(ward._trajectories) == 6
+
+    def test_ward_step_emits_observations(self, mock_ingester):
+        from sepsis_vitals.ml.simulator import WardSimulator
+
+        ward = WardSimulator(
+            ingester=mock_ingester,
+            n_patients=4,
+            speed=360,
+            sepsis_count=1,
+            seed=42,
+        )
+
+        asyncio.get_event_loop().run_until_complete(ward.step())
+
+        # Should have called ingest_single for each patient with an observation at this timepoint
+        assert mock_ingester.ingest_single.call_count >= 1
+
+    def test_ward_includes_guaranteed_deterioration(self, mock_ingester):
+        from sepsis_vitals.ml.simulator import WardSimulator
+
+        ward = WardSimulator(
+            ingester=mock_ingester,
+            n_patients=8,
+            speed=360,
+            sepsis_count=2,
+            seed=42,
+        )
+
+        # At least one patient should be the scripted deterioration case
+        has_severe = any(
+            t.get("sepsis_severity") == "severe"
+            for t in ward._patient_configs
+        )
+        assert has_severe
+
+    def test_ward_status(self, mock_ingester):
+        from sepsis_vitals.ml.simulator import WardSimulator
+
+        ward = WardSimulator(
+            ingester=mock_ingester,
+            n_patients=6,
+            speed=360,
+            sepsis_count=1,
+            seed=42,
+        )
+
+        status = ward.status()
+        assert status["session_id"] == ward.session_id
+        assert status["type"] == "ward"
+        assert status["n_patients"] == 6
+        assert status["sepsis_count"] == 1
+        assert status["is_complete"] is False
+
+    def test_ward_completes(self, mock_ingester):
+        from sepsis_vitals.ml.simulator import WardSimulator
+
+        ward = WardSimulator(
+            ingester=mock_ingester,
+            n_patients=4,
+            speed=720,
+            sepsis_count=1,
+            seed=42,
+            obs_per_patient=3,  # small for testing
+        )
+
+        # Step through all observations
+        for _ in range(20):  # more than enough steps
+            if ward.is_complete:
+                break
+            asyncio.get_event_loop().run_until_complete(ward.step())
+
+        assert ward.is_complete
