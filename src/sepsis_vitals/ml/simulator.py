@@ -436,3 +436,106 @@ class WardSimulator:
             "is_complete": self.is_complete,
             "is_running": self._running,
         }
+
+
+# ─── SimulationManager ────────────────────────────────────────────────
+
+class SimulationManager:
+    """Manages active simulation sessions.
+
+    Provides start/stop/list lifecycle for CaseReplay and WardSimulator
+    sessions. Each session runs as an asyncio background task.
+    """
+
+    def __init__(self) -> None:
+        self._sessions: Dict[str, Any] = {}  # session_id → simulator instance
+        self._tasks: Dict[str, asyncio.Task] = {}  # session_id → asyncio task
+
+    def start_ward(
+        self,
+        ingester: Any,
+        n_patients: int = 8,
+        speed: float = 360,
+        sepsis_count: int = 2,
+        seed: int = 42,
+    ) -> str:
+        """Start a ward simulation session. Returns session_id."""
+        ward = WardSimulator(
+            ingester=ingester,
+            n_patients=n_patients,
+            speed=speed,
+            sepsis_count=sepsis_count,
+            seed=seed,
+        )
+        self._sessions[ward.session_id] = ward
+
+        # Start as background task if event loop is running
+        try:
+            loop = asyncio.get_running_loop()
+            task = loop.create_task(ward.run())
+            self._tasks[ward.session_id] = task
+        except RuntimeError:
+            pass  # no event loop — caller will run manually (tests)
+
+        return ward.session_id
+
+    def start_replay(
+        self,
+        case_meta: Dict[str, Any],
+        timeline: pd.DataFrame,
+        ingester: Any,
+        speed: float = 720,
+    ) -> str:
+        """Start a case replay session. Returns session_id."""
+        replay = CaseReplay(
+            case_meta=case_meta,
+            timeline=timeline,
+            ingester=ingester,
+            speed=speed,
+        )
+        self._sessions[replay.session_id] = replay
+
+        try:
+            loop = asyncio.get_running_loop()
+            task = loop.create_task(replay.run())
+            self._tasks[replay.session_id] = task
+        except RuntimeError:
+            pass
+
+        return replay.session_id
+
+    def stop_session(self, session_id: str) -> bool:
+        """Stop a simulation session. Returns True if found and stopped."""
+        sim = self._sessions.get(session_id)
+        if sim is None:
+            return False
+
+        sim.cancel()
+
+        task = self._tasks.pop(session_id, None)
+        if task and not task.done():
+            task.cancel()
+
+        return True
+
+    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get status of a specific session."""
+        sim = self._sessions.get(session_id)
+        if sim is None:
+            return None
+        return sim.status()
+
+    def list_sessions(self) -> List[Dict[str, Any]]:
+        """List all active and completed sessions."""
+        return [sim.status() for sim in self._sessions.values()]
+
+    def cleanup_completed(self) -> int:
+        """Remove completed sessions. Returns count removed."""
+        completed = [
+            sid for sid, sim in self._sessions.items()
+            if sim.is_complete
+        ]
+        for sid in completed:
+            self._sessions.pop(sid, None)
+            self._tasks.pop(sid, None)
+        return len(completed)

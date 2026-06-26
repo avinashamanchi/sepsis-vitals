@@ -289,3 +289,72 @@ class TestWardSimulator:
             asyncio.get_event_loop().run_until_complete(ward.step())
 
         assert ward.is_complete
+
+
+class TestSimulationManager:
+    """Test simulation session lifecycle management."""
+
+    @pytest.fixture
+    def mock_ingester(self):
+        ingester = MagicMock()
+        ingester.ingest_single = AsyncMock(return_value={
+            "risk_probability": 0.3,
+            "risk_level": "low",
+        })
+        return ingester
+
+    def test_create_manager(self):
+        from sepsis_vitals.ml.simulator import SimulationManager
+
+        manager = SimulationManager()
+        assert manager.list_sessions() == []
+
+    def test_start_ward_session(self, mock_ingester):
+        from sepsis_vitals.ml.simulator import SimulationManager
+
+        manager = SimulationManager()
+        session_id = manager.start_ward(
+            ingester=mock_ingester,
+            n_patients=4,
+            speed=360,
+            sepsis_count=1,
+            seed=42,
+        )
+
+        assert session_id is not None
+        sessions = manager.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["type"] == "ward"
+
+    def test_stop_session(self, mock_ingester):
+        from sepsis_vitals.ml.simulator import SimulationManager
+
+        manager = SimulationManager()
+        session_id = manager.start_ward(
+            ingester=mock_ingester,
+            n_patients=4,
+            speed=360,
+        )
+
+        stopped = manager.stop_session(session_id)
+        assert stopped is True
+
+    def test_stop_nonexistent_session(self):
+        from sepsis_vitals.ml.simulator import SimulationManager
+
+        manager = SimulationManager()
+        assert manager.stop_session("nonexistent") is False
+
+    def test_get_session_status(self, mock_ingester):
+        from sepsis_vitals.ml.simulator import SimulationManager
+
+        manager = SimulationManager()
+        session_id = manager.start_ward(
+            ingester=mock_ingester,
+            n_patients=4,
+            speed=360,
+        )
+
+        status = manager.get_session(session_id)
+        assert status is not None
+        assert status["session_id"] == session_id
