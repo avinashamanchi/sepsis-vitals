@@ -17,6 +17,7 @@ const Analytics = lazy(() => import('./pages/Analytics').then((m) => ({ default:
 const Alerts = lazy(() => import('./pages/Alerts').then((m) => ({ default: m.Alerts })))
 const Admin = lazy(() => import('./pages/Admin').then((m) => ({ default: m.Admin })))
 const Login = lazy(() => import('./pages/Login').then((m) => ({ default: m.Login })))
+const Monitor = lazy(() => import('./pages/Monitor').then((m) => ({ default: m.Monitor })))
 
 const SESSION_TIMEOUT_MS = 15 * 60 * 1000 // 15 minutes HIPAA
 
@@ -113,6 +114,7 @@ export default function App() {
                           <Route path="/" element={<Dashboard />} />
                           <Route path="/patients" element={<Patients />} />
                           <Route path="/patients/:id" element={<PatientDetail />} />
+                          <Route path="/monitor" element={<Monitor />} />
                           <Route path="/scores" element={<ScoreLab />} />
                           <Route path="/predict" element={<Predict />} />
                           <Route path="/analytics" element={<Analytics />} />

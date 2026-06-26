@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import { useStore } from '../stores/useStore'
 import {
-  Activity, BarChart3, Brain, Calculator,
+  Activity, BarChart3, Bell, Brain, Calculator,
   LayoutDashboard, LogOut, Settings, Shield, Users, Wifi, WifiOff,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -9,10 +9,11 @@ import clsx from 'clsx'
 const NAV_ITEMS = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/patients', icon: Users, label: 'Patients' },
+  { to: '/monitor', icon: Activity, label: 'Monitor' },
   { to: '/scores', icon: Calculator, label: 'Score Lab' },
   { to: '/predict', icon: Brain, label: 'AI Predict' },
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
-  { to: '/alerts', icon: Activity, label: 'Alerts' },
+  { to: '/alerts', icon: Bell, label: 'Alerts' },
   { to: '/admin', icon: Settings, label: 'Admin' },
 ]
 

@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import {
-  Activity, BarChart3, Brain,
+  Activity, BarChart3, Bell, Brain,
   LayoutDashboard, Settings, Users,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -8,9 +8,9 @@ import clsx from 'clsx'
 const NAV_ITEMS = [
   { to: '/', icon: LayoutDashboard, label: 'Home' },
   { to: '/patients', icon: Users, label: 'Patients' },
+  { to: '/monitor', icon: Activity, label: 'Monitor' },
   { to: '/predict', icon: Brain, label: 'Predict' },
-  { to: '/analytics', icon: BarChart3, label: 'Analytics' },
-  { to: '/alerts', icon: Activity, label: 'Alerts' },
+  { to: '/alerts', icon: Bell, label: 'Alerts' },
   { to: '/admin', icon: Settings, label: 'Admin' },
 ]
 
