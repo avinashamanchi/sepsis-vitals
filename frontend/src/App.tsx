@@ -4,9 +4,10 @@ import { EulaGate } from './components/EulaGate'
 import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
 import { BottomNav } from './components/BottomNav'
+import { SimulatorPanel } from './components/SimulatorPanel'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useStore } from './stores/useStore'
-import { isDemo, setOnUnauthorized } from './lib/api'
+import { isDemo, setOnUnauthorized, api } from './lib/api'
 
 const Dashboard = lazy(() => import('./pages/Dashboard').then((m) => ({ default: m.Dashboard })))
 const Patients = lazy(() => import('./pages/Patients').then((m) => ({ default: m.Patients })))
@@ -88,6 +89,13 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 export default function App() {
   useWebSocket()
 
+  useEffect(() => {
+    if (isDemo) return
+    api.simulatorSessions()
+      .then(() => useStore.getState().setSimulatorEnabled(true))
+      .catch(() => useStore.getState().setSimulatorEnabled(false))
+  }, [])
+
   return (
     <EulaGate>
       <Suspense fallback={<PageLoading />}>
@@ -125,6 +133,7 @@ export default function App() {
                     </main>
                   </div>
                   <BottomNav />
+                  <SimulatorPanel />
                 </div>
               </AuthGuard>
             }
