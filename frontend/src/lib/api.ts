@@ -104,4 +104,75 @@ export const api = {
       websocket_connections: number
       uptime_seconds: number
     }>('/health'),
+
+  // Monitor endpoints
+  monitorRegister: (patientId: string, demographics?: Record<string, unknown>, comorbidities?: Record<string, number>) =>
+    request<{ status: string; patient_id: string }>(
+      '/monitor/register',
+      { method: 'POST', body: JSON.stringify({ patient_id: patientId, demographics, comorbidities }) },
+    ),
+
+  monitorUnregister: (patientId: string) =>
+    request<{ status: string; patient_id: string }>(
+      `/monitor/${patientId}`,
+      { method: 'DELETE' },
+    ),
+
+  monitorStatus: () =>
+    request<{
+      patients: Array<{
+        patient_id: string
+        demographics: Record<string, string | number>
+        vitals: Record<string, number>
+        risk_probability: number
+        risk_level: string
+        trend_direction: string
+        last_prediction_time: number
+        last_vitals_time: number
+        registered_at: number
+        alert_state: string
+        deterioration_rate: number
+        window_hours: number
+      }>
+      count: number
+    }>('/monitor/status'),
+
+  // Simulator endpoints
+  simulatorStartWard: (opts: { n_patients?: number; speed?: number; sepsis_count?: number; seed?: number }) =>
+    request<{ session_id: string; status: string }>(
+      '/simulator/ward',
+      { method: 'POST', body: JSON.stringify(opts) },
+    ),
+
+  simulatorStartReplay: (opts: { subject_id?: number | string; speed?: number; sepsis_only?: boolean }) =>
+    request<{ session_id: string; subject_id: number; status: string }>(
+      '/simulator/replay',
+      { method: 'POST', body: JSON.stringify(opts) },
+    ),
+
+  simulatorStop: (sessionId: string) =>
+    request<{ session_id: string; status: string }>(
+      `/simulator/${sessionId}`,
+      { method: 'DELETE' },
+    ),
+
+  simulatorSessions: () =>
+    request<{ sessions: Array<{ session_id: string; type: string; status: string; patient_count?: number; started_at: number }> }>(
+      '/simulator/sessions',
+    ),
+
+  simulatorCases: () =>
+    request<{
+      cases: Array<{
+        subject_id: number
+        hadm_id: number
+        stay_id: number
+        age_years: number
+        sex: string
+        sepsis_label: number
+        icu_los_hours: number
+        n_observations: number
+      }>
+      count: number
+    }>('/simulator/cases'),
 }
