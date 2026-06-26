@@ -42,6 +42,53 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+def format_alert_message(
+    alert_type: str,
+    patient_id: str,
+    risk_probability: float,
+    risk_level: str,
+    previous_risk_level: str | None = None,
+    risk_delta: float = 0.0,
+    deterioration_rate: float = 0.0,
+    window_hours: float = 0.0,
+) -> dict:
+    """Format a typed alert message for WebSocket broadcast.
+
+    Alert types:
+    - patient_update: routine vitals/risk refresh
+    - deterioration: sustained risk increase over 2-hour window
+    - recovery: sustained risk decrease over 2-hour window
+    - escalation: risk level crossed into high/critical
+    - new_risk: first prediction for a patient
+    """
+    type_map = {
+        "patient_update": "patient_update",
+        "deterioration": "deterioration_alert",
+        "recovery": "recovery_alert",
+        "escalation": "escalation_alert",
+        "new_risk": "new_risk_alert",
+    }
+
+    msg = {
+        "type": type_map.get(alert_type, alert_type),
+        "patient_id": patient_id,
+        "risk_probability": risk_probability,
+        "risk_level": risk_level,
+    }
+
+    if previous_risk_level is not None:
+        msg["previous_risk_level"] = previous_risk_level
+
+    if alert_type in ("deterioration", "recovery"):
+        msg["risk_delta"] = risk_delta
+
+    if alert_type == "deterioration":
+        msg["deterioration_rate"] = deterioration_rate
+        msg["window_hours"] = window_hours
+
+    return msg
+
+
 async def alert_producer(vitals_queue: asyncio.Queue) -> None:
     """Consume vitals from queue, score them, and broadcast alerts."""
     from sepsis_vitals.scores import compute_scores
