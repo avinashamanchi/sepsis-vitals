@@ -54,6 +54,19 @@ def main(args=None):
         "--skip-shap", action="store_true",
         help="Skip SHAP computation (faster training)"
     )
+    parser.add_argument(
+        "--data-source", type=str, default="synthetic",
+        choices=["synthetic", "mimic-demo"],
+        help="Data source: 'synthetic' (default) or 'mimic-demo'"
+    )
+    parser.add_argument(
+        "--max-patients", type=int, default=None,
+        help="Limit number of patients (for faster iteration)"
+    )
+    parser.add_argument(
+        "--ensemble", action="store_true",
+        help="Use ensemble training (requires >=500 patients)"
+    )
 
     opts = parser.parse_args(args)
 
@@ -61,7 +74,8 @@ def main(args=None):
     print("  SEPSIS VITALS — AUTONOMOUS MODEL TRAINING PIPELINE")
     print("=" * 70)
     print(f"\n  Configuration:")
-    print(f"    Patients:         {opts.patients:,}")
+    print(f"    Data source:      {opts.data_source}")
+    print(f"    Patients:         {opts.max_patients or opts.patients:,}")
     print(f"    Sepsis prevalence:{opts.prevalence:.0%}")
     print(f"    CV folds:         {opts.cv_folds}")
     print(f"    Output:           {opts.output}")
@@ -69,18 +83,60 @@ def main(args=None):
 
     total_start = time.time()
 
-    # ── Step 1: Generate synthetic data ──────────────────────────────────
-    print("\n" + "─" * 70)
-    print("  STEP 1: Generating clinically-grounded synthetic data")
-    print("─" * 70)
+    # ── Step 1: Load data ────────────────────────────────────────────────
 
-    from sepsis_vitals.ml.synthetic_data import generate_train_val_test
+    if opts.data_source == "mimic-demo":
+        print("\n" + "─" * 70)
+        print("  STEP 1: Loading MIMIC-IV Demo data with Sepsis-3 labels")
+        print("─" * 70)
 
-    train_df, val_df, test_df = generate_train_val_test(
-        n_patients=opts.patients,
-        sepsis_prevalence=opts.prevalence,
-        seed=opts.seed,
-    )
+        from sepsis_vitals.ml.mimic_loader import MIMICLoader
+
+        loader = MIMICLoader.from_demo()
+        full_df = loader.build_training_dataset(max_patients=opts.max_patients)
+
+        n_patients = full_df["patient_id"].nunique()
+        print(f"\n  Loaded {len(full_df)} observations from {n_patients} patients")
+        print(f"  Sepsis prevalence: {full_df['sepsis_label'].mean():.1%}")
+
+        if "label_source" in full_df.columns:
+            print(f"  Label sources: {full_df['label_source'].value_counts().to_dict()}")
+
+        # For small datasets, don't split -- use LOPOCV instead
+        if n_patients < 200:
+            print(f"\n  Small dataset ({n_patients} patients) -> using LOPOCV evaluation")
+            use_lopocv = True
+            train_df = full_df
+            val_df = full_df
+            test_df = full_df
+        else:
+            use_lopocv = False
+            patient_ids = full_df["patient_id"].unique()
+            np.random.seed(opts.seed)
+            np.random.shuffle(patient_ids)
+            n_train = int(0.7 * len(patient_ids))
+            n_val = int(0.15 * len(patient_ids))
+
+            train_pids = set(patient_ids[:n_train])
+            val_pids = set(patient_ids[n_train:n_train + n_val])
+            test_pids = set(patient_ids[n_train + n_val:])
+
+            train_df = full_df[full_df["patient_id"].isin(train_pids)]
+            val_df = full_df[full_df["patient_id"].isin(val_pids)]
+            test_df = full_df[full_df["patient_id"].isin(test_pids)]
+    else:
+        use_lopocv = False
+        print("\n" + "─" * 70)
+        print("  STEP 1: Generating clinically-grounded synthetic data")
+        print("─" * 70)
+
+        from sepsis_vitals.ml.synthetic_data import generate_train_val_test
+
+        train_df, val_df, test_df = generate_train_val_test(
+            n_patients=opts.patients,
+            sepsis_prevalence=opts.prevalence,
+            seed=opts.seed,
+        )
 
     print(f"\n  Train: {len(train_df):,} observations ({train_df['patient_id'].nunique():,} patients)")
     print(f"  Val:   {len(val_df):,} observations ({val_df['patient_id'].nunique():,} patients)")
@@ -174,6 +230,20 @@ def main(args=None):
     best = calibrate_model(best, X_val_scaled, y_val)
     print(f"  Calibrated: Yes (Platt scaling)")
 
+    # ── Dual operating points ───────────────────────────────────────────
+    from sepsis_vitals.ml.trainer import compute_dual_thresholds
+
+    y_prob_val = best.model.predict_proba(
+        best.scaler.transform(X_val) if best.scaler else X_val
+    )[:, 1]
+    dual_thresholds = compute_dual_thresholds(y_val, y_prob_val)
+
+    print(f"\n  Dual operating points:")
+    print(f"    Continuous (99% spec): threshold={dual_thresholds['continuous']['threshold']:.3f}, "
+          f"sensitivity={dual_thresholds['continuous']['sensitivity']:.3f}")
+    print(f"    On-demand  (95% spec): threshold={dual_thresholds['on_demand']['threshold']:.3f}, "
+          f"sensitivity={dual_thresholds['on_demand']['sensitivity']:.3f}")
+
     # ── Step 5: SHAP explanations ────────────────────────────────────────
     shap_importance = {}
     if not opts.skip_shap:
@@ -241,6 +311,31 @@ def main(args=None):
             f, indent=2,
         )
     print(f"    - imputation_medians.json")
+
+    # Add dual thresholds to model metadata
+    metadata_file = f"{opts.output}/model_metadata.json"
+    with open(metadata_file) as f:
+        meta = json.load(f)
+    meta["dual_thresholds"] = dual_thresholds
+    with open(metadata_file, "w") as f:
+        json.dump(meta, f, indent=2, default=str)
+    print(f"    - dual_thresholds added to model_metadata.json")
+
+    # ── LOPOCV evaluation (for small MIMIC datasets) ────────────────────
+    if opts.data_source == "mimic-demo" and use_lopocv:
+        print("\n" + "─" * 70)
+        print("  LOPOCV EVALUATION")
+        print("─" * 70)
+
+        from sepsis_vitals.ml.trainer import lopocv_evaluate
+
+        lopocv_results = lopocv_evaluate(
+            train_features, feature_cols,
+            model_type="gradient_boosting" if "GradientBoosting" in best.name else "logistic",
+        )
+
+        print(f"    LOPOCV AUROC: {lopocv_results.get('auroc', 'N/A')}")
+        print(f"    Patients evaluated: {lopocv_results['n_evaluated']}/{lopocv_results['n_patients']}")
 
     # ── Summary ──────────────────────────────────────────────────────────
     total_time = time.time() - total_start

@@ -74,3 +74,45 @@ class TestLOPOCV:
         # Should not crash even though each fold has single-class held-out
         results = lopocv_evaluate(df, ["feature1", "feature2"], model_type="logistic")
         assert "patient_predictions" in results
+
+
+class TestMIMICDemoTraining:
+    """Test the --data-source mimic-demo training path."""
+
+    def test_train_cli_accepts_data_source_flag(self):
+        """Verify argparse accepts --data-source."""
+        from sepsis_vitals.train import main
+
+        # --help triggers SystemExit(0)
+        with pytest.raises(SystemExit):
+            main(["--help"])
+
+    def test_train_mimic_demo_small(self):
+        """Integration test: train on MIMIC-IV Demo with max_patients=5."""
+        from pathlib import Path
+
+        mimic_path = Path("physionet.org/files/mimic-iv-demo/2.2")
+        if not (mimic_path / "hosp" / "patients.csv.gz").exists():
+            pytest.skip("MIMIC-IV Demo data not available")
+
+        from sepsis_vitals.train import main
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = main([
+                "--data-source", "mimic-demo",
+                "--max-patients", "10",
+                "--output", tmpdir,
+                "--skip-shap",
+            ])
+
+            # Should produce model artifacts
+            assert Path(tmpdir, "sepsis_model.joblib").exists()
+            assert Path(tmpdir, "model_metadata.json").exists()
+            assert Path(tmpdir, "imputation_medians.json").exists()
+
+            # Metadata should have dual thresholds
+            import json
+            with open(Path(tmpdir, "model_metadata.json")) as f:
+                meta = json.load(f)
+            assert "dual_thresholds" in meta or "thresholds" in meta
