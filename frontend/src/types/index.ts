@@ -60,3 +60,43 @@ export interface ScoreResult {
   explanations: string[]
 }
 
+export interface MonitoredPatient {
+  patient_id: string
+  demographics: Record<string, string | number>
+  vitals: Record<string, number>
+  risk_probability: number
+  risk_level: RiskLevel
+  trend_direction: 'improving' | 'stable' | 'worsening' | 'unknown'
+  last_prediction_time: number
+  last_vitals_time: number
+  registered_at: number
+  alert_state: 'normal' | 'elevated' | 'escalated' | 'critical'
+  deterioration_rate: number
+  window_hours: number
+  risk_history: Array<{ timestamp: number; risk_probability: number }>
+}
+
+export interface SimSession {
+  session_id: string
+  type: 'replay' | 'ward'
+  status: 'running' | 'completed' | 'stopped'
+  patient_count?: number
+  started_at: number
+  subject_id?: number
+}
+
+export interface ClinicalScores {
+  qsofa: number
+  sirs_count: number
+  news2_style: number
+  shock_index: number | null
+}
+
+export interface DeteriorationAlert extends Alert {
+  alert_type: 'deterioration' | 'recovery' | 'escalation'
+  previous_risk_level: RiskLevel
+  risk_delta: number
+  deterioration_rate: number
+  window_hours: number
+}
+
