@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Alert, Patient } from '../types'
+import type { Alert, Patient, MonitoredPatient, SimSession } from '../types'
 
 interface AppState {
   // Auth
@@ -30,6 +30,20 @@ interface AppState {
   // UI
   sidebarOpen: boolean
   setSidebarOpen: (open: boolean) => void
+
+  // Monitor
+  monitoredPatients: Record<string, MonitoredPatient>
+  setMonitoredPatients: (patients: MonitoredPatient[]) => void
+  updatePatientRisk: (patientId: string, update: Partial<MonitoredPatient>) => void
+  removeMonitoredPatient: (patientId: string) => void
+
+  // Simulator
+  simulatorSessions: SimSession[]
+  addSimSession: (session: SimSession) => void
+  removeSimSession: (sessionId: string) => void
+  updateSimSession: (sessionId: string, update: Partial<SimSession>) => void
+  simulatorEnabled: boolean
+  setSimulatorEnabled: (enabled: boolean) => void
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -89,4 +103,51 @@ export const useStore = create<AppState>((set) => ({
   // UI
   sidebarOpen: false,
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
+
+  // Monitor
+  monitoredPatients: {},
+  setMonitoredPatients: (patients) =>
+    set({
+      monitoredPatients: Object.fromEntries(
+        patients.map((p) => [p.patient_id, p])
+      ),
+    }),
+  updatePatientRisk: (patientId, update) =>
+    set((s) => {
+      const existing = s.monitoredPatients[patientId]
+      if (!existing) return s
+      const updated = { ...existing, ...update }
+      // Append to risk_history (keep last 1440 entries = 24h at 1/min)
+      if (update.risk_probability !== undefined) {
+        updated.risk_history = [
+          ...(existing.risk_history || []),
+          { timestamp: Date.now() / 1000, risk_probability: update.risk_probability },
+        ].slice(-1440)
+      }
+      return {
+        monitoredPatients: { ...s.monitoredPatients, [patientId]: updated },
+      }
+    }),
+  removeMonitoredPatient: (patientId) =>
+    set((s) => {
+      const { [patientId]: _, ...rest } = s.monitoredPatients
+      return { monitoredPatients: rest }
+    }),
+
+  // Simulator
+  simulatorSessions: [],
+  addSimSession: (session) =>
+    set((s) => ({ simulatorSessions: [...s.simulatorSessions, session] })),
+  removeSimSession: (sessionId) =>
+    set((s) => ({
+      simulatorSessions: s.simulatorSessions.filter((ss) => ss.session_id !== sessionId),
+    })),
+  updateSimSession: (sessionId, update) =>
+    set((s) => ({
+      simulatorSessions: s.simulatorSessions.map((ss) =>
+        ss.session_id === sessionId ? { ...ss, ...update } : ss,
+      ),
+    })),
+  simulatorEnabled: false,
+  setSimulatorEnabled: (enabled) => set({ simulatorEnabled: enabled }),
 }))
