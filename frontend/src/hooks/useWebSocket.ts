@@ -23,6 +23,7 @@ function playAlertSound(level: string) {
 export function useWebSocket() {
   const setWsConnected = useStore((s) => s.setWsConnected)
   const addAlert = useStore((s) => s.addAlert)
+  const updatePatientRisk = useStore((s) => s.updatePatientRisk)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectDelay = useRef(WS_RECONNECT_DELAY)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -71,6 +72,40 @@ export function useWebSocket() {
                 playAlertSound(riskLevel)
               }
             }
+
+            if (data.type === 'patient_update' || data.type === 'deterioration_alert' || data.type === 'recovery_alert') {
+              updatePatientRisk(data.patient_id, {
+                risk_probability: data.risk_probability ?? 0,
+                risk_level: data.risk_level ?? 'low',
+                last_prediction_time: Date.now() / 1000,
+              })
+            }
+
+            if (data.type === 'deterioration_alert') {
+              const riskLevel = data.risk_level ?? 'high'
+              addAlert({
+                id: `ws-det-${Date.now()}-${crypto.randomUUID?.() ?? Math.random().toString(36).slice(2, 10)}`,
+                patientId: data.patient_id ?? '',
+                riskLevel,
+                riskProbability: data.risk_probability ?? 0,
+                message: `Deterioration: risk increased by ${((data.risk_delta ?? 0) * 100).toFixed(0)}% over ${(data.window_hours ?? 0).toFixed(1)}h`,
+                timestamp: data.timestamp ?? new Date().toISOString(),
+                dismissed: false,
+              })
+              playAlertSound(riskLevel)
+            }
+
+            if (data.type === 'recovery_alert') {
+              addAlert({
+                id: `ws-rec-${Date.now()}-${crypto.randomUUID?.() ?? Math.random().toString(36).slice(2, 10)}`,
+                patientId: data.patient_id ?? '',
+                riskLevel: data.risk_level ?? 'low',
+                riskProbability: data.risk_probability ?? 0,
+                message: `Recovery: risk decreased by ${(Math.abs(data.risk_delta ?? 0) * 100).toFixed(0)}%`,
+                timestamp: data.timestamp ?? new Date().toISOString(),
+                dismissed: false,
+              })
+            }
           } catch {
             // ignore malformed messages
           }
@@ -108,5 +143,5 @@ export function useWebSocket() {
       }
       setWsConnected(false)
     }
-  }, [setWsConnected, addAlert])
+  }, [setWsConnected, addAlert, updatePatientRisk])
 }
