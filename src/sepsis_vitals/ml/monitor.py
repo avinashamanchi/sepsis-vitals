@@ -212,3 +212,110 @@ class DeteriorationTracker:
         """Remove a patient from tracking."""
         self._windows.pop(patient_id, None)
         self._alert_states.pop(patient_id, None)
+
+
+# ─── PatientRegistry ───────────────────────────────────────────────────
+
+@dataclass
+class MonitoredPatient:
+    """State for a patient under active monitoring."""
+    patient_id: str
+    demographics: Dict[str, Any] = field(default_factory=dict)
+    comorbidities: Dict[str, int] = field(default_factory=dict)
+    vitals: Dict[str, float] = field(default_factory=dict)
+    risk_probability: float = 0.0
+    risk_level: str = "unknown"
+    trend_direction: str = "unknown"  # improving, stable, worsening
+    last_prediction_time: float = 0.0
+    last_vitals_time: float = 0.0
+    registered_at: float = field(default_factory=time.time)
+
+
+class PatientRegistry:
+    """Manages patients under active monitoring.
+
+    Handles registration, deregistration, vitals caching, and debounce
+    logic. This is the in-memory layer — backed by Redis/Postgres in
+    production via the state stores.
+
+    Parameters
+    ----------
+    debounce_seconds : int
+        Minimum time between predictions for the same patient.
+        Default: 300 (5 minutes).
+    """
+
+    def __init__(self, debounce_seconds: int = 300) -> None:
+        self.debounce_seconds = debounce_seconds
+        self._patients: Dict[str, MonitoredPatient] = {}
+
+    def register(
+        self,
+        patient_id: str,
+        demographics: Optional[Dict[str, Any]] = None,
+        comorbidities: Optional[Dict[str, int]] = None,
+    ) -> None:
+        """Register a patient for monitoring."""
+        self._patients[patient_id] = MonitoredPatient(
+            patient_id=patient_id,
+            demographics=demographics or {},
+            comorbidities=comorbidities or {},
+        )
+
+    def unregister(self, patient_id: str) -> None:
+        """Remove a patient from monitoring."""
+        self._patients.pop(patient_id, None)
+
+    def is_registered(self, patient_id: str) -> bool:
+        """Check if a patient is registered for monitoring."""
+        return patient_id in self._patients
+
+    def list_patients(self) -> List[Dict[str, Any]]:
+        """List all monitored patients with current state."""
+        return [self.get_patient_info(pid) for pid in self._patients]
+
+    def get_patient_info(self, patient_id: str) -> Optional[Dict[str, Any]]:
+        """Get current state for a monitored patient."""
+        patient = self._patients.get(patient_id)
+        if patient is None:
+            return None
+        return {
+            "patient_id": patient.patient_id,
+            "demographics": patient.demographics,
+            "vitals": patient.vitals,
+            "risk_probability": patient.risk_probability,
+            "risk_level": patient.risk_level,
+            "trend_direction": patient.trend_direction,
+            "last_prediction_time": patient.last_prediction_time,
+            "last_vitals_time": patient.last_vitals_time,
+            "registered_at": patient.registered_at,
+        }
+
+    def update_risk(
+        self, patient_id: str, risk_probability: float, risk_level: str
+    ) -> None:
+        """Update the risk for a monitored patient."""
+        patient = self._patients.get(patient_id)
+        if patient:
+            patient.risk_probability = risk_probability
+            patient.risk_level = risk_level
+
+    def update_vitals(self, patient_id: str, vitals: Dict[str, float]) -> None:
+        """Update cached vitals for a monitored patient."""
+        patient = self._patients.get(patient_id)
+        if patient:
+            patient.vitals.update(vitals)
+            patient.last_vitals_time = time.time()
+
+    def record_prediction_time(self, patient_id: str, timestamp: float) -> None:
+        """Record when the last prediction was made."""
+        patient = self._patients.get(patient_id)
+        if patient:
+            patient.last_prediction_time = timestamp
+
+    def should_debounce(self, patient_id: str, current_time: float) -> bool:
+        """Check if a prediction should be debounced (too recent)."""
+        patient = self._patients.get(patient_id)
+        if patient is None or patient.last_prediction_time == 0.0:
+            return False
+        return (current_time - patient.last_prediction_time) < self.debounce_seconds

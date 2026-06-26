@@ -134,3 +134,78 @@ class TestDeteriorationTracker:
         result = tracker.evaluate("UNKNOWN")
         assert result["alert_type"] is None
         assert result["window_size"] == 0
+
+
+class TestPatientRegistry:
+    """Test patient monitoring lifecycle."""
+
+    def test_register_patient(self):
+        from sepsis_vitals.ml.monitor import PatientRegistry
+
+        registry = PatientRegistry()
+        registry.register("P001", demographics={"age": 65, "sex": "M"})
+
+        assert registry.is_registered("P001")
+        assert not registry.is_registered("P002")
+
+    def test_unregister_patient(self):
+        from sepsis_vitals.ml.monitor import PatientRegistry
+
+        registry = PatientRegistry()
+        registry.register("P001")
+        registry.unregister("P001")
+
+        assert not registry.is_registered("P001")
+
+    def test_list_monitored_patients(self):
+        from sepsis_vitals.ml.monitor import PatientRegistry
+
+        registry = PatientRegistry()
+        registry.register("P001")
+        registry.register("P002")
+        registry.register("P003")
+
+        patients = registry.list_patients()
+        assert len(patients) == 3
+        assert "P001" in [p["patient_id"] for p in patients]
+
+    def test_update_patient_risk(self):
+        from sepsis_vitals.ml.monitor import PatientRegistry
+
+        registry = PatientRegistry()
+        registry.register("P001")
+        registry.update_risk("P001", 0.45, "moderate")
+
+        info = registry.get_patient_info("P001")
+        assert info["risk_probability"] == 0.45
+        assert info["risk_level"] == "moderate"
+
+    def test_debounce_check(self):
+        from sepsis_vitals.ml.monitor import PatientRegistry
+
+        registry = PatientRegistry(debounce_seconds=300)
+        registry.register("P001")
+
+        now = time.time()
+        registry.record_prediction_time("P001", now)
+
+        # Immediately after — should be debounced
+        assert registry.should_debounce("P001", now + 60) is True
+        # After 5 minutes — should not be debounced
+        assert registry.should_debounce("P001", now + 301) is False
+
+    def test_patient_info_includes_last_vitals(self):
+        from sepsis_vitals.ml.monitor import PatientRegistry
+
+        registry = PatientRegistry()
+        registry.register("P001")
+        registry.update_vitals("P001", {"heart_rate": 95, "temperature": 38.2})
+
+        info = registry.get_patient_info("P001")
+        assert info["vitals"]["heart_rate"] == 95
+
+    def test_unregistered_patient_returns_none(self):
+        from sepsis_vitals.ml.monitor import PatientRegistry
+
+        registry = PatientRegistry()
+        assert registry.get_patient_info("UNKNOWN") is None
