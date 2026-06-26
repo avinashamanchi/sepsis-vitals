@@ -176,6 +176,7 @@ def main(args=None):
 
     # Compute column medians from training set for imputation
     col_medians = np.nanmedian(X_train, axis=0)
+    col_medians = np.where(np.isnan(col_medians), 0.0, col_medians)
     for j in range(X_train.shape[1]):
         X_train[nan_mask_train[:, j], j] = col_medians[j]
         X_val[nan_mask_val[:, j], j] = col_medians[j]
