@@ -185,6 +185,7 @@ class SepsisPredictor:
         self.feature_names = None
         self._state_store = None
         self._loaded = False
+        self.dual_thresholds = None
 
     def load(self) -> None:
         """Load model, scaler, metadata, and imputation medians from disk."""
@@ -204,6 +205,7 @@ class SepsisPredictor:
             self.metadata = json.load(f)
 
         self.feature_names = self.metadata["feature_names"]
+        self.dual_thresholds = self.metadata.get("dual_thresholds")
 
         # Load imputation medians for NaN handling
         self._imputation_medians = {}
@@ -446,8 +448,11 @@ class SepsisPredictor:
         return ci_lower, ci_upper
 
     def _classify_risk(self, prob: float, scores: Any) -> str:
-        """Classify risk using both ML probability and clinical scores."""
-        # ML-based classification
+        """Classify risk using dual operating points if available."""
+        if self.dual_thresholds:
+            return classify_risk_dual(prob, self.dual_thresholds, mode="continuous")
+
+        # Fallback: existing fixed thresholds
         if prob >= 0.75 or scores.risk_level == "critical":
             return "critical"
         elif prob >= 0.50 or scores.risk_level == "high":
@@ -456,6 +461,21 @@ class SepsisPredictor:
             return "moderate"
         else:
             return "low"
+
+    def model_info(self) -> Dict[str, Any]:
+        """Return model information for the /model/info API endpoint."""
+        if not self._loaded:
+            self.load()
+        info = {
+            "model_name": self.metadata.get("model_name", "unknown"),
+            "version": self.metadata.get("version", "unknown"),
+            "feature_count": len(self.feature_names),
+            "is_calibrated": self.metadata.get("is_calibrated", False),
+            "metrics": self.metadata.get("metrics", {}),
+        }
+        if self.dual_thresholds:
+            info["dual_thresholds"] = self.dual_thresholds
+        return info
 
     def _explain_prediction(
         self,
