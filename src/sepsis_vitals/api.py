@@ -339,6 +339,41 @@ def _get_predictor():
 
 
 # ---------------------------------------------------------------------------
+# Monitor singleton (lazy initialization)
+# ---------------------------------------------------------------------------
+
+_monitor_registry = None
+_monitor_tracker = None
+_monitor_ingester = None
+
+
+def _get_monitor_components():
+    """Lazy-initialize the monitoring components."""
+    global _monitor_registry, _monitor_tracker, _monitor_ingester
+
+    if _monitor_registry is None:
+        from sepsis_vitals.ml.monitor import (
+            PatientRegistry,
+            DeteriorationTracker,
+            VitalsIngester,
+        )
+
+        _monitor_registry = PatientRegistry()
+        _monitor_tracker = DeteriorationTracker()
+
+        predictor = _get_predictor()
+        if predictor is not None:
+            _monitor_ingester = VitalsIngester(
+                predictor=predictor,
+                registry=_monitor_registry,
+                tracker=_monitor_tracker,
+                ws_manager=ws_manager,
+            )
+
+    return _monitor_registry, _monitor_tracker, _monitor_ingester
+
+
+# ---------------------------------------------------------------------------
 # Metrics tracking
 # ---------------------------------------------------------------------------
 
@@ -704,6 +739,55 @@ async def patient_trend(patient_id: str, user: Dict = Depends(verify_auth)):
     if trend is None:
         raise HTTPException(status_code=404, detail=f"No data for patient {patient_id}")
     return trend
+
+
+# ---------------------------------------------------------------------------
+# Monitor endpoints (continuous patient monitoring)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/monitor/register", dependencies=[Depends(check_rate_limit)])
+async def monitor_register(body: dict, user: Dict = Depends(verify_auth)):
+    """Register a patient for continuous monitoring."""
+    patient_id = sanitise_string(body.get("patient_id", ""))
+    if not patient_id:
+        raise HTTPException(status_code=422, detail="patient_id required")
+
+    registry, tracker, ingester = _get_monitor_components()
+    registry.register(
+        patient_id,
+        demographics=body.get("demographics"),
+        comorbidities=body.get("comorbidities"),
+    )
+
+    return {"status": "registered", "patient_id": patient_id}
+
+
+@app.delete("/monitor/{patient_id}", dependencies=[Depends(check_rate_limit)])
+async def monitor_unregister(patient_id: str, user: Dict = Depends(verify_auth)):
+    """Remove a patient from continuous monitoring."""
+    registry, tracker, ingester = _get_monitor_components()
+    registry.unregister(sanitise_string(patient_id))
+    tracker.remove_patient(sanitise_string(patient_id))
+
+    return {"status": "unregistered", "patient_id": patient_id}
+
+
+@app.get("/monitor/status", dependencies=[Depends(check_rate_limit)])
+async def monitor_status(user: Dict = Depends(verify_auth)):
+    """List all monitored patients with current risk and trend."""
+    registry, tracker, ingester = _get_monitor_components()
+    patients = registry.list_patients()
+
+    # Enrich with deterioration data
+    for p in patients:
+        pid = p["patient_id"]
+        det = tracker.evaluate(pid)
+        p["alert_state"] = det.get("alert_state", "normal")
+        p["deterioration_rate"] = det.get("deterioration_rate_per_hour", 0.0)
+        p["window_hours"] = det.get("window_hours", 0.0)
+
+    return {"patients": patients, "count": len(patients)}
 
 
 @app.get("/model/info", dependencies=[Depends(check_rate_limit)])
