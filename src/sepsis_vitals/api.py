@@ -374,6 +374,23 @@ def _get_monitor_components():
 
 
 # ---------------------------------------------------------------------------
+# Simulator (gated behind ENABLE_SIMULATOR=true)
+# ---------------------------------------------------------------------------
+
+_simulator_enabled = os.getenv("ENABLE_SIMULATOR", "false").lower() == "true"
+_simulation_manager = None
+
+
+def _get_simulation_manager():
+    """Lazy-initialize the SimulationManager."""
+    global _simulation_manager
+    if _simulation_manager is None:
+        from sepsis_vitals.ml.simulator import SimulationManager
+        _simulation_manager = SimulationManager()
+    return _simulation_manager
+
+
+# ---------------------------------------------------------------------------
 # Metrics tracking
 # ---------------------------------------------------------------------------
 
@@ -788,6 +805,116 @@ async def monitor_status(user: Dict = Depends(verify_auth)):
         p["window_hours"] = det.get("window_hours", 0.0)
 
     return {"patients": patients, "count": len(patients)}
+
+
+# ---------------------------------------------------------------------------
+# Simulator endpoints (gated behind ENABLE_SIMULATOR=true)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/simulator/ward", dependencies=[Depends(check_rate_limit)])
+async def simulator_start_ward(body: dict, user: Dict = Depends(verify_auth)):
+    """Start a synthetic ward simulation."""
+    if not _simulator_enabled:
+        raise HTTPException(status_code=403, detail="Simulator not enabled")
+
+    _, _, ingester = _get_monitor_components()
+    if ingester is None:
+        raise HTTPException(status_code=503, detail="Prediction engine not loaded")
+
+    manager = _get_simulation_manager()
+    session_id = manager.start_ward(
+        ingester=ingester,
+        n_patients=body.get("n_patients", 8),
+        speed=body.get("speed", 360),
+        sepsis_count=body.get("sepsis_count", 2),
+        seed=body.get("seed", 42),
+    )
+
+    return {"session_id": session_id, "status": "started"}
+
+
+@app.post("/simulator/replay", dependencies=[Depends(check_rate_limit)])
+async def simulator_start_replay(body: dict, user: Dict = Depends(verify_auth)):
+    """Start a MIMIC-IV case replay."""
+    if not _simulator_enabled:
+        raise HTTPException(status_code=403, detail="Simulator not enabled")
+
+    _, _, ingester = _get_monitor_components()
+    if ingester is None:
+        raise HTTPException(status_code=503, detail="Prediction engine not loaded")
+
+    subject_id = body.get("subject_id")
+    speed = body.get("speed", 720)
+
+    from sepsis_vitals.ml.case_library import CaseLibrary
+    lib = CaseLibrary()
+
+    if subject_id == "random" or subject_id is None:
+        sepsis_only = body.get("sepsis_only", False)
+        case_meta = lib.get_random_case(sepsis=sepsis_only if sepsis_only else None)
+    else:
+        case_meta = lib.get_case(subject_id=int(subject_id))
+
+    if case_meta is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    # Load vitals timeline for this case
+    from sepsis_vitals.ml.mimic_loader import MIMICLoader
+    loader = MIMICLoader.from_demo()
+    vitals = loader.load_vitals(stay_ids={case_meta["stay_id"]})
+
+    manager = _get_simulation_manager()
+    session_id = manager.start_replay(
+        case_meta=case_meta,
+        timeline=vitals,
+        ingester=ingester,
+        speed=speed,
+    )
+
+    return {"session_id": session_id, "subject_id": case_meta["subject_id"], "status": "started"}
+
+
+@app.delete("/simulator/{session_id}", dependencies=[Depends(check_rate_limit)])
+async def simulator_stop(session_id: str, user: Dict = Depends(verify_auth)):
+    """Stop a simulation session."""
+    if not _simulator_enabled:
+        raise HTTPException(status_code=403, detail="Simulator not enabled")
+
+    manager = _get_simulation_manager()
+    stopped = manager.stop_session(sanitise_string(session_id))
+
+    if not stopped:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return {"session_id": session_id, "status": "stopped"}
+
+
+@app.get("/simulator/sessions", dependencies=[Depends(check_rate_limit)])
+async def simulator_sessions(user: Dict = Depends(verify_auth)):
+    """List active simulation sessions."""
+    if not _simulator_enabled:
+        raise HTTPException(status_code=403, detail="Simulator not enabled")
+
+    manager = _get_simulation_manager()
+    return {"sessions": manager.list_sessions()}
+
+
+@app.get("/simulator/cases", dependencies=[Depends(check_rate_limit)])
+async def simulator_cases(user: Dict = Depends(verify_auth)):
+    """List available MIMIC-IV cases for replay."""
+    if not _simulator_enabled:
+        raise HTTPException(status_code=403, detail="Simulator not enabled")
+
+    from sepsis_vitals.ml.case_library import CaseLibrary
+    lib = CaseLibrary()
+
+    try:
+        cases = lib.list_cases()
+    except Exception:
+        cases = []
+
+    return {"cases": cases, "count": len(cases)}
 
 
 @app.get("/model/info", dependencies=[Depends(check_rate_limit)])
