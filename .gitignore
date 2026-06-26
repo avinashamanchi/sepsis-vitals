@@ -33,6 +33,7 @@ docker/backups/
 
 # ── Data (partner data never committed) ──
 data/
+physionet.org/
 !docs/data/
 *.csv
 *.parquet
