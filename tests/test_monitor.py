@@ -341,3 +341,46 @@ class TestVitalsIngester:
         mock_ws_manager.broadcast.assert_called()
         call_args = mock_ws_manager.broadcast.call_args[0][0]
         assert call_args["type"] in ("patient_update", "sepsis_alert")
+
+
+class TestFHIRIngestion:
+    """Test that FHIR observations flow into the monitor."""
+
+    def test_ingest_fhir_observation(self):
+        """VitalsIngester.ingest_single should handle FHIR-extracted vitals."""
+        from sepsis_vitals.ml.monitor import VitalsIngester, PatientRegistry, DeteriorationTracker
+
+        predictor = MagicMock()
+        prediction = MagicMock()
+        prediction.risk_probability = 0.55
+        prediction.risk_level = "moderate"
+        prediction.to_dict.return_value = {
+            "risk_probability": 0.55,
+            "risk_level": "moderate",
+            "patient_id": "fhir-123",
+            "timestamp": "2026-06-25T12:00:00",
+        }
+        predictor.predict.return_value = prediction
+
+        ws = MagicMock()
+        ws.broadcast = AsyncMock()
+        registry = PatientRegistry()
+        tracker = DeteriorationTracker()
+        ingester = VitalsIngester(predictor, registry, tracker, ws)
+
+        # Simulate FHIR-extracted vitals
+        fhir_vitals = {
+            "heart_rate": 110,
+            "temperature": 38.5,
+            "resp_rate": 24,
+            "sbp": 95,
+            "spo2": 93,
+        }
+
+        result = asyncio.get_event_loop().run_until_complete(
+            ingester.ingest_single("fhir-123", fhir_vitals)
+        )
+
+        assert result is not None
+        assert result["risk_probability"] == 0.55
+        assert registry.is_registered("fhir-123")

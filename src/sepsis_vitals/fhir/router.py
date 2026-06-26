@@ -165,6 +165,21 @@ async def create_observation(
     db.add(reading)
     db.commit()
 
+    # Feed into monitor if available
+    try:
+        from sepsis_vitals.api import _get_monitor_components
+        _, _, ingester = _get_monitor_components()
+        if ingester is not None:
+            import asyncio
+            asyncio.ensure_future(
+                ingester.ingest_single(
+                    str(patient.id),
+                    {obs.internal_name: obs.value},
+                )
+            )
+    except ImportError:
+        pass  # Monitor not available
+
     fhir_obs = to_fhir_observation(
         vital_name=obs.internal_name,
         value=obs.value,
