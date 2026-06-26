@@ -319,3 +319,154 @@ class PatientRegistry:
         if patient is None or patient.last_prediction_time == 0.0:
             return False
         return (current_time - patient.last_prediction_time) < self.debounce_seconds
+
+
+# ─── VitalsIngester ────────────────────────────────────────────────────
+
+class VitalsIngester:
+    """Unified vitals intake — single entry point for all data sources.
+
+    On data arrival:
+    1. Auto-register the patient if not already monitored
+    2. Update cached vitals in the registry
+    3. Check debounce (5-min minimum between predictions)
+    4. If not debounced: run SepsisPredictor.predict()
+    5. Feed prediction to DeteriorationTracker
+    6. Broadcast result via WebSocket
+
+    Parameters
+    ----------
+    predictor : SepsisPredictor
+        The loaded ML predictor.
+    registry : PatientRegistry
+        Patient monitoring registry.
+    tracker : DeteriorationTracker
+        Deterioration detection engine.
+    ws_manager : ConnectionManager
+        WebSocket connection manager for broadcasting.
+    """
+
+    def __init__(
+        self,
+        predictor: Any,
+        registry: PatientRegistry,
+        tracker: DeteriorationTracker,
+        ws_manager: Any,
+    ) -> None:
+        self.predictor = predictor
+        self.registry = registry
+        self.tracker = tracker
+        self.ws_manager = ws_manager
+
+    async def ingest_single(
+        self,
+        patient_id: str,
+        vitals: Dict[str, Any],
+        demographics: Optional[Dict[str, Any]] = None,
+        comorbidities: Optional[Dict[str, int]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Ingest vitals for a single patient.
+
+        Auto-registers the patient for monitoring if not already registered.
+        Returns the prediction result dict, or None if debounced.
+        """
+        # Auto-register if not monitored
+        if not self.registry.is_registered(patient_id):
+            self.registry.register(
+                patient_id,
+                demographics=demographics,
+                comorbidities=comorbidities,
+            )
+
+        # Update cached vitals
+        numeric_vitals = {
+            k: v for k, v in vitals.items()
+            if isinstance(v, (int, float)) and v is not None
+        }
+        self.registry.update_vitals(patient_id, numeric_vitals)
+
+        # Check debounce
+        now = time.time()
+        if self.registry.should_debounce(patient_id, now):
+            logger.debug("Debounced prediction for patient %s", patient_id)
+            return None
+
+        # Run prediction
+        age_years = None
+        if demographics:
+            age_years = demographics.get("age") or demographics.get("age_years")
+
+        prediction = self.predictor.predict(
+            vitals=vitals,
+            patient_id=patient_id,
+            age_years=age_years,
+            comorbidities=comorbidities,
+        )
+
+        # Record prediction time
+        self.registry.record_prediction_time(patient_id, now)
+
+        # Update registry risk
+        self.registry.update_risk(
+            patient_id, prediction.risk_probability, prediction.risk_level
+        )
+
+        # Feed to deterioration tracker
+        self.tracker.add_prediction(
+            patient_id, now, prediction.risk_probability, prediction.risk_level
+        )
+        deterioration = self.tracker.evaluate(patient_id)
+
+        # Build result
+        result = prediction.to_dict()
+
+        # Broadcast via WebSocket
+        message = {
+            "type": "patient_update",
+            "patient_id": patient_id,
+            "risk_level": prediction.risk_level,
+            "risk_probability": prediction.risk_probability,
+            "timestamp": result.get("timestamp"),
+            "trend": deterioration.get("alert_state", "normal"),
+        }
+
+        if deterioration["alert_type"] == "deterioration":
+            message["type"] = "deterioration_alert"
+            message["alert_type"] = "deterioration"
+            message["risk_delta"] = deterioration["risk_delta"]
+            message["deterioration_rate"] = deterioration["deterioration_rate_per_hour"]
+            message["window_hours"] = deterioration["window_hours"]
+            message["previous_risk_level"] = deterioration.get("previous_risk_level")
+
+        elif deterioration["alert_type"] == "recovery":
+            message["type"] = "recovery_alert"
+            message["alert_type"] = "recovery"
+            message["risk_delta"] = deterioration["risk_delta"]
+            message["previous_risk_level"] = deterioration.get("previous_risk_level")
+
+        elif prediction.risk_level in ("high", "critical"):
+            message["type"] = "sepsis_alert"
+
+        await self.ws_manager.broadcast(message)
+
+        return result
+
+    async def ingest_batch(
+        self,
+        records: List[Dict[str, Any]],
+    ) -> List[Optional[Dict[str, Any]]]:
+        """Ingest vitals for multiple patients.
+
+        Each record must have 'patient_id' and 'vitals' keys.
+        Returns list of prediction results (None for debounced).
+        """
+        results = []
+        for record in records:
+            result = await self.ingest_single(
+                patient_id=record["patient_id"],
+                vitals=record["vitals"],
+                demographics=record.get("demographics"),
+                comorbidities=record.get("comorbidities"),
+            )
+            results.append(result)
+        return results

@@ -1,5 +1,6 @@
 """Tests for the autonomous prediction engine monitor module."""
 
+import asyncio
 import time
 import pytest
 from unittest.mock import MagicMock, AsyncMock
@@ -209,3 +210,134 @@ class TestPatientRegistry:
 
         registry = PatientRegistry()
         assert registry.get_patient_info("UNKNOWN") is None
+
+
+class TestVitalsIngester:
+    """Test unified vitals intake and prediction triggering."""
+
+    @pytest.fixture
+    def mock_predictor(self):
+        predictor = MagicMock()
+        prediction = MagicMock()
+        prediction.risk_probability = 0.45
+        prediction.risk_level = "moderate"
+        prediction.to_dict.return_value = {
+            "risk_probability": 0.45,
+            "risk_level": "moderate",
+            "patient_id": "P001",
+            "timestamp": "2026-06-25T12:00:00",
+        }
+        predictor.predict.return_value = prediction
+        return predictor
+
+    @pytest.fixture
+    def mock_ws_manager(self):
+        mgr = MagicMock()
+        mgr.broadcast = AsyncMock()
+        return mgr
+
+    def test_ingest_single_triggers_prediction(self, mock_predictor, mock_ws_manager):
+        from sepsis_vitals.ml.monitor import VitalsIngester, PatientRegistry, DeteriorationTracker
+
+        registry = PatientRegistry()
+        tracker = DeteriorationTracker()
+        ingester = VitalsIngester(
+            predictor=mock_predictor,
+            registry=registry,
+            tracker=tracker,
+            ws_manager=mock_ws_manager,
+        )
+
+        result = asyncio.get_event_loop().run_until_complete(
+            ingester.ingest_single("P001", {"heart_rate": 95, "temperature": 38.1})
+        )
+
+        # Should auto-register the patient
+        assert registry.is_registered("P001")
+        # Should call predict
+        mock_predictor.predict.assert_called_once()
+        # Should return the prediction
+        assert result["risk_probability"] == 0.45
+
+    def test_ingest_single_debounces(self, mock_predictor, mock_ws_manager):
+        from sepsis_vitals.ml.monitor import VitalsIngester, PatientRegistry, DeteriorationTracker
+
+        registry = PatientRegistry(debounce_seconds=300)
+        tracker = DeteriorationTracker()
+        ingester = VitalsIngester(
+            predictor=mock_predictor,
+            registry=registry,
+            tracker=tracker,
+            ws_manager=mock_ws_manager,
+        )
+
+        # First call — should predict
+        asyncio.get_event_loop().run_until_complete(
+            ingester.ingest_single("P001", {"heart_rate": 95})
+        )
+        assert mock_predictor.predict.call_count == 1
+
+        # Second call within debounce window — should skip prediction
+        result = asyncio.get_event_loop().run_until_complete(
+            ingester.ingest_single("P001", {"heart_rate": 96})
+        )
+        assert mock_predictor.predict.call_count == 1
+        assert result is None  # debounced
+
+    def test_ingest_batch_processes_all(self, mock_predictor, mock_ws_manager):
+        from sepsis_vitals.ml.monitor import VitalsIngester, PatientRegistry, DeteriorationTracker
+
+        registry = PatientRegistry()
+        tracker = DeteriorationTracker()
+        ingester = VitalsIngester(
+            predictor=mock_predictor,
+            registry=registry,
+            tracker=tracker,
+            ws_manager=mock_ws_manager,
+        )
+
+        records = [
+            {"patient_id": "P001", "vitals": {"heart_rate": 88}},
+            {"patient_id": "P002", "vitals": {"heart_rate": 110}},
+        ]
+
+        results = asyncio.get_event_loop().run_until_complete(
+            ingester.ingest_batch(records)
+        )
+
+        assert len(results) == 2
+        assert registry.is_registered("P001")
+        assert registry.is_registered("P002")
+
+    def test_ingest_broadcasts_alert_on_high_risk(self, mock_ws_manager):
+        from sepsis_vitals.ml.monitor import VitalsIngester, PatientRegistry, DeteriorationTracker
+
+        predictor = MagicMock()
+        prediction = MagicMock()
+        prediction.risk_probability = 0.85
+        prediction.risk_level = "high"
+        prediction.to_dict.return_value = {
+            "risk_probability": 0.85,
+            "risk_level": "high",
+            "patient_id": "P001",
+            "timestamp": "2026-06-25T12:00:00",
+        }
+        predictor.predict.return_value = prediction
+
+        registry = PatientRegistry()
+        tracker = DeteriorationTracker()
+        ingester = VitalsIngester(
+            predictor=predictor,
+            registry=registry,
+            tracker=tracker,
+            ws_manager=mock_ws_manager,
+        )
+
+        asyncio.get_event_loop().run_until_complete(
+            ingester.ingest_single("P001", {"heart_rate": 130})
+        )
+
+        # Should broadcast alert
+        mock_ws_manager.broadcast.assert_called()
+        call_args = mock_ws_manager.broadcast.call_args[0][0]
+        assert call_args["type"] in ("patient_update", "sepsis_alert")
