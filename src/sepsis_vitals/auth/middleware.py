@@ -1,11 +1,13 @@
 """
 sepsis_vitals.auth.middleware
-FastAPI dependencies for JWT authentication, role checking, and
-organisation-level access control.
+FastAPI dependencies for JWT authentication, role checking,
+organisation-level access control, and session idle timeout.
 """
 
 from __future__ import annotations
 
+import os
+import time
 from typing import Any, Callable, Optional
 
 from fastapi import Depends, HTTPException, Request, status
@@ -13,6 +15,31 @@ from sqlalchemy.orm import Session
 
 from sepsis_vitals.auth.tokens import TokenError, decode_token
 from sepsis_vitals.db import User, get_db
+
+# ---------------------------------------------------------------------------
+# Session idle timeout (HIPAA § 164.312(a)(2)(iii))
+# ---------------------------------------------------------------------------
+
+# Default 15 minutes — configurable via env var
+_SESSION_IDLE_TIMEOUT = int(os.getenv("SESSION_IDLE_TIMEOUT_SECONDS", "900"))
+
+# user_id -> last_activity unix timestamp (in-memory; Redis in production)
+_user_last_activity: dict[str, float] = {}
+
+
+def _check_idle_timeout(user_id: str) -> None:
+    """Raise HTTPException(401) if the user has been idle too long."""
+    now = time.time()
+    last = _user_last_activity.get(user_id)
+    if last is not None and (now - last) > _SESSION_IDLE_TIMEOUT:
+        # Clear the activity record so subsequent requests also fail
+        _user_last_activity.pop(user_id, None)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Session expired due to {_SESSION_IDLE_TIMEOUT // 60} minutes of inactivity. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    _user_last_activity[user_id] = now
 
 
 # ---------------------------------------------------------------------------
@@ -45,11 +72,13 @@ def get_current_user(
     ``org_id`` fields.  The underlying database row is also fetched to confirm
     the user still exists.
 
+    Also enforces session idle timeout (HIPAA § 164.312(a)(2)(iii)).
+
     Raises
     ------
     HTTPException (401)
-        If the token is missing, expired, or invalid, or the user no longer
-        exists.
+        If the token is missing, expired, revoked, or invalid, the user no
+        longer exists, or the session has been idle too long.
     """
     token = _extract_bearer_token(request)
 
@@ -70,6 +99,10 @@ def get_current_user(
         )
 
     user_id: str = payload["sub"]
+
+    # Enforce idle timeout before hitting the database
+    _check_idle_timeout(user_id)
+
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise HTTPException(

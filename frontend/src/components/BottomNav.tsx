@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import {
-  Activity, BarChart3, Bell, Brain,
+  Activity, Bell, Brain,
   LayoutDashboard, Settings, Users,
 } from 'lucide-react'
 import clsx from 'clsx'

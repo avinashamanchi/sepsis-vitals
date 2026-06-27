@@ -51,7 +51,7 @@ class RegisterRequest(BaseModel):
     """Payload for user registration."""
 
     email: EmailStr
-    password: str = Field(..., min_length=8, max_length=128)
+    password: str = Field(..., min_length=12, max_length=128)
     role: str = Field(
         ...,
         pattern=r"^(nurse|researcher|system_admin)$",
@@ -87,7 +87,7 @@ class PasswordResetConfirmBody(BaseModel):
     """Payload to confirm a password reset."""
 
     token: str
-    new_password: str = Field(..., min_length=8, max_length=128)
+    new_password: str = Field(..., min_length=12, max_length=128)
 
 
 class EmailVerifyBody(BaseModel):
@@ -282,16 +282,28 @@ def auth_login(
     )
 
 
+class RefreshResponse(BaseModel):
+    """Response containing rotated token pair."""
+
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+
 @router.post(
     "/refresh",
-    response_model=AccessTokenResponse,
+    response_model=RefreshResponse,
     summary="Refresh an access token",
 )
 def auth_refresh(
     body: RefreshRequest,
     db: Session = Depends(get_db),
-) -> AccessTokenResponse:
-    """Exchange a refresh token for a new access token."""
+) -> RefreshResponse:
+    """Exchange a refresh token for a new access + refresh token pair.
+
+    The old refresh token is revoked (single-use). Replaying a revoked
+    refresh token will invalidate the user's entire token family.
+    """
     try:
         result = refresh_access_token(
             refresh_token=body.refresh_token,
@@ -304,10 +316,41 @@ def auth_refresh(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return AccessTokenResponse(
+    return RefreshResponse(
         access_token=result["access_token"],
+        refresh_token=result["refresh_token"],
         token_type=result["token_type"],
     )
+
+
+@router.post(
+    "/logout",
+    response_model=MessageResponse,
+    summary="Logout and revoke tokens",
+)
+def auth_logout(
+    request: Request,
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> MessageResponse:
+    """Revoke the current access token and invalidate the session.
+
+    Returns 200 even if the token was already revoked (idempotent).
+    """
+    from sepsis_vitals.auth.tokens import decode_token, get_blacklist
+
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        try:
+            payload = decode_token(auth_header[7:])
+            jti = payload.get("jti")
+            if jti:
+                # Revoke for remaining token lifetime
+                ttl = max(0, payload.get("exp", 0) - int(__import__("time").time()))
+                get_blacklist().revoke(jti, ttl_seconds=ttl or 900)
+        except Exception:
+            pass  # Token already expired/invalid — still return 200
+
+    return MessageResponse(detail="Logged out successfully")
 
 
 @router.post(

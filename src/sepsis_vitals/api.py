@@ -41,7 +41,7 @@ from pydantic import BaseModel, Field
 
 from sepsis_vitals import __version__
 from sepsis_vitals.scores import compute_scores
-from sepsis_vitals.security import RateLimiter, RateLimitExceeded, sanitise_string
+from sepsis_vitals.security import RateLimiter, RateLimitExceeded, SecurityAlertTracker, sanitise_string
 
 # ---------------------------------------------------------------------------
 # App config
@@ -329,6 +329,26 @@ class CopilotResponse(BaseModel):
     disclaimer: str
 
 
+# Monitor / simulator request models
+class MonitorRegisterRequest(BaseModel):
+    patient_id: str = Field(..., min_length=1, max_length=100, description="Patient identifier")
+    demographics: Optional[Dict[str, Any]] = Field(None, description="Patient demographics")
+    comorbidities: Optional[Dict[str, Any]] = Field(None, description="Patient comorbidities")
+
+
+class SimulatorWardRequest(BaseModel):
+    n_patients: int = Field(8, ge=1, le=50, description="Number of patients")
+    speed: int = Field(360, ge=1, le=3600, description="Simulation speed multiplier")
+    sepsis_count: int = Field(2, ge=0, le=50, description="Number of sepsis patients")
+    seed: int = Field(42, ge=0, description="Random seed")
+
+
+class SimulatorReplayRequest(BaseModel):
+    subject_id: Optional[str] = Field(None, max_length=100, description="MIMIC subject ID or 'random'")
+    speed: int = Field(720, ge=1, le=3600, description="Replay speed multiplier")
+    sepsis_only: bool = Field(False, description="Only select sepsis cases")
+
+
 # ---------------------------------------------------------------------------
 # Lazy-loaded singletons
 # ---------------------------------------------------------------------------
@@ -607,10 +627,26 @@ def _emit_audit_event(
 
 @app.middleware("http")
 async def hipaa_audit_middleware(request: Request, call_next):
-    """Log all PHI access for HIPAA § 164.312(b) compliance."""
+    """Log all PHI access for HIPAA § 164.312(b) compliance.
+
+    Also feeds the security alert tracker for anomaly detection:
+    - Failed auth attempts (401s on auth endpoints)
+    - Bulk PHI access per user
+    - Error bursts per IP
+    """
     response = await call_next(request)
 
     path = request.url.path
+    ip = _client_ip(request)
+    tracker = SecurityAlertTracker.get()
+
+    # Security alerting: track errors and failed auth
+    if response.status_code >= 400:
+        tracker.record_error_burst(ip, response.status_code)
+    if response.status_code == 401 and path.startswith("/auth/"):
+        tracker.record_failed_auth(ip)
+
+    # PHI audit logging
     audit_action = None
     for pattern, action in _PHI_AUDIT_PATTERNS.items():
         if path.startswith(pattern) or (pattern.endswith("/") and pattern[:-1] in path):
@@ -629,6 +665,10 @@ async def hipaa_audit_middleware(request: Request, call_next):
             except Exception:
                 user_id = "unauthenticated"
 
+        # Security alerting: track bulk PHI access per user
+        if user_id and user_id != "unauthenticated":
+            tracker.record_phi_access(user_id, ip)
+
         # Extract patient_id from path if present
         patient_id = None
         if "/patient/" in path:
@@ -640,7 +680,7 @@ async def hipaa_audit_middleware(request: Request, call_next):
             _emit_audit_event,
             action=audit_action,
             user_id=user_id,
-            ip_address=_client_ip(request),
+            ip_address=ip,
             path=path,
             patient_id=patient_id,
             status_code=response.status_code,
@@ -775,17 +815,15 @@ async def patient_trend(patient_id: str, user: Dict = Depends(verify_auth)):
 
 
 @app.post("/monitor/register", dependencies=[Depends(check_rate_limit)])
-async def monitor_register(body: dict, user: Dict = Depends(verify_auth)):
+async def monitor_register(body: MonitorRegisterRequest, user: Dict = Depends(verify_auth)):
     """Register a patient for continuous monitoring."""
-    patient_id = sanitise_string(body.get("patient_id", ""))
-    if not patient_id:
-        raise HTTPException(status_code=422, detail="patient_id required")
+    patient_id = sanitise_string(body.patient_id)
 
     registry, tracker, ingester = _get_monitor_components()
     registry.register(
         patient_id,
-        demographics=body.get("demographics"),
-        comorbidities=body.get("comorbidities"),
+        demographics=body.demographics,
+        comorbidities=body.comorbidities,
     )
 
     return {"status": "registered", "patient_id": patient_id}
@@ -824,7 +862,7 @@ async def monitor_status(user: Dict = Depends(verify_auth)):
 
 
 @app.post("/simulator/ward", dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
-async def simulator_start_ward(body: dict, user: Dict = Depends(verify_auth)):
+async def simulator_start_ward(body: SimulatorWardRequest, user: Dict = Depends(verify_auth)):
     """Start a synthetic ward simulation."""
     if not _simulator_enabled:
         raise HTTPException(status_code=403, detail="Simulator not enabled")
@@ -836,17 +874,17 @@ async def simulator_start_ward(body: dict, user: Dict = Depends(verify_auth)):
     manager = _get_simulation_manager()
     session_id = manager.start_ward(
         ingester=ingester,
-        n_patients=body.get("n_patients", 8),
-        speed=body.get("speed", 360),
-        sepsis_count=body.get("sepsis_count", 2),
-        seed=body.get("seed", 42),
+        n_patients=body.n_patients,
+        speed=body.speed,
+        sepsis_count=body.sepsis_count,
+        seed=body.seed,
     )
 
     return {"session_id": session_id, "status": "started"}
 
 
 @app.post("/simulator/replay", dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
-async def simulator_start_replay(body: dict, user: Dict = Depends(verify_auth)):
+async def simulator_start_replay(body: SimulatorReplayRequest, user: Dict = Depends(verify_auth)):
     """Start a MIMIC-IV case replay."""
     if not _simulator_enabled:
         raise HTTPException(status_code=403, detail="Simulator not enabled")
@@ -855,17 +893,13 @@ async def simulator_start_replay(body: dict, user: Dict = Depends(verify_auth)):
     if ingester is None:
         raise HTTPException(status_code=503, detail="Prediction engine not loaded")
 
-    subject_id = body.get("subject_id")
-    speed = body.get("speed", 720)
-
     from sepsis_vitals.ml.case_library import CaseLibrary
     lib = CaseLibrary()
 
-    if subject_id == "random" or subject_id is None:
-        sepsis_only = body.get("sepsis_only", False)
-        case_meta = lib.get_random_case(sepsis=sepsis_only if sepsis_only else None)
+    if body.subject_id == "random" or body.subject_id is None:
+        case_meta = lib.get_random_case(sepsis=body.sepsis_only if body.sepsis_only else None)
     else:
-        case_meta = lib.get_case(subject_id=int(subject_id))
+        case_meta = lib.get_case(subject_id=int(body.subject_id))
 
     if case_meta is None:
         raise HTTPException(status_code=404, detail="Case not found")
@@ -880,7 +914,7 @@ async def simulator_start_replay(body: dict, user: Dict = Depends(verify_auth)):
         case_meta=case_meta,
         timeline=vitals,
         ingester=ingester,
-        speed=speed,
+        speed=body.speed,
     )
 
     return {"session_id": session_id, "subject_id": case_meta["subject_id"], "status": "started"}

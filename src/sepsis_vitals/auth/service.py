@@ -68,26 +68,48 @@ class BreakGlassError(AuthServiceError):
 # Password policy
 # ---------------------------------------------------------------------------
 
-_MIN_PASSWORD_LENGTH = 8
+_MIN_PASSWORD_LENGTH = 12
 _PASSWORD_UPPER_RE = re.compile(r"[A-Z]")
+_PASSWORD_LOWER_RE = re.compile(r"[a-z]")
 _PASSWORD_DIGIT_RE = re.compile(r"\d")
+_PASSWORD_SPECIAL_RE = re.compile(r"[!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>/?`~]")
+
+# Top common passwords (NIST SP 800-63B: check against known-compromised list)
+_COMMON_PASSWORDS = frozenset([
+    "password", "123456", "12345678", "qwerty", "abc123", "monkey", "1234567",
+    "letmein", "trustno1", "dragon", "baseball", "iloveyou", "master", "sunshine",
+    "ashley", "bailey", "shadow", "123123", "654321", "superman", "qazwsx",
+    "michael", "football", "password1", "password123", "admin", "welcome",
+    "welcome1", "p@ssw0rd", "passw0rd", "hello123", "charlie", "donald",
+    "login", "princess", "qwerty123", "solo", "1q2w3e4r", "master1",
+    "changeme", "1234567890", "00000000", "password!", "password1!",
+])
 
 
 def _validate_password_strength(password: str) -> None:
     """Raise :class:`WeakPasswordError` if *password* is too weak.
 
-    Requirements:
-    - At least 8 characters.
+    Requirements (aligned with NIST SP 800-63B + healthcare best practice):
+    - At least 12 characters.
     - At least one uppercase letter.
+    - At least one lowercase letter.
     - At least one digit.
+    - At least one special character.
+    - Not in the common/compromised password list.
     """
     errors: list[str] = []
     if len(password) < _MIN_PASSWORD_LENGTH:
         errors.append(f"at least {_MIN_PASSWORD_LENGTH} characters")
     if not _PASSWORD_UPPER_RE.search(password):
         errors.append("at least one uppercase letter")
+    if not _PASSWORD_LOWER_RE.search(password):
+        errors.append("at least one lowercase letter")
     if not _PASSWORD_DIGIT_RE.search(password):
         errors.append("at least one digit")
+    if not _PASSWORD_SPECIAL_RE.search(password):
+        errors.append("at least one special character (!@#$%^&*...)")
+    if password.lower() in _COMMON_PASSWORDS:
+        errors.append("password is too common")
     if errors:
         raise WeakPasswordError(
             "Password does not meet requirements: " + "; ".join(errors)
@@ -346,7 +368,11 @@ def refresh_access_token(
     refresh_token: str,
     db_session: Session,
 ) -> dict[str, str]:
-    """Exchange a valid refresh token for a new access token.
+    """Exchange a valid refresh token for a new access + refresh token pair.
+
+    Implements refresh token rotation: the old refresh token is revoked and
+    a new one is issued in the same token family.  If a revoked refresh
+    token is replayed, the entire family is invalidated (replay detection).
 
     Parameters
     ----------
@@ -359,13 +385,15 @@ def refresh_access_token(
     Returns
     -------
     dict
-        ``{"access_token": ..., "token_type": "bearer"}``
+        ``{"access_token": ..., "refresh_token": ..., "token_type": "bearer"}``
 
     Raises
     ------
     InvalidTokenError
         If the refresh token is expired, invalid, or the user no longer exists.
     """
+    from sepsis_vitals.auth.tokens import get_blacklist
+
     try:
         payload = decode_token(refresh_token)
     except TokenError as exc:
@@ -379,13 +407,28 @@ def refresh_access_token(
     if user is None:
         raise InvalidTokenError("User no longer exists")
 
+    # Revoke the old refresh token (single-use enforcement)
+    old_jti = payload.get("jti")
+    if old_jti:
+        get_blacklist().revoke(old_jti, ttl_seconds=7 * 86400)
+
+    # Issue new token pair in the same family
+    family_id = payload.get("fid")
     access = create_access_token(
         user_id=user.id,
         email=user.email,
         role=user.role,
         org_id=user.site_id,
     )
-    return {"access_token": access, "token_type": "bearer"}
+    new_refresh = create_refresh_token(
+        user_id=user.id,
+        family_id=family_id,
+    )
+    return {
+        "access_token": access,
+        "refresh_token": new_refresh,
+        "token_type": "bearer",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -464,6 +507,10 @@ def reset_password(
     user.failed_attempts = 0
     user.locked_until = None
     db_session.commit()
+
+    # Revoke all existing tokens for this user (force re-login)
+    from sepsis_vitals.auth.tokens import get_blacklist
+    get_blacklist().revoke_all_for_user(user.id)
 
     return True
 

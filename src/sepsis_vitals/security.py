@@ -533,6 +533,112 @@ class FieldEncryptor:
             raise FieldEncryptionError(f"Decryption failed: {exc}") from exc
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Suspicious activity detection and alerting
+# ──────────────────────────────────────────────────────────────────────────────
+
+import logging as _logging
+
+_security_logger = _logging.getLogger("sepsis_vitals.security_alert")
+
+
+class SecurityAlertTracker:
+    """Track suspicious patterns and fire alerts when thresholds are exceeded.
+
+    Monitors:
+    - Failed auth attempts per IP (brute force)
+    - Bulk PHI access per user (data exfiltration)
+    - Rapid API requests from a single IP (abuse)
+
+    Uses sliding window counters (in-memory, or Redis when available).
+    """
+
+    _instance: "SecurityAlertTracker | None" = None
+
+    def __init__(self) -> None:
+        # IP -> list of timestamps for failed auth
+        self._failed_auth: dict[str, list[float]] = {}
+        # user_id -> list of timestamps for PHI access
+        self._phi_access: dict[str, list[float]] = {}
+        # IP -> list of timestamps for 4xx/5xx errors
+        self._error_burst: dict[str, list[float]] = {}
+        # Already-fired alerts (prevent spam) — key -> last_alert_time
+        self._alert_cooldown: dict[str, float] = {}
+
+    @classmethod
+    def get(cls) -> "SecurityAlertTracker":
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def _prune(self, entries: list[float], window: float = 300.0) -> list[float]:
+        """Remove entries older than *window* seconds."""
+        cutoff = time.monotonic() - window
+        return [t for t in entries if t > cutoff]
+
+    def _should_alert(self, key: str, cooldown: float = 300.0) -> bool:
+        """Return True if enough time has passed since the last alert for *key*."""
+        last = self._alert_cooldown.get(key, 0)
+        if time.monotonic() - last < cooldown:
+            return False
+        self._alert_cooldown[key] = time.monotonic()
+        return True
+
+    def record_failed_auth(self, ip: str) -> None:
+        """Record a failed authentication attempt from *ip*."""
+        now = time.monotonic()
+        self._failed_auth.setdefault(ip, []).append(now)
+        self._failed_auth[ip] = self._prune(self._failed_auth[ip])
+
+        # Threshold: 10 failed attempts in 5 minutes from same IP
+        if len(self._failed_auth[ip]) >= 10:
+            if self._should_alert(f"brute_force:{ip}"):
+                _security_logger.critical(
+                    "SECURITY_ALERT: Brute-force detected | ip=%s | "
+                    "failed_attempts=%d in 5min | "
+                    "ACTION: Consider blocking IP",
+                    ip,
+                    len(self._failed_auth[ip]),
+                )
+
+    def record_phi_access(self, user_id: str, ip: str) -> None:
+        """Record a PHI access event for anomaly detection."""
+        now = time.monotonic()
+        self._phi_access.setdefault(user_id, []).append(now)
+        self._phi_access[user_id] = self._prune(self._phi_access[user_id], window=600.0)
+
+        # Threshold: 100 PHI accesses in 10 minutes (possible data exfiltration)
+        if len(self._phi_access[user_id]) >= 100:
+            if self._should_alert(f"bulk_phi:{user_id}"):
+                _security_logger.critical(
+                    "SECURITY_ALERT: Bulk PHI access detected | user=%s | ip=%s | "
+                    "accesses=%d in 10min | "
+                    "ACTION: Verify user activity is authorized",
+                    user_id,
+                    ip,
+                    len(self._phi_access[user_id]),
+                )
+
+    def record_error_burst(self, ip: str, status_code: int) -> None:
+        """Record client/server errors for abuse detection."""
+        if status_code < 400:
+            return
+        now = time.monotonic()
+        self._error_burst.setdefault(ip, []).append(now)
+        self._error_burst[ip] = self._prune(self._error_burst[ip], window=60.0)
+
+        # Threshold: 50 errors in 1 minute from same IP (scanning/fuzzing)
+        if len(self._error_burst[ip]) >= 50:
+            if self._should_alert(f"error_burst:{ip}"):
+                _security_logger.critical(
+                    "SECURITY_ALERT: Error burst detected | ip=%s | "
+                    "errors=%d in 1min | "
+                    "ACTION: Possible scanning/fuzzing attack",
+                    ip,
+                    len(self._error_burst[ip]),
+                )
+
+
 def compute_blind_index(value: str) -> str:
     """Compute an HMAC-SHA256 blind index for encrypted-field lookups.
 
