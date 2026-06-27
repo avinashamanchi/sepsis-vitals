@@ -30,6 +30,7 @@
     "error": "An error occurred",
     "demoMode": "(Demo Mode)",
     "connected": "Connected",
+    "reconnecting": "Reconnecting",
     "offline": "Offline",
     "live": "Live",
     "unknown": "Unknown",
@@ -38,7 +39,11 @@
     "overflowBadge": "9+",
     "all": "All",
     "noData": "No data",
-    "required": "required"
+    "required": "required",
+    "sessionExpiring": "Your session will expire in {{seconds}} seconds due to inactivity.",
+    "keepWorking": "Keep Working",
+    "sessionExpired": "Session Expired",
+    "sessionExpiredMessage": "Your session has expired due to inactivity. Please sign in again."
   },
   "risk": {
     "low": "Low",

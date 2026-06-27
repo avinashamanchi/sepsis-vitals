@@ -1,0 +1,1 @@
+if('serviceWorker' in navigator) {window.addEventListener('load', () => {navigator.serviceWorker.register('/sepsis-vitals/sw.js', { scope: '/sepsis-vitals/' })})}

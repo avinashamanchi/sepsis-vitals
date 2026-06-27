@@ -175,4 +175,6 @@ export const api = {
       }>
       count: number
     }>('/simulator/cases'),
+
+  ping: () => request<{ status: string }>('/auth/ping', { method: 'POST' }),
 }

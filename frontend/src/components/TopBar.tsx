@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Menu, Bell } from 'lucide-react'
 import { useStore } from '../stores/useStore'
 import { LanguageSwitcher } from './LanguageSwitcher'
+import { ConnectionStatus } from './ConnectionStatus'
 
 export function TopBar() {
   const { t } = useTranslation()
@@ -11,6 +12,7 @@ export function TopBar() {
   const sidebarOpen = useStore((s) => s.sidebarOpen)
   const unread = alerts.filter((a) => !a.dismissed).length
   const { pathname } = useLocation()
+  const isMac = navigator.platform.toUpperCase().includes('MAC')
 
   const PAGE_TITLES: Record<string, string> = {
     '/': t('nav.dashboard'),
@@ -43,6 +45,10 @@ export function TopBar() {
       <div className="flex-1" />
 
       <div className="flex items-center gap-4">
+        <ConnectionStatus />
+        <span className="hidden lg:inline-flex items-center gap-1 text-[10px] text-text-muted border border-border rounded px-1.5 py-0.5 font-mono">
+          {isMac ? '⌘' : 'Ctrl+'}K
+        </span>
         <LanguageSwitcher />
         <button aria-label={t('common.notifications')} className="relative p-2 text-text-secondary hover:text-text-primary transition-colors">
           <Bell className="w-5 h-5" />

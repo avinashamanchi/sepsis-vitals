@@ -26,10 +26,14 @@ interface AppState {
   // WebSocket
   wsConnected: boolean
   setWsConnected: (connected: boolean) => void
+  wsState: 'connected' | 'reconnecting' | 'offline'
+  setWsState: (state: 'connected' | 'reconnecting' | 'offline') => void
 
   // UI
   sidebarOpen: boolean
   setSidebarOpen: (open: boolean) => void
+  showSessionWarning: boolean
+  setShowSessionWarning: (show: boolean) => void
 
   // Monitor
   monitoredPatients: Record<string, MonitoredPatient>
@@ -99,10 +103,14 @@ export const useStore = create<AppState>((set) => ({
   // WebSocket
   wsConnected: false,
   setWsConnected: (connected) => set({ wsConnected: connected }),
+  wsState: 'offline' as const,
+  setWsState: (state) => set({ wsState: state }),
 
   // UI
   sidebarOpen: false,
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
+  showSessionWarning: false,
+  setShowSessionWarning: (show) => set({ showSessionWarning: show }),
 
   // Monitor
   monitoredPatients: {},

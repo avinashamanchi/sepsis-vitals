@@ -22,11 +22,13 @@ function playAlertSound(level: string) {
 
 export function useWebSocket() {
   const setWsConnected = useStore((s) => s.setWsConnected)
+  const setWsState = useStore((s) => s.setWsState)
   const addAlert = useStore((s) => s.addAlert)
   const updatePatientRisk = useStore((s) => s.updatePatientRisk)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectDelay = useRef(WS_RECONNECT_DELAY)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const hasConnectedOnce = useRef(false)
 
   useEffect(() => {
     function connect() {
@@ -44,12 +46,19 @@ export function useWebSocket() {
         return
       }
 
+      // If we've connected before, this is a reconnect attempt
+      if (hasConnectedOnce.current) {
+        setWsState('reconnecting')
+      }
+
       try {
         const ws = new WebSocket(url)
         wsRef.current = ws
 
         ws.onopen = () => {
           setWsConnected(true)
+          setWsState('connected')
+          hasConnectedOnce.current = true
           reconnectDelay.current = WS_RECONNECT_DELAY
         }
 
@@ -113,6 +122,7 @@ export function useWebSocket() {
 
         ws.onclose = () => {
           setWsConnected(false)
+          setWsState('reconnecting')
           wsRef.current = null
           // Exponential backoff reconnect
           reconnectTimer.current = setTimeout(() => {
@@ -130,6 +140,7 @@ export function useWebSocket() {
       } catch {
         // WebSocket constructor can throw if URL is invalid
         setWsConnected(false)
+        setWsState('reconnecting')
       }
     }
 
@@ -142,6 +153,7 @@ export function useWebSocket() {
         wsRef.current.close()
       }
       setWsConnected(false)
+      setWsState('offline')
     }
-  }, [setWsConnected, addAlert, updatePatientRisk])
+  }, [setWsConnected, setWsState, addAlert, updatePatientRisk])
 }

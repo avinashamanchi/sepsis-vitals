@@ -1,0 +1,1 @@
+{"name":"Sepsis Vitals","short_name":"SepsisVitals","description":"AI-powered sepsis prediction for low-resource hospitals","start_url":"/sepsis-vitals/","display":"standalone","background_color":"#0a0f1c","theme_color":"#0a0f1c","lang":"en","scope":"/sepsis-vitals/","icons":[{"src":"favicon.svg","sizes":"512x512","type":"image/svg+xml","purpose":"any maskable"}]}

@@ -475,6 +475,14 @@ def auth_break_glass(
     )
 
 
+@router.post("/ping", summary="Session keep-alive")
+async def session_ping(
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Lightweight keep-alive endpoint that resets the session idle timer."""
+    return {"status": "ok"}
+
+
 @router.get(
     "/me",
     response_model=UserResponse,

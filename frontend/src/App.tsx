@@ -7,6 +7,8 @@ import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
 import { BottomNav } from './components/BottomNav'
 import { SimulatorPanel } from './components/SimulatorPanel'
+import { SessionWarning } from './components/SessionWarning'
+import { KeyboardShortcuts } from './components/KeyboardShortcuts'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useStore } from './stores/useStore'
 import { isDemo, setOnUnauthorized, api } from './lib/api'
@@ -37,6 +39,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   const lastActivity = useStore((s) => s.lastActivity)
   const logout = useStore((s) => s.logout)
   const updateActivity = useStore((s) => s.updateActivity)
+  const setShowSessionWarning = useStore((s) => s.setShowSessionWarning)
   const location = useLocation()
   const navigate = useNavigate()
 
@@ -52,13 +55,17 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!token || isDemo) return
     const interval = setInterval(() => {
-      if (Date.now() - lastActivity > SESSION_TIMEOUT_MS) {
+      const idle = Date.now() - lastActivity
+      if (idle > SESSION_TIMEOUT_MS) {
+        setShowSessionWarning(false)
         logout()
         navigate('/login')
+      } else if (idle > SESSION_TIMEOUT_MS - 60_000) {
+        setShowSessionWarning(true)
       }
-    }, 30_000) // check every 30s
+    }, 5_000) // check every 5s
     return () => clearInterval(interval)
-  }, [token, lastActivity, logout, navigate])
+  }, [token, lastActivity, logout, navigate, setShowSessionWarning])
 
   // Track activity on route change
   useEffect(() => {
@@ -124,6 +131,7 @@ export default function App() {
                   >
                     {t('app.skipToContent')}
                   </a>
+                  <KeyboardShortcuts />
                   <Sidebar />
                   <div className="lg:ml-[220px] min-h-screen flex flex-col">
                     <TopBar />
@@ -143,6 +151,7 @@ export default function App() {
                       </Suspense>
                     </main>
                   </div>
+                  <SessionWarning />
                   <BottomNav />
                   <SimulatorPanel />
                 </div>
