@@ -1342,12 +1342,14 @@ class FHIRWebhookServer:
         port: int = 8090,
         path: str = "/fhir/webhook",
         queue: Optional[VitalsIngestionQueue] = None,
+        webhook_secret: Optional[str] = None,
     ) -> None:
         self.host = host
         self.port = port
         self.path = path
         self._handler = FHIRWebhookHandler(queue=queue)
         self._server: Optional[asyncio.AbstractServer] = None
+        self._webhook_secret = webhook_secret or os.environ.get("SEPSIS_WEBHOOK_SECRET")
 
     @property
     def queue(self) -> VitalsIngestionQueue:
@@ -1482,6 +1484,27 @@ class FHIRWebhookServer:
                 writer, 400, {"error": "Empty request body"}
             )
             return
+
+        # Verify webhook signature if secret is configured
+        if self._webhook_secret:
+            sig_header = headers.get("x-webhook-signature", "")
+            if not sig_header:
+                await self._send_response(
+                    writer, 401, {"error": "Missing X-Webhook-Signature header"}
+                )
+                return
+            try:
+                from sepsis_vitals.security import verify_webhook_signature
+                verify_webhook_signature(body_bytes, sig_header, self._webhook_secret)
+            except Exception:
+                logger.warning(
+                    "FHIR webhook signature verification failed from %s:%s",
+                    peer[0], peer[1],
+                )
+                await self._send_response(
+                    writer, 403, {"error": "Invalid webhook signature"}
+                )
+                return
 
         try:
             body = json.loads(body_bytes)
