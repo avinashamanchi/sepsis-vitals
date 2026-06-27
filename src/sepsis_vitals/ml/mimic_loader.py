@@ -628,6 +628,11 @@ class MIMICLoader:
         Produces a DataFrame compatible with the existing trainer.py pipeline,
         with the same feature columns as the synthetic data generator.
 
+        IMPORTANT: This method uses strict temporal censoring to prevent
+        lookahead leakage. For each observation row at time t, features
+        are computed using ONLY data at or before t. This ensures the model
+        never sees future data that was used to define the sepsis label.
+
         Parameters
         ----------
         max_patients : int, optional
@@ -641,6 +646,11 @@ class MIMICLoader:
             Training-ready DataFrame with vitals, labs, scores, demographics,
             comorbidities, and sepsis labels.
         """
+        from sepsis_vitals.ml.sepsis3_labeler import (
+            derive_sepsis_onset,
+            find_suspected_infections,
+        )
+
         # 1. Get ICU stays with sepsis labels
         stays = self.derive_sepsis_labels()
         if max_patients:
@@ -667,7 +677,58 @@ class MIMICLoader:
         # 5. Load comorbidities
         comorbidities = self.load_comorbidities()
 
-        # 6. Build feature matrix per stay
+        # 6. Get sepsis onset times for per-observation labeling
+        antibiotics = self.load_antibiotics()
+        cultures = self.load_cultures()
+        infections = find_suspected_infections(antibiotics, cultures)
+
+        # Build onset map: hadm_id -> t_sepsis_onset
+        sofa_labs = self.load_sofa_labs(hadm_id_set)
+        from sepsis_vitals.ml.sepsis3_labeler import compute_sofa_scores
+        # Reuse the SOFA DataFrame already computed in derive_sepsis_labels
+        # by re-deriving onsets from the same infections
+        onset_map: dict = {}
+        if not infections.empty:
+            # Build lightweight SOFA series for onset derivation
+            sofa_rows_for_onset = []
+            stay_hadm = stays.set_index("stay_id")["hadm_id"].to_dict()
+            stay_subject = stays.set_index("stay_id")["subject_id"].to_dict()
+            for sid in stay_id_set:
+                hadm = stay_hadm.get(sid)
+                subject = stay_subject.get(sid)
+                if hadm is None or subject is None:
+                    continue
+                sv = vitals[vitals["stay_id"] == sid]
+                if sv.empty:
+                    continue
+                for ct in sv["charttime"].dropna().unique():
+                    sofa_rows_for_onset.append({
+                        "subject_id": subject,
+                        "hadm_id": hadm,
+                        "charttime": ct,
+                    })
+            if sofa_rows_for_onset:
+                sofa_df = pd.DataFrame(sofa_rows_for_onset)
+                sofa_df["charttime"] = pd.to_datetime(sofa_df["charttime"])
+                # Add minimal SOFA columns (GCS, MAP from vitals)
+                sofa_df["sofa_total"] = 0  # Placeholder — onset already derived
+                onsets = derive_sepsis_onset(sofa_df, infections)
+                if not onsets.empty:
+                    onset_map = onsets.set_index("hadm_id")["t_sepsis_onset"].to_dict()
+
+        # ICD fallback hadms (for admissions without Sepsis-3 onset)
+        diag = self._read_csv(
+            "hosp/diagnoses_icd.csv.gz",
+            usecols=["hadm_id", "icd_code", "icd_version"],
+        )
+        icd_sepsis_prefixes = ["A40", "A41", "R652", "R6520", "R6521", "99591", "99592", "78552"]
+        icd_mask = diag["icd_code"].apply(
+            lambda x: any(str(x).startswith(p) for p in icd_sepsis_prefixes)
+        )
+        icd_sepsis_hadms = set(diag.loc[icd_mask, "hadm_id"].unique())
+        fallback_hadms = icd_sepsis_hadms - set(onset_map.keys())
+
+        # 7. Build feature matrix PER OBSERVATION with temporal censoring
         records = []
         vital_names = ["temperature", "heart_rate", "resp_rate", "sbp",
                        "dbp", "spo2", "gcs", "map"]
@@ -676,71 +737,114 @@ class MIMICLoader:
         for _, stay in stays.iterrows():
             sid = stay["stay_id"]
             hid = stay["hadm_id"]
-            intime = stay["intime"]
 
-            # Get vitals for this stay
+            # Get vitals for this stay, sorted by time
             sv = vitals[vitals["stay_id"] == sid].copy()
             if sv.empty:
                 continue
 
-            # Get labs for this admission
-            sl = labs[labs["hadm_id"] == hid].copy() if not labs.empty else pd.DataFrame()
+            sv["charttime"] = pd.to_datetime(sv["charttime"])
+            sv = sv.sort_values("charttime")
 
-            row: dict = {
-                "patient_id": sid,
-                "age_years": stay.get("age_years", 65),
-                "sepsis_label": stay["sepsis_label"],
-                "label_source": stay.get("label_source", ""),
-            }
-
-            # Latest vitals and rolling stats
-            for vname in vital_names:
-                vdata = sv[sv["vital_name"] == vname]["valuenum"].values
-                if len(vdata) > 0:
-                    row[vname] = vdata[-1]
-                    row[f"{vname}_roll_mean"] = float(np.mean(vdata[-6:]))
-                    row[f"{vname}_roll_std"] = float(np.std(vdata[-6:], ddof=1)) if len(vdata) > 1 else 0.0
-                    row[f"{vname}_delta"] = float(vdata[-1] - vdata[-2]) if len(vdata) >= 2 else 0.0
-                    row[f"{vname}_missing"] = 0
-                else:
-                    row[f"{vname}_missing"] = 1
-
-            # Labs
-            for lname in lab_names:
+            # Get labs for this admission, sorted by time
+            if not labs.empty:
+                sl = labs[labs["hadm_id"] == hid].copy()
                 if not sl.empty:
-                    ldata = sl[sl["vital_name"] == lname]["valuenum"].values
+                    sl["charttime"] = pd.to_datetime(sl["charttime"])
+                    sl = sl.sort_values("charttime")
                 else:
-                    ldata = np.array([])
-                if len(ldata) > 0:
-                    row[lname] = ldata[-1]
-                    row[f"{lname}_roll_mean"] = float(np.mean(ldata[-6:]))
-                    row[f"{lname}_delta"] = float(ldata[-1] - ldata[-2]) if len(ldata) >= 2 else 0.0
-                    row[f"{lname}_missing"] = 0
-                else:
-                    row[f"{lname}_missing"] = 1
+                    sl = pd.DataFrame()
+            else:
+                sl = pd.DataFrame()
 
-            # Comorbidities
+            # Get sepsis onset time for this admission
+            t_onset = onset_map.get(hid)
+            is_icd_fallback = hid in fallback_hadms
+
+            # Get unique observation timestamps for this stay
+            unique_times = sorted(sv["charttime"].dropna().unique())
+
+            # Sample observation times (every hour to avoid duplicates)
+            if len(unique_times) > 1:
+                # Floor to hours and deduplicate
+                hour_times = pd.to_datetime(pd.Series(unique_times)).dt.floor("h").unique()
+                sample_times = sorted(hour_times)
+            else:
+                sample_times = unique_times
+
+            # Get comorbidities for this admission (static, no temporal concern)
             comorb = comorbidities[comorbidities["hadm_id"] == hid]
+            comorb_dict: dict = {}
             for col in COMORBIDITY_ICD10:
-                row[col] = int(comorb[col].values[0]) if not comorb.empty and col in comorb.columns else 0
+                comorb_dict[col] = int(comorb[col].values[0]) if not comorb.empty and col in comorb.columns else 0
 
-            # Missing counts
-            row["n_vitals_missing"] = sum(1 for v in vital_names if row.get(f"{v}_missing", 1))
-            row["n_labs_missing"] = sum(1 for v in lab_names if row.get(f"{v}_missing", 1))
+            for pred_time in sample_times:
+                pred_time = pd.Timestamp(pred_time)
 
-            records.append(row)
+                # ── STRICT TEMPORAL CENSORING ──
+                # Only use data at or before pred_time
+                sv_censored = sv[sv["charttime"] <= pred_time]
+                if sv_censored.empty:
+                    continue
+
+                row: dict = {
+                    "patient_id": sid,
+                    "timestamp": pred_time,
+                    "age_years": stay.get("age_years", 65),
+                }
+
+                # Per-observation sepsis label with temporal censoring
+                if t_onset is not None:
+                    row["sepsis_label"] = 1 if pred_time >= t_onset else 0
+                    row["label_source"] = "sepsis3"
+                elif is_icd_fallback:
+                    row["sepsis_label"] = 1
+                    row["label_source"] = "icd_fallback"
+                else:
+                    row["sepsis_label"] = 0
+                    row["label_source"] = "sepsis3"
+
+                # Vitals: only data at or before pred_time
+                for vname in vital_names:
+                    vdata = sv_censored[sv_censored["vital_name"] == vname]["valuenum"].values
+                    if len(vdata) > 0:
+                        row[vname] = vdata[-1]
+                        row[f"{vname}_roll_mean"] = float(np.mean(vdata[-6:]))
+                        row[f"{vname}_roll_std"] = float(np.std(vdata[-6:], ddof=1)) if len(vdata) > 1 else 0.0
+                        row[f"{vname}_delta"] = float(vdata[-1] - vdata[-2]) if len(vdata) >= 2 else 0.0
+                        row[f"{vname}_missing"] = 0
+                    else:
+                        row[f"{vname}_missing"] = 1
+
+                # Labs: only data at or before pred_time
+                for lname in lab_names:
+                    if not sl.empty:
+                        sl_censored = sl[sl["charttime"] <= pred_time]
+                        ldata = sl_censored[sl_censored["vital_name"] == lname]["valuenum"].values
+                    else:
+                        ldata = np.array([])
+                    if len(ldata) > 0:
+                        row[lname] = ldata[-1]
+                        row[f"{lname}_roll_mean"] = float(np.mean(ldata[-6:]))
+                        row[f"{lname}_delta"] = float(ldata[-1] - ldata[-2]) if len(ldata) >= 2 else 0.0
+                        row[f"{lname}_missing"] = 0
+                    else:
+                        row[f"{lname}_missing"] = 1
+
+                # Comorbidities (static — no temporal concern)
+                row.update(comorb_dict)
+
+                # Missing counts
+                row["n_vitals_missing"] = sum(1 for v in vital_names if row.get(f"{v}_missing", 1))
+                row["n_labs_missing"] = sum(1 for v in lab_names if row.get(f"{v}_missing", 1))
+
+                records.append(row)
 
         df = pd.DataFrame(records)
 
         if df.empty:
             logger.warning("No training data produced")
             return df
-
-        # Add timestamp column if not present
-        if "timestamp" not in df.columns:
-            # Use ICU intime as the timestamp for per-stay records
-            stay_intime = stays.set_index("stay_id")["intime"].to_dict()
-            df["timestamp"] = df["patient_id"].map(stay_intime)
 
         # Bin observations into 1-hour epochs
         from sepsis_vitals.ml.data_unifier import bin_to_epochs

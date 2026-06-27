@@ -47,12 +47,21 @@ function makeDemoPatients(): MonitoredPatient[] {
   })
 }
 
+/** Stale threshold: 30 minutes without telemetry = signal lost */
+const STALE_THRESHOLD_SECONDS = 30 * 60
+
 function timeAgo(unixSeconds: number): string {
   const diff = Date.now() / 1000 - unixSeconds
   if (diff < 60) return 'just now'
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
   return `${Math.floor(diff / 86400)}d ago`
+}
+
+function isStale(patient: MonitoredPatient): boolean {
+  const lastData = patient.last_vitals_time || patient.last_prediction_time
+  if (!lastData) return true
+  return (Date.now() / 1000 - lastData) > STALE_THRESHOLD_SECONDS
 }
 
 /** Normal range check for vital highlighting */
@@ -176,35 +185,49 @@ export function Monitor() {
       {/* Patient Grid */}
       {patients.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
-          {patients.map((patient) => (
+          {patients.map((patient) => {
+            const stale = isStale(patient)
+            return (
             <Link
               key={patient.patient_id}
               to={`/patients/${patient.patient_id}`}
               className={clsx(
                 'bg-surface border-2 rounded-lg p-4 transition-all hover:bg-elevated block',
-                RISK_BORDER[patient.risk_level],
-                patient.risk_level === 'critical' && 'animate-pulse-critical',
+                stale ? 'border-border opacity-60' : RISK_BORDER[patient.risk_level],
+                !stale && patient.risk_level === 'critical' && 'animate-pulse-critical',
               )}
             >
+              {/* Stale banner */}
+              {stale && (
+                <div className="bg-warning/10 border border-warning/30 rounded px-2 py-1 mb-3 text-[10px] text-warning font-medium text-center">
+                  Telemetry Lost — Data Stale
+                </div>
+              )}
+
               {/* Header row */}
               <div className="flex items-center justify-between mb-3">
-                <span className="font-heading font-semibold text-sm">{patient.patient_id}</span>
-                <RiskBadge level={patient.risk_level} size="sm" pulse={patient.risk_level === 'critical'} />
+                <span className={clsx('font-heading font-semibold text-sm', stale && 'text-text-muted')}>{patient.patient_id}</span>
+                {stale
+                  ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-elevated text-text-muted border border-border">Stale</span>
+                  : <RiskBadge level={patient.risk_level} size="sm" pulse={patient.risk_level === 'critical'} />
+                }
               </div>
 
               {/* Risk probability + trend */}
               <div className="flex items-center justify-between mb-3">
-                <span className="text-2xl font-bold font-heading">
-                  {(patient.risk_probability * 100).toFixed(0)}%
+                <span className={clsx('text-2xl font-bold font-heading', stale && 'text-text-muted')}>
+                  {stale ? '?' : `${(patient.risk_probability * 100).toFixed(0)}%`}
                 </span>
-                <TrendArrow
-                  direction={patient.trend_direction}
-                  rateText={
-                    patient.deterioration_rate
-                      ? `${patient.deterioration_rate > 0 ? '+' : ''}${(patient.deterioration_rate * 100).toFixed(0)}%/h`
-                      : undefined
-                  }
-                />
+                {!stale && (
+                  <TrendArrow
+                    direction={patient.trend_direction}
+                    rateText={
+                      patient.deterioration_rate
+                        ? `${patient.deterioration_rate > 0 ? '+' : ''}${(patient.deterioration_rate * 100).toFixed(0)}%/h`
+                        : undefined
+                    }
+                  />
+                )}
               </div>
 
               {/* 24h Sparkline */}
@@ -215,13 +238,14 @@ export function Monitor() {
                       <Line
                         type="monotone"
                         dataKey="risk_probability"
-                        stroke={
+                        stroke={stale ? '#666' : (
                           patient.risk_level === 'critical' ? '#ff3b5c' :
                           patient.risk_level === 'high' ? '#ff6b35' :
                           patient.risk_level === 'moderate' ? '#ffb830' : '#00ff9d'
-                        }
+                        )}
                         strokeWidth={1.5}
                         dot={false}
+                        strokeDasharray={stale ? '4 4' : undefined}
                       />
                     </LineChart>
                   </ResponsiveContainer>
@@ -238,7 +262,7 @@ export function Monitor() {
                   return (
                     <div key={key} className="text-center">
                       <div className="text-text-muted">{labels[key]}</div>
-                      <div className={clsx('font-medium', isAbnormal(key, value) ? 'text-danger' : 'text-text-primary')}>
+                      <div className={clsx('font-medium', stale ? 'text-text-muted' : isAbnormal(key, value) ? 'text-danger' : 'text-text-primary')}>
                         {key === 'temperature' ? value.toFixed(1) : Math.round(value)}
                         <span className="text-text-muted ml-0.5">{units[key]}</span>
                       </div>
@@ -248,11 +272,12 @@ export function Monitor() {
               </div>
 
               {/* Last updated */}
-              <div className="text-[10px] text-text-muted text-right">
+              <div className={clsx('text-[10px] text-right', stale ? 'text-warning font-medium' : 'text-text-muted')}>
                 {timeAgo(patient.last_vitals_time || patient.last_prediction_time)}
               </div>
             </Link>
-          ))}
+            )
+          })}
         </div>
       )}
 
