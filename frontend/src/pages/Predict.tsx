@@ -9,13 +9,14 @@ import clsx from 'clsx'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts'
+import { useTranslation } from 'react-i18next'
 
 const COMORBIDITIES = [
-  { key: 'hypertension', label: 'Hypertension' },
-  { key: 'diabetes', label: 'Diabetes' },
-  { key: 'ckd', label: 'CKD' },
-  { key: 'copd', label: 'COPD' },
-  { key: 'heart_failure', label: 'Heart Failure' },
+  { key: 'hypertension', labelKey: 'predict.hypertension' },
+  { key: 'diabetes', labelKey: 'predict.diabetes' },
+  { key: 'ckd', labelKey: 'predict.ckd' },
+  { key: 'copd', labelKey: 'predict.copd' },
+  { key: 'heart_failure', labelKey: 'predict.heartFailure' },
 ]
 
 /** Compute clinical scores from vitals */
@@ -67,6 +68,7 @@ const featureColors: Record<string, string> = {
 }
 
 export function Predict() {
+  const { t } = useTranslation()
   const [result, setResult] = useState<Prediction | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -137,10 +139,10 @@ export function Predict() {
       <div>
         <h1 className="font-heading text-2xl font-bold flex items-center gap-2">
           <Brain className="w-6 h-6 text-accent" />
-          AI Prediction
+          {t('predict.title')}
         </h1>
         <p className="text-sm text-text-secondary mt-1">
-          ML-powered sepsis risk prediction with clinical scores and SHAP explanations
+          {t('predict.subtitle')}
         </p>
       </div>
 
@@ -148,37 +150,37 @@ export function Predict() {
         {/* Left column: Input */}
         <div className="space-y-4">
           <div className="bg-surface border border-border rounded-lg p-5">
-            <h2 className="font-heading text-sm font-semibold mb-4">Patient Vitals</h2>
-            <VitalsForm onSubmit={handleSubmit} loading={loading} submitLabel="Run Prediction" />
+            <h2 className="font-heading text-sm font-semibold mb-4">{t('predict.patientVitals')}</h2>
+            <VitalsForm onSubmit={handleSubmit} loading={loading} submitLabel={t('predict.runPrediction')} />
             {error && <p className="mt-3 text-sm text-danger">{error}</p>}
           </div>
 
           {/* Demographics */}
           <div className="bg-surface border border-border rounded-lg p-5">
-            <h2 className="font-heading text-sm font-semibold mb-3">Demographics</h2>
+            <h2 className="font-heading text-sm font-semibold mb-3">{t('predict.demographics')}</h2>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs text-text-muted mb-1">Age</label>
+                <label className="block text-xs text-text-muted mb-1">{t('predict.age')}</label>
                 <input
                   type="number"
                   min={0}
                   max={120}
                   value={age}
                   onChange={(e) => setAge(e.target.value)}
-                  placeholder="Years"
+                  placeholder={t('predict.years')}
                   className="w-full bg-elevated border border-border rounded px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50"
                 />
               </div>
               <div>
-                <label className="block text-xs text-text-muted mb-1">Sex</label>
+                <label className="block text-xs text-text-muted mb-1">{t('predict.sex')}</label>
                 <select
                   value={sex}
                   onChange={(e) => setSex(e.target.value)}
                   className="w-full bg-elevated border border-border rounded px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent/50"
                 >
                   <option value="">--</option>
-                  <option value="M">Male</option>
-                  <option value="F">Female</option>
+                  <option value="M">{t('predict.male')}</option>
+                  <option value="F">{t('predict.female')}</option>
                 </select>
               </div>
             </div>
@@ -186,9 +188,9 @@ export function Predict() {
 
           {/* Comorbidities */}
           <div className="bg-surface border border-border rounded-lg p-5">
-            <h2 className="font-heading text-sm font-semibold mb-3">Comorbidities</h2>
+            <h2 className="font-heading text-sm font-semibold mb-3">{t('predict.comorbidities')}</h2>
             <div className="grid grid-cols-2 gap-2">
-              {COMORBIDITIES.map(({ key, label }) => (
+              {COMORBIDITIES.map(({ key, labelKey }) => (
                 <label key={key} className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer hover:text-text-primary">
                   <input
                     type="checkbox"
@@ -196,7 +198,7 @@ export function Predict() {
                     onChange={(e) => setComorbidities({ ...comorbidities, [key]: e.target.checked })}
                     className="accent-accent"
                   />
-                  {label}
+                  {t(labelKey)}
                 </label>
               ))}
             </div>
@@ -211,7 +213,7 @@ export function Predict() {
               className="accent-accent"
             />
             <UserPlus className="w-4 h-4" />
-            Add to continuous monitoring after prediction
+            {t('predict.addToMonitoring')}
           </label>
           {monitorStatus && (
             <p className={clsx('text-xs', monitorStatus.includes('Failed') ? 'text-danger' : 'text-accent')}>
@@ -227,16 +229,19 @@ export function Predict() {
               {/* Risk Summary */}
               <div className="bg-surface border border-border rounded-lg p-5">
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="font-heading text-sm font-semibold">Prediction Result</h2>
+                  <h2 className="font-heading text-sm font-semibold">{t('predict.predictionResult')}</h2>
                   <RiskBadge level={result.risk_level} size="md" pulse={result.alert} />
                 </div>
                 <div className="text-center py-4">
                   <p className="text-5xl font-bold font-heading text-text-primary">
                     {(result.risk_probability * 100).toFixed(1)}%
                   </p>
-                  <p className="text-sm text-text-secondary mt-2">Sepsis Risk Probability</p>
+                  <p className="text-sm text-text-secondary mt-2">{t('predict.riskProbability')}</p>
                   <p className="text-xs text-text-muted mt-1">
-                    95% CI: [{(result.confidence_interval.lower * 100).toFixed(1)}% - {(result.confidence_interval.upper * 100).toFixed(1)}%]
+                    {t('predict.confidenceInterval', {
+                      lower: (result.confidence_interval.lower * 100).toFixed(1),
+                      upper: (result.confidence_interval.upper * 100).toFixed(1),
+                    })}
                   </p>
                 </div>
                 <div className="mt-4 p-3 bg-elevated rounded-lg">
@@ -248,13 +253,13 @@ export function Predict() {
               {continuousRisk && onDemandRisk && (
                 <div className="grid grid-cols-2 gap-3">
                   <div className="bg-surface border border-border rounded-lg p-4">
-                    <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1">Continuous Monitoring</p>
-                    <p className="text-xs text-text-muted mb-2">99% specificity threshold</p>
+                    <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1">{t('predict.continuousMonitoring')}</p>
+                    <p className="text-xs text-text-muted mb-2">{t('predict.specificityThreshold99')}</p>
                     <RiskBadge level={continuousRisk} size="sm" />
                   </div>
                   <div className="bg-surface border border-border rounded-lg p-4">
-                    <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1">Clinical Assessment</p>
-                    <p className="text-xs text-text-muted mb-2">95% specificity threshold</p>
+                    <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1">{t('predict.clinicalAssessment')}</p>
+                    <p className="text-xs text-text-muted mb-2">{t('predict.specificityThreshold95')}</p>
                     <RiskBadge level={onDemandRisk} size="sm" />
                   </div>
                 </div>
@@ -264,14 +269,14 @@ export function Predict() {
               {scores && (
                 <div className="grid grid-cols-4 gap-2">
                   {[
-                    { label: 'qSOFA', value: scores.qsofa, suffix: '/3' },
-                    { label: 'SIRS', value: scores.sirs, suffix: '/4' },
-                    { label: 'NEWS2', value: scores.news2, suffix: '' },
-                    { label: 'SI', value: scores.shockIndex, suffix: '' },
+                    { label: t('scores.qsofa'), key: 'qSOFA', value: scores.qsofa, suffix: '/3' },
+                    { label: t('scores.sirs'), key: 'SIRS', value: scores.sirs, suffix: '/4' },
+                    { label: t('scores.news2'), key: 'NEWS2', value: scores.news2, suffix: '' },
+                    { label: t('scores.si'), key: 'SI', value: scores.shockIndex, suffix: '' },
                   ].map((s) => (
-                    <div key={s.label} className="bg-surface border border-border rounded-lg p-3 text-center">
+                    <div key={s.key} className="bg-surface border border-border rounded-lg p-3 text-center">
                       <p className="text-[10px] text-text-muted">{s.label}</p>
-                      <p className={clsx('text-xl font-bold font-heading', scoreColor(s.label, typeof s.value === 'number' ? s.value : 0))}>
+                      <p className={clsx('text-xl font-bold font-heading', scoreColor(s.key, typeof s.value === 'number' ? s.value : 0))}>
                         {s.value != null ? (Number.isInteger(s.value) ? s.value : (s.value as number).toFixed(2)) : '--'}
                         <span className="text-xs text-text-muted">{s.suffix}</span>
                       </p>
@@ -285,7 +290,7 @@ export function Predict() {
                 <div className="bg-surface border border-border rounded-lg p-5">
                   <h2 className="font-heading text-sm font-semibold mb-3 flex items-center gap-2">
                     <TrendingUp className="w-4 h-4 text-info" />
-                    Risk Factors (SHAP)
+                    {t('predict.riskFactors')}
                   </h2>
                   <div className="h-[200px]">
                     <ResponsiveContainer width="100%" height="100%">
@@ -339,8 +344,8 @@ export function Predict() {
           ) : (
             <div className="bg-surface border border-border rounded-lg p-8 text-center">
               <Brain className="w-8 h-8 text-text-muted mx-auto mb-3" />
-              <p className="text-sm text-text-muted">Enter vitals to run ML prediction</p>
-              <p className="text-xs text-text-muted mt-1">GradientBoosting model with clinical scores and SHAP explanations</p>
+              <p className="text-sm text-text-muted">{t('predict.emptyState')}</p>
+              <p className="text-xs text-text-muted mt-1">{t('predict.emptyStateHint')}</p>
             </div>
           )}
         </div>

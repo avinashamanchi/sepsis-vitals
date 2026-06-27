@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { StatCard } from '../components/StatCard'
 import { AlertFeed } from '../components/AlertFeed'
 import { RiskBadge } from '../components/RiskBadge'
@@ -27,6 +28,7 @@ const DEMO_TREND = Array.from({ length: 24 }, (_, i) => ({
 }))
 
 export function Dashboard() {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const alerts = useStore((s) => s.alerts)
   const patients = useStore((s) => s.patients)
@@ -69,35 +71,35 @@ export function Dashboard() {
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
       <div>
-        <h1 className="font-heading text-2xl font-bold">Nurse Console</h1>
+        <h1 className="font-heading text-2xl font-bold">{t('dashboard.title')}</h1>
         <p className="text-sm text-text-secondary mt-1">
-          Real-time patient monitoring
-          {isDemo && <span className="ml-2 text-xs text-warning">(Demo Mode)</span>}
+          {t('dashboard.subtitle')}
+          {isDemo && <span className="ml-2 text-xs text-warning">{t('common.demoMode')}</span>}
         </p>
       </div>
 
       {/* Stats Row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
-          label="Active Patients"
+          label={t('dashboard.activePatients')}
           value={patients.length > 0 ? patients.length : stats.patientCount}
-          sublabel="Being monitored"
+          sublabel={t('dashboard.beingMonitored')}
           color="accent"
         />
         <StatCard
-          label="Active Alerts"
+          label={t('dashboard.activeAlerts')}
           value={activeAlerts}
-          sublabel="Require attention"
+          sublabel={t('dashboard.requireAttention')}
           color={activeAlerts > 0 ? 'danger' : 'default'}
         />
         <StatCard
-          label="Predictions Today"
+          label={t('dashboard.predictionsToday')}
           value={stats.predictionsToday}
-          sublabel="ML inferences"
+          sublabel={t('dashboard.mlInferences')}
           color="info"
         />
         <StatCard
-          label="Model AUROC"
+          label={t('dashboard.modelAuroc')}
           value={stats.modelAuroc}
           sublabel={stats.modelName}
           color="accent"
@@ -112,9 +114,9 @@ export function Dashboard() {
             <div className="px-4 py-3 border-b border-border flex items-center justify-between">
               <h2 className="font-heading text-sm font-semibold flex items-center gap-2">
                 <Activity className="w-4 h-4 text-danger" />
-                Live Alerts
+                {t('dashboard.liveAlerts')}
               </h2>
-              <span className="text-xs text-text-muted">{wsConnected ? 'Connected' : 'Offline'}</span>
+              <span className="text-xs text-text-muted">{wsConnected ? t('common.connected') : t('common.offline')}</span>
             </div>
             <div className="p-3">
               <AlertFeed limit={6} />
@@ -128,7 +130,7 @@ export function Dashboard() {
             <div className="px-4 py-3 border-b border-border">
               <h2 className="font-heading text-sm font-semibold flex items-center gap-2">
                 <Brain className="w-4 h-4 text-info" />
-                24h Alert Trend
+                {t('dashboard.alertTrend')}
               </h2>
             </div>
             <div className="p-4 h-[280px]">
@@ -193,23 +195,23 @@ export function Dashboard() {
         <div className="px-4 py-3 border-b border-border">
           <h2 className="font-heading text-sm font-semibold flex items-center gap-2">
             <Users className="w-4 h-4 text-accent" />
-            Monitored Patients
+            {t('dashboard.monitoredPatients')}
           </h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <caption className="sr-only">Monitored patients</caption>
+            <caption className="sr-only">{t('dashboard.monitoredPatients')}</caption>
             <thead>
               <tr className="text-text-muted text-xs uppercase border-b border-border">
-                <th className="text-left px-4 py-3 font-medium">Patient</th>
-                <th className="text-left px-4 py-3 font-medium">Temp</th>
-                <th className="text-left px-4 py-3 font-medium">HR</th>
-                <th className="text-left px-4 py-3 font-medium">RR</th>
-                <th className="text-left px-4 py-3 font-medium">SBP</th>
-                <th className="text-left px-4 py-3 font-medium">SpO2</th>
-                <th className="text-left px-4 py-3 font-medium">Lactate</th>
-                <th className="text-left px-4 py-3 font-medium">Risk</th>
-                <th className="text-left px-4 py-3 font-medium">Updated</th>
+                <th className="text-left px-4 py-3 font-medium">{t('dashboard.patient')}</th>
+                <th className="text-left px-4 py-3 font-medium">{t('vitals.temperature')}</th>
+                <th className="text-left px-4 py-3 font-medium">{t('vitals.heartRate')}</th>
+                <th className="text-left px-4 py-3 font-medium">{t('vitals.respRate')}</th>
+                <th className="text-left px-4 py-3 font-medium">{t('vitals.sbp')}</th>
+                <th className="text-left px-4 py-3 font-medium">{t('vitals.spo2')}</th>
+                <th className="text-left px-4 py-3 font-medium">{t('vitals.lactate')}</th>
+                <th className="text-left px-4 py-3 font-medium">{t('risk.label', { level: '' }).trim()}</th>
+                <th className="text-left px-4 py-3 font-medium">{t('dashboard.updated')}</th>
               </tr>
             </thead>
             <tbody>

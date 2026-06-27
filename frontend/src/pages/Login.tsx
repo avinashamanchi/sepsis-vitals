@@ -3,12 +3,14 @@ import { useNavigate } from 'react-router-dom'
 import { Shield, LogIn, UserPlus } from 'lucide-react'
 import { api, isDemo } from '../lib/api'
 import { useStore } from '../stores/useStore'
+import { useTranslation } from 'react-i18next'
 
 type Mode = 'login' | 'register'
 
 export function Login() {
   const setAuth = useStore((s) => s.setAuth)
   const navigate = useNavigate()
+  const { t } = useTranslation()
 
   const [mode, setMode] = useState<Mode>('login')
   const [email, setEmail] = useState('')
@@ -17,10 +19,10 @@ export function Login() {
   const [loading, setLoading] = useState(false)
 
   const validate = (): string | null => {
-    if (!email.trim()) return 'Email is required'
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Invalid email address'
-    if (!password) return 'Password is required'
-    if (password.length < 6) return 'Password must be at least 6 characters'
+    if (!email.trim()) return t('login.emailRequired')
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return t('login.emailInvalid')
+    if (!password) return t('login.passwordRequired')
+    if (password.length < 6) return t('login.passwordTooShort')
     return null
   }
 
@@ -39,7 +41,7 @@ export function Login() {
       setAuth(res.access_token, res.user)
       navigate('/')
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Authentication failed')
+      setError(err instanceof Error ? err.message : t('login.authFailed'))
     } finally {
       setLoading(false)
     }
@@ -59,10 +61,10 @@ export function Login() {
             <Shield className="w-7 h-7 text-accent" />
           </div>
           <h1 className="font-heading text-2xl font-bold text-text-primary">
-            Sepsis Vitals
+            {t('app.title')}
           </h1>
           <p className="text-sm text-text-secondary mt-1">
-            {mode === 'login' ? 'Sign in to continue' : 'Create an account'}
+            {mode === 'login' ? t('login.signIn') : t('login.createAccount')}
           </p>
         </div>
 
@@ -72,7 +74,7 @@ export function Login() {
             onClick={handleDemoLogin}
             className="w-full mb-4 py-3 rounded-lg font-heading font-semibold text-sm bg-accent/10 text-accent border border-accent/30 hover:bg-accent/20 transition-colors"
           >
-            Continue as Demo User
+            {t('login.demoButton')}
           </button>
         )}
 
@@ -80,7 +82,7 @@ export function Login() {
         <form onSubmit={handleSubmit} className="bg-surface border border-border rounded-lg p-6 space-y-4">
           <div>
             <label htmlFor="email" className="block text-xs text-text-muted mb-1">
-              Email
+              {t('login.email')}
             </label>
             <input
               id="email"
@@ -89,14 +91,14 @@ export function Login() {
               onChange={(e) => setEmail(e.target.value)}
               required
               autoComplete="email"
-              placeholder="you@hospital.org"
+              placeholder={t('login.emailPlaceholder')}
               className="w-full bg-elevated border border-border rounded px-3 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50"
             />
           </div>
 
           <div>
             <label htmlFor="password" className="block text-xs text-text-muted mb-1">
-              Password
+              {t('login.password')}
             </label>
             <input
               id="password"
@@ -105,7 +107,7 @@ export function Login() {
               onChange={(e) => setPassword(e.target.value)}
               required
               autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-              placeholder="Min. 6 characters"
+              placeholder={t('login.passwordPlaceholder')}
               className="w-full bg-elevated border border-border rounded px-3 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50"
             />
           </div>
@@ -120,11 +122,11 @@ export function Login() {
             className="w-full bg-accent/10 text-accent border border-accent/30 rounded-lg py-2.5 text-sm font-medium hover:bg-accent/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {loading ? (
-              'Processing...'
+              t('common.processing')
             ) : mode === 'login' ? (
-              <><LogIn className="w-4 h-4" /> Sign In</>
+              <><LogIn className="w-4 h-4" /> {t('login.signInButton')}</>
             ) : (
-              <><UserPlus className="w-4 h-4" /> Create Account</>
+              <><UserPlus className="w-4 h-4" /> {t('login.createButton')}</>
             )}
           </button>
         </form>
@@ -133,22 +135,22 @@ export function Login() {
         <p className="text-center text-sm text-text-muted mt-4">
           {mode === 'login' ? (
             <>
-              No account?{' '}
+              {t('login.noAccount')}{' '}
               <button
                 onClick={() => { setMode('register'); setError('') }}
                 className="text-accent hover:underline"
               >
-                Create one
+                {t('login.createOne')}
               </button>
             </>
           ) : (
             <>
-              Already have an account?{' '}
+              {t('login.hasAccount')}{' '}
               <button
                 onClick={() => { setMode('login'); setError('') }}
                 className="text-accent hover:underline"
               >
-                Sign in
+                {t('login.signInLink')}
               </button>
             </>
           )}

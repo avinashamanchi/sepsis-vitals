@@ -4,8 +4,10 @@ import clsx from 'clsx'
 import { useStore } from '../stores/useStore'
 import { RISK_BORDER } from '../lib/risk'
 import { RiskBadge } from './RiskBadge'
+import { useTranslation } from 'react-i18next'
 
 export function AlertFeed({ limit = 5 }: { limit?: number }) {
+  const { t } = useTranslation()
   const alerts = useStore((s) => s.alerts)
   const dismissAlert = useStore((s) => s.dismissAlert)
   const acknowledgeAlert = useStore((s) => s.acknowledgeAlert)
@@ -17,13 +19,13 @@ export function AlertFeed({ limit = 5 }: { limit?: number }) {
   if (visible.length === 0) {
     return (
       <div className="text-center py-8 text-text-muted text-sm">
-        No active alerts
+        {t('alertFeed.noAlerts')}
       </div>
     )
   }
 
   return (
-    <div className="space-y-2" role="log" aria-live="polite" aria-label="Alert feed">
+    <div className="space-y-2" role="log" aria-live="polite" aria-label={t('alertFeed.feedLabel')}>
       {visible.map((alert) => (
         <div
           key={alert.id}
@@ -40,7 +42,7 @@ export function AlertFeed({ limit = 5 }: { limit?: number }) {
                 <RiskBadge level={alert.riskLevel} pulse={alert.riskLevel === 'critical'} />
                 {alert.acknowledged && (
                   <span className="text-xs text-accent flex items-center gap-1">
-                    <Check className="w-3 h-3" /> Ack
+                    <Check className="w-3 h-3" /> {t('alertFeed.ack')}
                   </span>
                 )}
                 <span className="text-xs text-text-muted">
@@ -57,8 +59,8 @@ export function AlertFeed({ limit = 5 }: { limit?: number }) {
                 <button
                   onClick={() => acknowledgeAlert(alert.id)}
                   className="p-1 text-text-muted hover:text-accent transition-colors"
-                  aria-label="Acknowledge alert"
-                  title="Acknowledge"
+                  aria-label={t('alertFeed.acknowledgeLabel')}
+                  title={t('alertFeed.acknowledge')}
                 >
                   <Check className="w-3.5 h-3.5" />
                 </button>
@@ -69,16 +71,16 @@ export function AlertFeed({ limit = 5 }: { limit?: number }) {
                   setNoteText(alert.note ?? '')
                 }}
                 className="p-1 text-text-muted hover:text-info transition-colors"
-                aria-label="Add note to alert"
-                title="Add note"
+                aria-label={t('alertFeed.addNoteLabel')}
+                title={t('alertFeed.addNote')}
               >
                 <MessageSquare className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={() => dismissAlert(alert.id)}
                 className="p-1 text-text-muted hover:text-text-primary transition-colors"
-                aria-label="Dismiss alert"
-                title="Dismiss"
+                aria-label={t('alertFeed.dismissLabel')}
+                title={t('alertFeed.dismiss')}
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -91,9 +93,9 @@ export function AlertFeed({ limit = 5 }: { limit?: number }) {
                 type="text"
                 value={noteText}
                 onChange={(e) => setNoteText(e.target.value)}
-                placeholder="Add a clinical note..."
+                placeholder={t('alertFeed.notePlaceholder')}
                 className="flex-1 bg-elevated border border-border rounded px-2 py-1 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50"
-                aria-label="Alert note"
+                aria-label={t('alertFeed.noteInputLabel')}
               />
               <button
                 onClick={() => {
@@ -102,7 +104,7 @@ export function AlertFeed({ limit = 5 }: { limit?: number }) {
                 }}
                 className="px-2 py-1 text-xs text-accent bg-accent/10 border border-accent/30 rounded hover:bg-accent/20"
               >
-                Save
+                {t('common.save')}
               </button>
             </div>
           )}

@@ -1,7 +1,8 @@
 import clsx from 'clsx'
+import { useTranslation } from 'react-i18next'
 import { ShieldCheck, AlertTriangle, AlertCircle, AlertOctagon } from 'lucide-react'
 import type { RiskLevel } from '../types'
-import { RISK_COLORS, RISK_BG, riskLabel } from '../lib/risk'
+import { RISK_COLORS, RISK_BG } from '../lib/risk'
 
 const RISK_ICONS: Record<RiskLevel, typeof ShieldCheck> = {
   low: ShieldCheck,
@@ -17,7 +18,10 @@ interface RiskBadgeProps {
 }
 
 export function RiskBadge({ level, size = 'sm', pulse = false }: RiskBadgeProps) {
+  const { t } = useTranslation()
   const Icon = RISK_ICONS[level]
+  const label = t(`risk.${level}`)
+
   return (
     <span
       className={clsx(
@@ -28,10 +32,10 @@ export function RiskBadge({ level, size = 'sm', pulse = false }: RiskBadgeProps)
         pulse && level === 'critical' && 'animate-pulse-critical',
       )}
       role="status"
-      aria-label={`Risk level: ${riskLabel(level)}`}
+      aria-label={`${t('risk.label')}: ${label}`}
     >
       <Icon className={clsx(size === 'sm' ? 'w-3 h-3' : 'w-3.5 h-3.5', 'mr-1')} aria-hidden="true" />
-      {riskLabel(level)}
+      {label}
     </span>
   )
 }

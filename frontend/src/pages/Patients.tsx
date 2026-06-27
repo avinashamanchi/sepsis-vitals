@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { RiskBadge } from '../components/RiskBadge'
 import { Search, Users } from 'lucide-react'
 import { api, isDemo } from '../lib/api'
@@ -32,6 +33,7 @@ const DEMO_PATIENTS: PatientRow[] = [
 ]
 
 export function Patients() {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [filterRisk, setFilterRisk] = useState<RiskLevel | 'all'>('all')
@@ -73,11 +75,11 @@ export function Patients() {
         <div>
           <h1 className="font-heading text-2xl font-bold flex items-center gap-2">
             <Users className="w-6 h-6 text-accent" />
-            Patients
+            {t('patients.title')}
           </h1>
           <p className="text-sm text-text-secondary mt-1">
-            {patients.length} patients monitored
-            {isDemo && <span className="ml-2 text-xs text-warning">(Demo Mode)</span>}
+            {t('patients.monitored', { n: patients.length })}
+            {isDemo && <span className="ml-2 text-xs text-warning">{t('common.demoMode')}</span>}
           </p>
         </div>
       </div>
@@ -88,11 +90,11 @@ export function Patients() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
           <input
             type="text"
-            placeholder="Search patient ID or bed..."
+            placeholder={t('patients.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full bg-surface border border-border rounded-lg pl-10 pr-4 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50"
-            aria-label="Search patients"
+            aria-label={t('patients.searchLabel')}
           />
         </div>
         <div className="flex gap-2">
@@ -107,7 +109,7 @@ export function Patients() {
                   : 'border-border text-text-muted hover:text-text-secondary'
               }`}
             >
-              {level === 'all' ? 'All' : level.charAt(0).toUpperCase() + level.slice(1)}
+              {level === 'all' ? t('common.all') : t(`risk.${level}`)}
             </button>
           ))}
         </div>
@@ -116,7 +118,7 @@ export function Patients() {
       {loading ? (
         <div className="flex items-center justify-center py-12">
           <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-          <span className="ml-3 text-sm text-text-muted">Loading patients...</span>
+          <span className="ml-3 text-sm text-text-muted">{t('patients.loadingPatients')}</span>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -131,19 +133,19 @@ export function Patients() {
                 <div>
                   <span className="font-heading font-semibold text-text-primary">{p.id}</span>
                   <span className="text-xs text-text-muted ml-2">{p.bed}</span>
-                  {p.age && <span className="text-xs text-text-muted ml-2">Age {p.age}</span>}
+                  {p.age && <span className="text-xs text-text-muted ml-2">{t('patients.age', { n: p.age })}</span>}
                 </div>
                 <RiskBadge level={p.risk} pulse={p.risk === 'critical'} />
               </div>
               <div className="grid grid-cols-4 gap-3 text-xs">
-                <div><span className="text-text-muted block">Temp</span><span className="text-text-secondary">{p.temp}°C</span></div>
-                <div><span className="text-text-muted block">HR</span><span className="text-text-secondary">{p.hr} bpm</span></div>
-                <div><span className="text-text-muted block">SBP</span><span className="text-text-secondary">{p.sbp} mmHg</span></div>
-                <div><span className="text-text-muted block">SpO2</span><span className="text-text-secondary">{p.spo2}%</span></div>
-                <div><span className="text-text-muted block">RR</span><span className="text-text-secondary">{p.rr}/min</span></div>
-                <div><span className="text-text-muted block">Lactate</span><span className="text-text-secondary">{p.lac} mmol/L</span></div>
-                <div><span className="text-text-muted block">Risk</span><span className="text-text-secondary">{(p.prob * 100).toFixed(0)}%</span></div>
-                <div><span className="text-text-muted block">Updated</span><span className="text-text-secondary">{p.updated}</span></div>
+                <div><span className="text-text-muted block">{t('vitals.temperature')}</span><span className="text-text-secondary">{p.temp}°C</span></div>
+                <div><span className="text-text-muted block">{t('vitals.heartRate')}</span><span className="text-text-secondary">{p.hr} bpm</span></div>
+                <div><span className="text-text-muted block">{t('vitals.sbp')}</span><span className="text-text-secondary">{p.sbp} mmHg</span></div>
+                <div><span className="text-text-muted block">{t('vitals.spo2')}</span><span className="text-text-secondary">{p.spo2}%</span></div>
+                <div><span className="text-text-muted block">{t('vitals.respRate')}</span><span className="text-text-secondary">{p.rr}/min</span></div>
+                <div><span className="text-text-muted block">{t('vitals.lactate')}</span><span className="text-text-secondary">{p.lac} mmol/L</span></div>
+                <div><span className="text-text-muted block">{t('risk.label', { level: '' }).trim()}</span><span className="text-text-secondary">{(p.prob * 100).toFixed(0)}%</span></div>
+                <div><span className="text-text-muted block">{t('dashboard.updated')}</span><span className="text-text-secondary">{p.updated}</span></div>
               </div>
             </button>
           ))}

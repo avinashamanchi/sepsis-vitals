@@ -13,6 +13,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceLine,
 } from 'recharts'
+import { useTranslation } from 'react-i18next'
 
 interface TrendPoint {
   timestamp: string
@@ -113,6 +114,7 @@ const featureColors: Record<string, string> = {
 }
 
 export function PatientDetail() {
+  const { t } = useTranslation()
   const { id } = useParams<{ id: string }>()
   const [trend, setTrend] = useState<TrendPoint[]>([])
   const [loading, setLoading] = useState(true)
@@ -188,12 +190,14 @@ export function PatientDetail() {
         <div className="flex-1">
           <h1 className="font-heading text-2xl font-bold flex items-center gap-3">
             <Activity className="w-6 h-6 text-accent" />
-            Patient {id}
+            {t('patientDetail.title', { id })}
           </h1>
           <div className="flex items-center gap-3 mt-1">
             <p className="text-sm text-text-secondary">
-              {latest ? `Last updated: ${latest.timestamp}` : 'No data'}
-              {isDemo && <span className="ml-2 text-xs text-warning">(Demo Mode)</span>}
+              {latest
+                ? t('patientDetail.lastUpdated', { timestamp: latest.timestamp })
+                : t('common.noData')}
+              {isDemo && <span className="ml-2 text-xs text-warning">{t('common.demoMode')}</span>}
             </p>
             {trendDirection !== 'unknown' && (
               <TrendArrow
@@ -211,7 +215,7 @@ export function PatientDetail() {
         <RiskBadge level={currentRisk} size="md" pulse={currentRisk === 'critical'} />
       </div>
 
-      {loading && <LoadingSpinner size="lg" label="Loading patient data..." className="py-12" />}
+      {loading && <LoadingSpinner size="lg" label={t('patientDetail.loadingPatient')} className="py-12" />}
 
       {error && (
         <div className="bg-danger/10 border border-danger/20 rounded-lg p-4 text-sm text-danger">{error}</div>
@@ -223,14 +227,14 @@ export function PatientDetail() {
           {scores && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               {[
-                { label: 'qSOFA', value: scores.qsofa, max: '/3', desc: scores.qsofa >= 2 ? 'Sepsis suspected' : 'Normal' },
-                { label: 'SIRS', value: scores.sirs, max: '/4', desc: scores.sirs >= 2 ? 'SIRS criteria met' : 'Normal' },
-                { label: 'NEWS2', value: scores.news2, max: '', desc: scores.news2 >= 7 ? 'High risk' : scores.news2 >= 5 ? 'Medium risk' : 'Low risk' },
-                { label: 'Shock Index', value: scores.shockIndex, max: '', desc: (scores.shockIndex ?? 0) > 1.0 ? 'Elevated' : 'Normal' },
+                { label: t('scores.qsofa'), key: 'qSOFA', value: scores.qsofa, max: '/3', desc: scores.qsofa >= 2 ? t('scores.sepsisSupsp') : t('scores.normal') },
+                { label: t('scores.sirs'), key: 'SIRS', value: scores.sirs, max: '/4', desc: scores.sirs >= 2 ? t('scores.criteriaMet') : t('scores.normal') },
+                { label: t('scores.news2'), key: 'NEWS2', value: scores.news2, max: '', desc: scores.news2 >= 7 ? t('scores.highRisk') : scores.news2 >= 5 ? t('scores.mediumRisk') : t('scores.lowRisk') },
+                { label: t('scores.si'), key: 'Shock Index', value: scores.shockIndex, max: '', desc: (scores.shockIndex ?? 0) > 1.0 ? t('scores.elevated') : t('scores.normal') },
               ].map((s) => (
-                <div key={s.label} className="bg-surface border border-border rounded-lg p-4 text-center">
+                <div key={s.key} className="bg-surface border border-border rounded-lg p-4 text-center">
                   <p className="text-xs text-text-muted mb-1">{s.label}</p>
-                  <p className={clsx('text-3xl font-bold font-heading', scoreColor(s.label, typeof s.value === 'number' ? s.value : 0))}>
+                  <p className={clsx('text-3xl font-bold font-heading', scoreColor(s.key, typeof s.value === 'number' ? s.value : 0))}>
                     {s.value != null ? (typeof s.value === 'number' ? (Number.isInteger(s.value) ? s.value : s.value.toFixed(2)) : '--') : '--'}
                     <span className="text-sm text-text-muted">{s.max}</span>
                   </p>
@@ -244,11 +248,11 @@ export function PatientDetail() {
           {latest && (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
               {[
-                { label: 'Heart Rate', value: latest.vitals.heart_rate, unit: 'bpm', range: [60, 100] as [number, number] },
-                { label: 'Temperature', value: latest.vitals.temperature, unit: '°C', range: [36.1, 38.0] as [number, number] },
-                { label: 'SBP', value: latest.vitals.sbp, unit: 'mmHg', range: [90, 140] as [number, number] },
-                { label: 'SpO2', value: latest.vitals.spo2, unit: '%', range: [95, 100] as [number, number] },
-                { label: 'Resp Rate', value: latest.vitals.resp_rate, unit: '/min', range: [12, 20] as [number, number] },
+                { label: t('vitals.heartRateFull'), value: latest.vitals.heart_rate, unit: t('vitals.units.bpm'), range: [60, 100] as [number, number] },
+                { label: t('vitals.temperatureFull'), value: latest.vitals.temperature, unit: t('vitals.units.celsius'), range: [36.1, 38.0] as [number, number] },
+                { label: t('vitals.sbp'), value: latest.vitals.sbp, unit: t('vitals.units.mmHg'), range: [90, 140] as [number, number] },
+                { label: t('vitals.spo2'), value: latest.vitals.spo2, unit: t('vitals.units.percent'), range: [95, 100] as [number, number] },
+                { label: t('vitals.respRateFull'), value: latest.vitals.resp_rate, unit: t('vitals.units.perMin'), range: [12, 20] as [number, number] },
               ].map((v) => {
                 const abnormal = v.value != null && v.range && (v.value < v.range[0] || v.value > v.range[1])
                 return (
@@ -266,10 +270,10 @@ export function PatientDetail() {
           {/* Risk Trajectory with CI band */}
           <div className="bg-surface border border-border rounded-lg">
             <div className="px-4 py-3 border-b border-border">
-              <h2 className="font-heading text-sm font-semibold">Risk Trajectory (24h)</h2>
+              <h2 className="font-heading text-sm font-semibold">{t('patientDetail.riskTrajectory')}</h2>
             </div>
             <div className="p-4 h-[300px]">
-              <div role="img" aria-label={`Area chart showing 24-hour sepsis risk trajectory for patient ${id}`}>
+              <div role="img" aria-label={t('patientDetail.riskTrajectoryLabel', { id })}>
               <ResponsiveContainer width="100%" height={268}>
                 <AreaChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
@@ -293,9 +297,9 @@ export function PatientDetail() {
             <div className="bg-surface border border-border rounded-lg p-5">
               <h2 className="font-heading text-sm font-semibold mb-3 flex items-center gap-2">
                 <TrendingUp className="w-4 h-4 text-info" />
-                Feature Importance
+                {t('patientDetail.featureImportance')}
               </h2>
-              <div className="h-[200px]" role="img" aria-label="Horizontal bar chart showing feature importance scores for the sepsis risk prediction model">
+              <div className="h-[200px]" role="img" aria-label={t('patientDetail.featureImportanceLabel')}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={featureImportance} layout="vertical" margin={{ left: 80 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
@@ -316,10 +320,10 @@ export function PatientDetail() {
           {/* Vitals Trends */}
           <div className="bg-surface border border-border rounded-lg">
             <div className="px-4 py-3 border-b border-border">
-              <h2 className="font-heading text-sm font-semibold">Vitals History (24h)</h2>
+              <h2 className="font-heading text-sm font-semibold">{t('patientDetail.vitalsHistory')}</h2>
             </div>
             <div className="p-4 h-[280px]">
-              <div role="img" aria-label={`Line chart showing 24-hour vitals history for patient ${id}: heart rate, systolic blood pressure, and respiratory rate`}>
+              <div role="img" aria-label={t('patientDetail.vitalsHistoryLabel', { id })}>
               <ResponsiveContainer width="100%" height={248}>
                 <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
@@ -343,7 +347,7 @@ export function PatientDetail() {
       {!loading && !error && trend.length === 0 && (
         <div className="bg-surface border border-border rounded-lg p-8 text-center">
           <Activity className="w-8 h-8 text-text-muted mx-auto mb-3" />
-          <p className="text-sm text-text-muted">No trend data available for this patient</p>
+          <p className="text-sm text-text-muted">{t('patientDetail.noTrendData')}</p>
         </div>
       )}
     </div>

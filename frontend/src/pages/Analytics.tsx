@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { StatCard } from '../components/StatCard'
 import { BarChart3 } from 'lucide-react'
 import { api, isDemo } from '../lib/api'
@@ -35,6 +36,7 @@ const CHART_TOOLTIP = {
 }
 
 export function Analytics() {
+  const { t } = useTranslation()
   const weeklyData = DEMO_WEEKLY
   const riskDist = DEMO_RISK_DIST
   const [stats, setStats] = useState({
@@ -68,29 +70,29 @@ export function Analytics() {
       <div>
         <h1 className="font-heading text-2xl font-bold flex items-center gap-2">
           <BarChart3 className="w-6 h-6 text-info" />
-          Analytics
+          {t('analytics.title')}
         </h1>
         <p className="text-sm text-text-secondary mt-1">
-          7-day performance overview
-          {isDemo && <span className="ml-2 text-xs text-warning">(Demo Mode)</span>}
+          {t('analytics.subtitle')}
+          {isDemo && <span className="ml-2 text-xs text-warning">{t('common.demoMode')}</span>}
         </p>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Total Predictions" value={stats.totalPredictions} sublabel="This week" color="info" />
-        <StatCard label="Alerts Generated" value={stats.alertsGenerated} sublabel={`${stats.alertRate} alert rate`} color="warning" />
-        <StatCard label="True Positives" value={stats.truePositives} sublabel={`${stats.ppv} PPV`} color="accent" />
-        <StatCard label="Avg Response" value={stats.avgResponse} sublabel="Alert to action" color="default" />
+        <StatCard label={t('analytics.totalPredictions')} value={stats.totalPredictions} sublabel={t('analytics.thisWeek')} color="info" />
+        <StatCard label={t('analytics.alertsGenerated')} value={stats.alertsGenerated} sublabel={t('analytics.alertRate', { n: stats.alertRate.replace('%', '') })} color="warning" />
+        <StatCard label={t('analytics.truePositives')} value={stats.truePositives} sublabel={t('analytics.ppv', { n: stats.ppv.replace('%', '') })} color="accent" />
+        <StatCard label={t('analytics.avgResponse')} value={stats.avgResponse} sublabel={t('analytics.alertToAction')} color="default" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Predictions & Alerts */}
         <div className="bg-surface border border-border rounded-lg">
           <div className="px-4 py-3 border-b border-border">
-            <h2 className="font-heading text-sm font-semibold">Predictions vs Alerts</h2>
+            <h2 className="font-heading text-sm font-semibold">{t('analytics.predictionsVsAlerts')}</h2>
           </div>
           <div className="p-4 h-[280px]">
-            <div role="img" aria-label="Bar chart showing daily predictions versus alerts over the past week">
+            <div role="img" aria-label={t('analytics.predictionsVsAlertsLabel')}>
               <ResponsiveContainer width="100%" height={248}>
                 <BarChart data={weeklyData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
@@ -108,10 +110,10 @@ export function Analytics() {
         {/* Risk Distribution */}
         <div className="bg-surface border border-border rounded-lg">
           <div className="px-4 py-3 border-b border-border">
-            <h2 className="font-heading text-sm font-semibold">Risk Distribution</h2>
+            <h2 className="font-heading text-sm font-semibold">{t('analytics.riskDistribution')}</h2>
           </div>
           <div className="p-4 h-[280px] flex items-center">
-            <div className="w-1/2 h-full" role="img" aria-label="Pie chart showing risk distribution: 58% low, 24% moderate, 12% high, 6% critical">
+            <div className="w-1/2 h-full" role="img" aria-label={t('analytics.riskDistributionLabel')}>
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie data={riskDist} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" paddingAngle={3}>
@@ -139,10 +141,10 @@ export function Analytics() {
       {/* Alert Fatigue Trend */}
       <div className="bg-surface border border-border rounded-lg">
         <div className="px-4 py-3 border-b border-border">
-          <h2 className="font-heading text-sm font-semibold">Alert Fatigue Monitor</h2>
+          <h2 className="font-heading text-sm font-semibold">{t('analytics.alertFatigueMonitor')}</h2>
         </div>
         <div className="p-4 h-[240px]">
-          <div role="img" aria-label="Line chart showing weekly alert fatigue trend: alerts generated versus alerts dismissed">
+          <div role="img" aria-label={t('analytics.alertFatigueLabel')}>
             <ResponsiveContainer width="100%" height={208}>
               <LineChart data={weeklyData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />

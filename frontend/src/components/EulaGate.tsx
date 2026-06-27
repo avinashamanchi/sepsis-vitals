@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import { Shield, AlertTriangle, Scale, FileCheck } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 const EULA_VERSION = '1.0.0'
 const STORAGE_KEY = 'sv_eula_accepted'
@@ -23,6 +24,7 @@ function acceptEula(): void {
 }
 
 export function EulaGate({ children }: { children: React.ReactNode }) {
+  const { t } = useTranslation()
   const [accepted, setAccepted] = useState(hasAcceptedEula)
   const [scrolledToBottom, setScrolledToBottom] = useState(false)
   const [checked, setChecked] = useState(false)
@@ -50,10 +52,10 @@ export function EulaGate({ children }: { children: React.ReactNode }) {
             <Shield className="w-8 h-8 text-accent" />
           </div>
           <h1 className="font-heading text-2xl font-bold text-text-primary">
-            Sepsis Vitals
+            {t('eula.title')}
           </h1>
           <p className="text-sm text-text-secondary mt-1">
-            End User License Agreement
+            {t('eula.subtitle')}
           </p>
         </div>
 
@@ -65,109 +67,61 @@ export function EulaGate({ children }: { children: React.ReactNode }) {
           <div className="flex items-start gap-3 p-4 bg-danger/8 border border-danger/20 rounded-lg">
             <AlertTriangle className="w-5 h-5 text-danger flex-shrink-0 mt-0.5" />
             <div>
-              <p className="font-semibold text-danger text-sm">Critical Notice</p>
-              <p className="text-text-secondary mt-1">
-                Sepsis Vitals is a <strong className="text-text-primary">research-grade investigational tool</strong>.
-                It is <strong className="text-text-primary">NOT cleared, approved, or authorized</strong> by the
-                U.S. Food and Drug Administration (FDA) or any other regulatory body for
-                autonomous clinical decision-making, diagnosis, or treatment guidance.
-              </p>
+              <p className="font-semibold text-danger text-sm">{t('eula.criticalNotice')}</p>
+              <p className="text-text-secondary mt-1">{t('eula.criticalBody')}</p>
             </div>
           </div>
 
           <section>
             <h3 className="text-text-primary font-semibold flex items-center gap-2 mb-2">
               <FileCheck className="w-4 h-4 text-accent" />
-              1. Intended Use
+              {t('eula.section1Title')}
             </h3>
-            <p>
-              Sepsis Vitals ("the Software") is designed solely for <strong className="text-text-primary">research,
-              educational, and investigational purposes</strong>. The Software generates sepsis risk
-              predictions using machine learning models trained on synthetic data. These
-              predictions are probabilistic estimates and are not a substitute for professional
-              clinical judgment, laboratory results, or established diagnostic criteria.
-            </p>
+            <p>{t('eula.section1Body')}</p>
           </section>
 
           <section>
             <h3 className="text-text-primary font-semibold flex items-center gap-2 mb-2">
               <Scale className="w-4 h-4 text-accent" />
-              2. No Medical Advice; Physician Responsibility
+              {t('eula.section2Title')}
             </h3>
-            <p>
-              The Software does not provide medical advice. No output, score, alert, or
-              recommendation produced by the Software should be used as the sole basis for any
-              clinical decision, including but not limited to diagnosis, treatment initiation,
-              medication administration, or patient triage.
-            </p>
+            <p>{t('eula.section2Body')}</p>
             <p className="mt-2">
-              <strong className="text-text-primary">All clinical decisions and medical liability
-              rest solely with the attending physician</strong> or qualified healthcare professional.
-              The Software is intended to supplement, not replace, the clinical judgment
-              of a licensed medical practitioner.
+              <strong className="text-text-primary">{t('eula.section2Bold')}</strong>
             </p>
           </section>
 
           <section>
-            <h3 className="text-text-primary font-semibold mb-2">3. Regulatory Status</h3>
+            <h3 className="text-text-primary font-semibold mb-2">{t('eula.section3Title')}</h3>
             <p>
-              The Software has not undergone FDA 510(k) clearance, De Novo classification,
-              Premarket Approval (PMA), or CE marking. It is not registered as a medical device
-              in any jurisdiction. The Software is classified as a <strong className="text-text-primary">Research
-              Use Only (RUO)</strong> tool and must not be deployed in clinical care pathways without
-              the appropriate regulatory clearances.
+              {t('eula.section3Body')}{' '}
+              <strong className="text-text-primary">{t('eula.section3Ruo')}</strong>
+              {t('eula.section3Rest')}
             </p>
           </section>
 
           <section>
-            <h3 className="text-text-primary font-semibold mb-2">4. Model Limitations</h3>
-            <p>
-              The current model (v2.0.0) is trained on NHANES-calibrated synthetic data.
-              Performance metrics (including AUROC, sensitivity, specificity, and PPV) are
-              pre-validation estimates and <strong className="text-text-primary">may not generalize</strong> to
-              real clinical populations, electronic health record systems, or care settings
-              outside the training distribution. A demographic fairness audit has not been
-              completed. Model outputs may exhibit bias across age, sex, race, or ethnicity
-              subgroups.
-            </p>
+            <h3 className="text-text-primary font-semibold mb-2">{t('eula.section4Title')}</h3>
+            <p>{t('eula.section4Body')}</p>
           </section>
 
           <section>
-            <h3 className="text-text-primary font-semibold mb-2">5. Limitation of Liability</h3>
-            <p>
-              TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE SOFTWARE IS PROVIDED
-              "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
-              LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE,
-              OR NON-INFRINGEMENT. IN NO EVENT SHALL THE AUTHORS, CONTRIBUTORS, OR
-              COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
-              WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF,
-              OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-            </p>
+            <h3 className="text-text-primary font-semibold mb-2">{t('eula.section5Title')}</h3>
+            <p>{t('eula.section5Body')}</p>
           </section>
 
           <section>
-            <h3 className="text-text-primary font-semibold mb-2">6. Data Privacy</h3>
-            <p>
-              Any patient data entered into the Software in this demonstration mode is
-              processed locally in the browser and is not transmitted to external servers.
-              In production deployments, the Software is designed for HIPAA-compliant
-              infrastructure with SOC 2 Type II controls. Users are responsible for
-              ensuring compliance with all applicable data protection regulations in
-              their jurisdiction.
-            </p>
+            <h3 className="text-text-primary font-semibold mb-2">{t('eula.section6Title')}</h3>
+            <p>{t('eula.section6Body')}</p>
           </section>
 
           <section>
-            <h3 className="text-text-primary font-semibold mb-2">7. Acceptance</h3>
-            <p>
-              By clicking "I Agree" below, you acknowledge that you have read, understood,
-              and agree to be bound by the terms of this agreement. If you do not agree,
-              you may not access or use the Software.
-            </p>
+            <h3 className="text-text-primary font-semibold mb-2">{t('eula.section7Title')}</h3>
+            <p>{t('eula.section7Body')}</p>
           </section>
 
           <p className="text-text-muted text-xs pt-2 border-t border-border">
-            EULA Version {EULA_VERSION} &mdash; Effective June 2026 &mdash; Sepsis Vitals, Inc.
+            {t('eula.version')}
           </p>
         </div>
 
@@ -175,7 +129,7 @@ export function EulaGate({ children }: { children: React.ReactNode }) {
         <div className="mt-5 space-y-4">
           {!scrolledToBottom && (
             <p className="text-xs text-text-muted text-center">
-              Scroll to the bottom of the agreement to continue
+              {t('eula.scrollHint')}
             </p>
           )}
 
@@ -192,9 +146,7 @@ export function EulaGate({ children }: { children: React.ReactNode }) {
               className="mt-1 w-4 h-4 accent-accent rounded border-border bg-surface"
             />
             <span className="text-sm text-text-secondary">
-              I have read and understand that Sepsis Vitals is a <strong className="text-text-primary">research-grade
-              tool</strong>, is <strong className="text-text-primary">not FDA-cleared</strong>, and that all medical
-              liability rests with the attending physician.
+              {t('eula.checkboxLabel')}
             </span>
           </label>
 
@@ -208,12 +160,12 @@ export function EulaGate({ children }: { children: React.ReactNode }) {
                   : 'bg-elevated text-text-muted cursor-not-allowed'
               }`}
             >
-              I Agree &mdash; Enter Application
+              {t('eula.agreeButton')}
             </button>
           </div>
 
           <p className="text-[11px] text-text-muted text-center">
-            This agreement is required each time the EULA version is updated.
+            {t('eula.footerNote')}
           </p>
         </div>
       </div>

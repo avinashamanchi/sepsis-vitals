@@ -21,7 +21,8 @@ export const RISK_BORDER: Record<RiskLevel, string> = {
   critical: 'border-risk-critical',
 }
 
-export function riskLabel(level: RiskLevel): string {
+export function riskLabel(level: RiskLevel, t?: (key: string) => string): string {
+  if (t) return t(`risk.${level}`)
   return level.charAt(0).toUpperCase() + level.slice(1)
 }
 

@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Activity, ArrowUpDown, RefreshCw } from 'lucide-react'
 import { LineChart, Line, ResponsiveContainer } from 'recharts'
 import { useStore } from '../stores/useStore'
@@ -50,12 +51,12 @@ function makeDemoPatients(): MonitoredPatient[] {
 /** Stale threshold: 30 minutes without telemetry = signal lost */
 const STALE_THRESHOLD_SECONDS = 30 * 60
 
-function timeAgo(unixSeconds: number): string {
+function timeAgo(unixSeconds: number, t: (key: string, opts?: Record<string, unknown>) => string): string {
   const diff = Date.now() / 1000 - unixSeconds
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  return `${Math.floor(diff / 86400)}d ago`
+  if (diff < 60) return t('time.justNow')
+  if (diff < 3600) return t('time.minutesAgo', { n: Math.floor(diff / 60) })
+  if (diff < 86400) return t('time.hoursAgo', { n: Math.floor(diff / 3600) })
+  return t('time.daysAgo', { n: Math.floor(diff / 86400) })
 }
 
 function isStale(patient: MonitoredPatient): boolean {
@@ -79,6 +80,7 @@ function isAbnormal(key: string, value: number): boolean {
 }
 
 export function Monitor() {
+  const { t } = useTranslation()
   const monitoredPatients = useStore((s) => s.monitoredPatients)
   const setMonitoredPatients = useStore((s) => s.setMonitoredPatients)
   const [loading, setLoading] = useState(true)
@@ -126,16 +128,16 @@ export function Monitor() {
         <div>
           <h1 className="font-heading text-2xl font-bold flex items-center gap-2">
             <Activity className="w-6 h-6 text-accent" />
-            Ward Monitor
+            {t('monitor.title')}
           </h1>
           <p className="text-sm text-text-secondary mt-1">
-            {patients.length} patient{patients.length !== 1 ? 's' : ''} under continuous monitoring
+            {t('monitor.subtitle', { n: patients.length })}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setSortByRisk(!sortByRisk)}
-            aria-label="Sort by risk level"
+            aria-label={t('monitor.sortByRiskLabel')}
             aria-pressed={sortByRisk}
             className={clsx(
               'flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border transition-colors',
@@ -145,10 +147,10 @@ export function Monitor() {
             )}
           >
             <ArrowUpDown className="w-3.5 h-3.5" />
-            Sort by Risk
+            {t('monitor.sortByRisk')}
           </button>
           <button
-            aria-label="Refresh monitor"
+            aria-label={t('monitor.refreshLabel')}
             onClick={() => {
               setLoading(true)
               api.monitorStatus()
@@ -176,7 +178,7 @@ export function Monitor() {
       </div>
 
       {loading && patients.length === 0 && (
-        <LoadingSpinner size="lg" label="Loading monitor..." className="py-12" />
+        <LoadingSpinner size="lg" label={t('monitor.loadingMonitor')} className="py-12" />
       )}
 
       {error && (
@@ -203,7 +205,7 @@ export function Monitor() {
               {/* Stale banner */}
               {stale && (
                 <div className="bg-warning/10 border border-warning/30 rounded px-2 py-1 mb-3 text-[10px] text-warning font-medium text-center">
-                  Telemetry Lost — Data Stale
+                  {t('monitor.telemetryLost')}
                 </div>
               )}
 
@@ -211,7 +213,7 @@ export function Monitor() {
               <div className="flex items-center justify-between mb-3">
                 <span className={clsx('font-heading font-semibold text-sm', stale && 'text-text-muted')}>{patient.patient_id}</span>
                 {stale
-                  ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-elevated text-text-muted border border-border">Stale</span>
+                  ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-elevated text-text-muted border border-border">{t('monitor.stale')}</span>
                   : <RiskBadge level={patient.risk_level} size="sm" pulse={patient.risk_level === 'critical'} />
                 }
               </div>
@@ -260,7 +262,7 @@ export function Monitor() {
                 {(['heart_rate', 'temperature', 'sbp', 'spo2'] as const).map((key) => {
                   const value = patient.vitals[key]
                   if (value == null) return null
-                  const labels: Record<string, string> = { heart_rate: 'HR', temperature: 'Temp', sbp: 'SBP', spo2: 'SpO2' }
+                  const labels: Record<string, string> = { heart_rate: t('vitals.heartRate'), temperature: t('vitals.temperature'), sbp: t('vitals.sbp'), spo2: t('vitals.spo2') }
                   const units: Record<string, string> = { heart_rate: 'bpm', temperature: '°C', sbp: 'mmHg', spo2: '%' }
                   return (
                     <div key={key} className="text-center">
@@ -276,7 +278,7 @@ export function Monitor() {
 
               {/* Last updated */}
               <div className={clsx('text-[10px] text-right', stale ? 'text-warning font-medium' : 'text-text-muted')}>
-                {timeAgo(patient.last_vitals_time || patient.last_prediction_time)}
+                {timeAgo(patient.last_vitals_time || patient.last_prediction_time, t)}
               </div>
             </Link>
             )
@@ -287,8 +289,8 @@ export function Monitor() {
       {!loading && patients.length === 0 && !error && (
         <div className="bg-surface border border-border rounded-lg p-8 text-center">
           <Activity className="w-8 h-8 text-text-muted mx-auto mb-3" />
-          <p className="text-sm text-text-muted">No patients under monitoring</p>
-          <p className="text-xs text-text-muted mt-1">Register patients via the API or start a simulation</p>
+          <p className="text-sm text-text-muted">{t('monitor.noPatients')}</p>
+          <p className="text-xs text-text-muted mt-1">{t('monitor.noPatientsHint')}</p>
         </div>
       )}
     </div>

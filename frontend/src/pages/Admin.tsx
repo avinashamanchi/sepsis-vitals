@@ -1,39 +1,42 @@
 import { useEffect, useState } from 'react'
 import { Settings, Shield, Database, Cpu, Globe } from 'lucide-react'
 import { api, isDemo } from '../lib/api'
+import { useTranslation } from 'react-i18next'
 
 export function Admin() {
+  const { t } = useTranslation()
+
   const [systemStatus, setSystemStatus] = useState([
-    { label: 'API Server', status: 'Unknown', ok: false },
-    { label: 'ML Model', status: 'Loading...', ok: false },
-    { label: 'Database', status: 'Loading...', ok: false },
-    { label: 'WebSocket', status: 'Loading...', ok: false },
-    { label: 'Redis', status: 'Loading...', ok: false },
+    { label: t('admin.apiServer'), status: t('common.unknown'), ok: false },
+    { label: t('admin.mlModel'), status: t('common.loading'), ok: false },
+    { label: t('admin.database'), status: t('common.loading'), ok: false },
+    { label: t('admin.webSocket'), status: t('common.loading'), ok: false },
+    { label: t('admin.redis'), status: t('common.loading'), ok: false },
   ])
 
   const [dataInfo, setDataInfo] = useState([
-    { label: 'Patient State', value: 'SQLite WAL' },
-    { label: 'User Store', value: 'SQLite WAL' },
-    { label: 'Model', value: 'Loading...' },
-    { label: 'Training Data', value: '20K patients synthetic' },
-    { label: 'Test AUROC', value: 'Loading...' },
+    { label: t('admin.patientState'), value: t('admin.sqliteWal') },
+    { label: t('admin.userStore'), value: t('admin.sqliteWal') },
+    { label: t('admin.model'), value: t('common.loading') },
+    { label: t('admin.trainingData'), value: t('admin.syntheticData') },
+    { label: t('admin.testAuroc'), value: t('common.loading') },
   ])
 
   useEffect(() => {
     if (isDemo) {
       setSystemStatus([
-        { label: 'API Server', status: 'Demo Mode', ok: true },
-        { label: 'ML Model', status: 'GradientBoosting v2.0', ok: true },
-        { label: 'Database', status: 'N/A (Demo)', ok: true },
-        { label: 'WebSocket', status: 'N/A (Demo)', ok: true },
-        { label: 'Redis', status: 'N/A (Demo)', ok: true },
+        { label: t('admin.apiServer'), status: t('admin.demoMode'), ok: true },
+        { label: t('admin.mlModel'), status: 'GradientBoosting v2.0', ok: true },
+        { label: t('admin.database'), status: t('admin.naDemo'), ok: true },
+        { label: t('admin.webSocket'), status: t('admin.naDemo'), ok: true },
+        { label: t('admin.redis'), status: t('admin.naDemo'), ok: true },
       ])
       setDataInfo([
-        { label: 'Patient State', value: 'SQLite WAL' },
-        { label: 'User Store', value: 'SQLite WAL' },
-        { label: 'Model', value: 'GradientBoosting' },
-        { label: 'Training Data', value: '20K patients synthetic' },
-        { label: 'Test AUROC', value: '0.92' },
+        { label: t('admin.patientState'), value: t('admin.sqliteWal') },
+        { label: t('admin.userStore'), value: t('admin.sqliteWal') },
+        { label: t('admin.model'), value: 'GradientBoosting' },
+        { label: t('admin.trainingData'), value: t('admin.syntheticData') },
+        { label: t('admin.testAuroc'), value: '0.92' },
       ])
       return
     }
@@ -41,40 +44,42 @@ export function Admin() {
     api.systemHealth()
       .then((health) => {
         setSystemStatus([
-          { label: 'API Server', status: `${health.status} (v${health.version})`, ok: health.status === 'healthy' },
-          { label: 'ML Model', status: health.model_loaded ? 'Loaded' : 'Not loaded', ok: health.model_loaded },
-          { label: 'Database', status: health.database === 'healthy' ? 'Connected' : health.database, ok: health.database === 'healthy' },
-          { label: 'WebSocket', status: `${health.websocket_connections} conn`, ok: true },
-          { label: 'Redis', status: health.redis === 'healthy' ? 'Connected' : health.redis, ok: health.redis === 'healthy' },
+          { label: t('admin.apiServer'), status: `${health.status} (v${health.version})`, ok: health.status === 'healthy' },
+          { label: t('admin.mlModel'), status: health.model_loaded ? t('admin.loaded') : t('admin.notLoaded'), ok: health.model_loaded },
+          { label: t('admin.database'), status: health.database === 'healthy' ? t('common.connected') : health.database, ok: health.database === 'healthy' },
+          { label: t('admin.webSocket'), status: t('admin.connections', { n: health.websocket_connections }), ok: true },
+          { label: t('admin.redis'), status: health.redis === 'healthy' ? t('common.connected') : health.redis, ok: health.redis === 'healthy' },
         ])
       })
       .catch(() => {
-        setSystemStatus((prev) => prev.map((s) => ({ ...s, status: 'Unreachable', ok: false })))
+        setSystemStatus((prev) => prev.map((s) => ({ ...s, status: t('admin.unreachable'), ok: false })))
       })
 
     api.modelInfo()
       .then((info) => {
         const auroc = info.metrics?.val_auroc ?? info.metrics?.test_auroc
         setDataInfo([
-          { label: 'Patient State', value: 'SQLite WAL' },
-          { label: 'User Store', value: 'SQLite WAL' },
-          { label: 'Model', value: `${info.model_name} (${info.feature_count} features)` },
-          { label: 'Calibrated', value: info.is_calibrated ? 'Yes (Platt)' : 'No' },
-          { label: 'Test AUROC', value: auroc ? auroc.toFixed(4) : 'N/A' },
+          { label: t('admin.patientState'), value: t('admin.sqliteWal') },
+          { label: t('admin.userStore'), value: t('admin.sqliteWal') },
+          { label: t('admin.model'), value: `${info.model_name} (${info.feature_count} features)` },
+          { label: t('admin.calibrated'), value: info.is_calibrated ? t('admin.yesPlatt') : t('admin.no') },
+          { label: t('admin.testAuroc'), value: auroc ? auroc.toFixed(4) : t('common.na') },
         ])
       })
       .catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div>
         <h1 className="font-heading text-2xl font-bold flex items-center gap-2">
           <Settings className="w-6 h-6 text-accent" />
-          Admin
+          {t('admin.title')}
         </h1>
         <p className="text-sm text-text-secondary mt-1">
-          System configuration and monitoring
-          {isDemo && <span className="ml-2 text-xs text-warning">(Demo Mode)</span>}
+          {t('admin.subtitle')}
+          {isDemo && <span className="ml-2 text-xs text-warning">{t('common.demoMode')}</span>}
         </p>
       </div>
 
@@ -82,7 +87,7 @@ export function Admin() {
         {/* System Status */}
         <div className="bg-surface border border-border rounded-lg p-5">
           <h2 className="font-heading text-sm font-semibold flex items-center gap-2 mb-4">
-            <Cpu className="w-4 h-4 text-info" /> System Status
+            <Cpu className="w-4 h-4 text-info" /> {t('admin.systemStatus')}
           </h2>
           <div className="space-y-3">
             {systemStatus.map((item) => (
@@ -99,16 +104,16 @@ export function Admin() {
         {/* Security */}
         <div className="bg-surface border border-border rounded-lg p-5">
           <h2 className="font-heading text-sm font-semibold flex items-center gap-2 mb-4">
-            <Shield className="w-4 h-4 text-accent" /> Security
+            <Shield className="w-4 h-4 text-accent" /> {t('admin.security')}
           </h2>
           <div className="space-y-3">
             {[
-              { label: 'Auth', value: 'JWT + PBKDF2 (configured)' },
-              { label: 'Rate Limiting', value: isDemo ? 'Not verified (demo)' : '10/s API, 2/s ML' },
-              { label: 'Security Headers', value: isDemo ? 'Not verified (demo)' : 'HSTS + CSP' },
-              { label: 'Input Validation', value: 'Parameterized queries + sanitization' },
-              { label: 'Session Timeout', value: '15 min inactivity (HIPAA)' },
-              { label: 'LLM Copilot', value: 'Enterprise-only (env gated)' },
+              { label: t('admin.auth'), value: t('admin.jwtConfigured') },
+              { label: t('admin.rateLimiting'), value: isDemo ? t('admin.notVerifiedDemo') : t('admin.rateLimitValues') },
+              { label: t('admin.securityHeaders'), value: isDemo ? t('admin.notVerifiedDemo') : t('admin.hstsCSP') },
+              { label: t('admin.inputValidation'), value: t('admin.parameterizedQueries') },
+              { label: t('admin.sessionTimeout'), value: t('admin.hipaaTimeout') },
+              { label: t('admin.llmCopilot'), value: t('admin.enterpriseOnly') },
             ].map((item) => (
               <div key={item.label} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
                 <span className="text-sm text-text-secondary">{item.label}</span>
@@ -121,7 +126,7 @@ export function Admin() {
         {/* Database */}
         <div className="bg-surface border border-border rounded-lg p-5">
           <h2 className="font-heading text-sm font-semibold flex items-center gap-2 mb-4">
-            <Database className="w-4 h-4 text-warning" /> Data
+            <Database className="w-4 h-4 text-warning" /> {t('admin.data')}
           </h2>
           <div className="space-y-3">
             {dataInfo.map((item) => (
@@ -136,15 +141,15 @@ export function Admin() {
         {/* Integrations */}
         <div className="bg-surface border border-border rounded-lg p-5">
           <h2 className="font-heading text-sm font-semibold flex items-center gap-2 mb-4">
-            <Globe className="w-4 h-4 text-info" /> Integrations
+            <Globe className="w-4 h-4 text-info" /> {t('admin.integrations')}
           </h2>
           <div className="space-y-3">
             {[
-              { label: 'HL7v2 MLLP', value: isDemo ? 'Not deployed (demo)' : 'Port 2575' },
-              { label: 'FHIR R4', value: isDemo ? 'Not deployed (demo)' : 'Webhook ready' },
-              { label: 'Stripe Billing', value: isDemo ? 'Not deployed (demo)' : 'Env configured' },
-              { label: 'SMS Alerts', value: isDemo ? 'Not deployed (demo)' : 'Env configured' },
-              { label: 'Prometheus', value: '/metrics endpoint' },
+              { label: t('admin.hl7v2'), value: isDemo ? t('admin.notDeployedDemo') : t('admin.port2575') },
+              { label: t('admin.fhirR4'), value: isDemo ? t('admin.notDeployedDemo') : t('admin.webhookReady') },
+              { label: t('admin.stripeBilling'), value: isDemo ? t('admin.notDeployedDemo') : t('admin.envConfigured') },
+              { label: t('admin.smsAlerts'), value: isDemo ? t('admin.notDeployedDemo') : t('admin.envConfigured') },
+              { label: t('admin.prometheus'), value: t('admin.metricsEndpoint') },
             ].map((item) => (
               <div key={item.label} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
                 <span className="text-sm text-text-secondary">{item.label}</span>

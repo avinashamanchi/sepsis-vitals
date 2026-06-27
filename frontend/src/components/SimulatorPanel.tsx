@@ -3,6 +3,7 @@ import { Play, Square, ChevronDown, ChevronUp, FlaskConical } from 'lucide-react
 import { useStore } from '../stores/useStore'
 import { api } from '../lib/api'
 import clsx from 'clsx'
+import { useTranslation } from 'react-i18next'
 
 type Tab = 'replay' | 'ward'
 
@@ -16,6 +17,7 @@ interface MIMICCase {
 }
 
 export function SimulatorPanel() {
+  const { t } = useTranslation()
   const simulatorEnabled = useStore((s) => s.simulatorEnabled)
   const sessions = useStore((s) => s.simulatorSessions)
   const addSimSession = useStore((s) => s.addSimSession)
@@ -101,7 +103,7 @@ export function SimulatorPanel() {
       >
         <span className="flex items-center gap-2">
           <FlaskConical className="w-4 h-4 text-info" />
-          Simulator
+          {t('simulator.title')}
           {sessions.length > 0 && (
             <span className="bg-accent/20 text-accent text-xs px-1.5 py-0.5 rounded-full">
               {sessions.length}
@@ -116,16 +118,16 @@ export function SimulatorPanel() {
         <div className="bg-surface border border-t-0 border-border rounded-b-lg p-4 space-y-4 max-h-[400px] overflow-y-auto">
           {/* Tabs */}
           <div className="flex gap-1 bg-elevated rounded p-0.5">
-            {(['ward', 'replay'] as const).map((t) => (
+            {(['ward', 'replay'] as const).map((tabKey) => (
               <button
-                key={t}
-                onClick={() => setTab(t)}
+                key={tabKey}
+                onClick={() => setTab(tabKey)}
                 className={clsx(
                   'flex-1 text-xs py-1.5 rounded transition-colors capitalize',
-                  tab === t ? 'bg-accent/10 text-accent' : 'text-text-muted hover:text-text-secondary',
+                  tab === tabKey ? 'bg-accent/10 text-accent' : 'text-text-muted hover:text-text-secondary',
                 )}
               >
-                {t === 'ward' ? 'Ward Sim' : 'Case Replay'}
+                {tabKey === 'ward' ? t('simulator.wardSim') : t('simulator.caseReplay')}
               </button>
             ))}
           </div>
@@ -134,7 +136,9 @@ export function SimulatorPanel() {
           {tab === 'ward' && (
             <div className="space-y-3">
               <div>
-                <label htmlFor="ward-patients" className="text-[10px] text-text-muted">Patients: {wardPatients}</label>
+                <label htmlFor="ward-patients" className="text-[10px] text-text-muted">
+                  {t('simulator.patients', { n: wardPatients })}
+                </label>
                 <input
                   id="ward-patients"
                   type="range"
@@ -146,7 +150,9 @@ export function SimulatorPanel() {
                 />
               </div>
               <div>
-                <label htmlFor="ward-speed" className="text-[10px] text-text-muted">Speed: {wardSpeed}x</label>
+                <label htmlFor="ward-speed" className="text-[10px] text-text-muted">
+                  {t('simulator.speed', { n: wardSpeed })}
+                </label>
                 <input
                   id="ward-speed"
                   type="range"
@@ -159,7 +165,9 @@ export function SimulatorPanel() {
                 />
               </div>
               <div>
-                <label htmlFor="ward-sepsis" className="text-[10px] text-text-muted">Sepsis patients: {wardSepsis}</label>
+                <label htmlFor="ward-sepsis" className="text-[10px] text-text-muted">
+                  {t('simulator.sepsisPatients', { n: wardSepsis })}
+                </label>
                 <input
                   id="ward-sepsis"
                   type="range"
@@ -176,7 +184,7 @@ export function SimulatorPanel() {
                 className="w-full flex items-center justify-center gap-1.5 bg-accent/10 text-accent border border-accent/30 rounded py-2 text-xs font-medium hover:bg-accent/20 disabled:opacity-50"
               >
                 <Play className="w-3.5 h-3.5" />
-                Start Ward Simulation
+                {t('simulator.startWard')}
               </button>
             </div>
           )}
@@ -189,7 +197,7 @@ export function SimulatorPanel() {
                 onChange={(e) => setSelectedCase(e.target.value ? Number(e.target.value) : null)}
                 className="w-full bg-elevated border border-border rounded px-3 py-2 text-xs text-text-primary"
               >
-                <option value="">Select a case...</option>
+                <option value="">{t('simulator.selectCase')}</option>
                 {cases.map((c) => (
                   <option key={c.subject_id} value={c.subject_id}>
                     #{c.subject_id} | {c.sex} {c.age_years}y | {c.sepsis_label ? 'SEPSIS' : 'No sepsis'} | {(c.icu_los_hours / 24).toFixed(1)}d
@@ -197,7 +205,9 @@ export function SimulatorPanel() {
                 ))}
               </select>
               <div>
-                <label htmlFor="replay-speed" className="text-[10px] text-text-muted">Speed: {replaySpeed}x</label>
+                <label htmlFor="replay-speed" className="text-[10px] text-text-muted">
+                  {t('simulator.speed', { n: replaySpeed })}
+                </label>
                 <input
                   id="replay-speed"
                   type="range"
@@ -215,7 +225,7 @@ export function SimulatorPanel() {
                 className="w-full flex items-center justify-center gap-1.5 bg-accent/10 text-accent border border-accent/30 rounded py-2 text-xs font-medium hover:bg-accent/20 disabled:opacity-50"
               >
                 <Play className="w-3.5 h-3.5" />
-                Start Replay
+                {t('simulator.startReplay')}
               </button>
             </div>
           )}
@@ -223,7 +233,7 @@ export function SimulatorPanel() {
           {/* Active Sessions */}
           {sessions.length > 0 && (
             <div className="space-y-2">
-              <h3 className="text-[10px] text-text-muted uppercase tracking-wider">Active Sessions</h3>
+              <h3 className="text-[10px] text-text-muted uppercase tracking-wider">{t('simulator.activeSessions')}</h3>
               {sessions.map((s) => (
                 <div
                   key={s.session_id}
@@ -236,8 +246,8 @@ export function SimulatorPanel() {
                   <button
                     onClick={() => stopSession(s.session_id)}
                     className="p-1 text-text-muted hover:text-danger transition-colors"
-                    title="Stop"
-                    aria-label="Stop simulation"
+                    title={t('simulator.stop')}
+                    aria-label={t('simulator.stopSimulation')}
                   >
                     <Square className="w-3.5 h-3.5" />
                   </button>

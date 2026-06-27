@@ -1,5 +1,7 @@
 import { lazy, Suspense, useEffect, useCallback } from 'react'
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
+import { LANGUAGES } from './i18n'
 import { EulaGate } from './components/EulaGate'
 import { Sidebar } from './components/Sidebar'
 import { TopBar } from './components/TopBar'
@@ -87,7 +89,16 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  const { t, i18n } = useTranslation()
   useWebSocket()
+
+  // Set document direction for RTL languages (Arabic)
+  useEffect(() => {
+    const lang = LANGUAGES.find((l) => l.code === i18n.language)
+    const dir = lang?.dir ?? 'ltr'
+    document.documentElement.dir = dir
+    document.documentElement.lang = i18n.language
+  }, [i18n.language])
 
   useEffect(() => {
     if (isDemo) return
@@ -111,7 +122,7 @@ export default function App() {
                     href="#main-content"
                     className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:bg-accent focus:text-background focus:px-4 focus:py-2 focus:rounded"
                   >
-                    Skip to content
+                    {t('app.skipToContent')}
                   </a>
                   <Sidebar />
                   <div className="lg:ml-[220px] min-h-screen flex flex-col">
