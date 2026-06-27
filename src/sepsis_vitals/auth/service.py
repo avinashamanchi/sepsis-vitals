@@ -29,6 +29,7 @@ from sepsis_vitals.auth.tokens import (
     decode_token,
 )
 from sepsis_vitals.db import User
+from sepsis_vitals.security import compute_blind_index
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -250,7 +251,8 @@ def register_user(
     """
     _validate_password_strength(password)
 
-    existing = db_session.query(User).filter(User.email == email).first()
+    email_hash = compute_blind_index(email)
+    existing = db_session.query(User).filter(User.email_hash == email_hash).first()
     if existing is not None:
         raise DuplicateEmailError(f"Email {email!r} is already registered")
 
@@ -262,6 +264,7 @@ def register_user(
 
     user = User(
         email=email,
+        email_hash=email_hash,
         password_hash=hash_password(password),
         role=role,
         site_id=org_id,
@@ -306,7 +309,8 @@ def login_user(
     """
     _check_login_rate_limit(email)
 
-    user = db_session.query(User).filter(User.email == email).first()
+    email_hash = compute_blind_index(email)
+    user = db_session.query(User).filter(User.email_hash == email_hash).first()
     if user is None:
         raise InvalidCredentialsError("Invalid email or password")
 
@@ -412,7 +416,8 @@ def request_password_reset(
     str or None
         An HMAC-based reset token if the user exists, otherwise ``None``.
     """
-    user = db_session.query(User).filter(User.email == email).first()
+    email_hash = compute_blind_index(email)
+    user = db_session.query(User).filter(User.email_hash == email_hash).first()
     if user is None:
         return None
     return _make_hmac_token(

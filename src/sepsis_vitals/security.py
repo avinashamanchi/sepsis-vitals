@@ -418,3 +418,132 @@ def verify_webhook_signature(
         raise WebhookSignatureError("Webhook timestamp too old")
 
     return True
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Field-level encryption (AES-256-GCM) for PII at rest
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class FieldEncryptionError(Exception):
+    """Raised when field encryption or decryption fails."""
+
+
+class FieldEncryptor:
+    """AES-256-GCM field-level encryption for PII columns.
+
+    Reads the 32-byte key from ``SEPSIS_PII_KEY`` (base64-encoded).
+    Each encrypted value gets a unique 12-byte nonce prepended to the
+    ciphertext, so the same plaintext encrypts to different ciphertexts.
+
+    Wire format: ``b64(nonce || ciphertext || tag)``
+
+    Usage::
+
+        enc = FieldEncryptor()
+        token = enc.encrypt("patient@example.com")
+        assert enc.decrypt(token) == "patient@example.com"
+    """
+
+    _instance: "FieldEncryptor | None" = None
+    _key: bytes | None = None
+
+    def __init__(self, key: bytes | None = None) -> None:
+        if key is not None:
+            self._key = key
+        elif self._key is None:
+            self._load_key()
+
+    @classmethod
+    def _load_key(cls) -> None:
+        import base64
+
+        raw = os.environ.get("SEPSIS_PII_KEY", "")
+        if not raw or raw == "REPLACE_ME_BASE64_32_BYTES":
+            cls._key = None
+            return
+        try:
+            cls._key = base64.b64decode(raw)
+            if len(cls._key) != 32:
+                raise ValueError(
+                    f"SEPSIS_PII_KEY must decode to 32 bytes, got {len(cls._key)}"
+                )
+        except Exception as exc:
+            cls._key = None
+            import logging
+            logging.getLogger(__name__).warning(
+                "SEPSIS_PII_KEY not usable, field encryption disabled: %s", exc
+            )
+
+    @classmethod
+    def get(cls) -> "FieldEncryptor":
+        """Return the singleton instance."""
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    @property
+    def enabled(self) -> bool:
+        """True when a valid encryption key is configured."""
+        return self._key is not None
+
+    def encrypt(self, plaintext: str) -> str:
+        """Encrypt a string value. Returns base64-encoded ciphertext.
+
+        If no key is configured, returns the plaintext unchanged (dev mode).
+        """
+        if not self.enabled or not plaintext:
+            return plaintext
+
+        import base64
+
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        nonce = os.urandom(12)
+        aesgcm = AESGCM(self._key)
+        ct = aesgcm.encrypt(nonce, plaintext.encode("utf-8"), None)
+        return "enc:" + base64.b64encode(nonce + ct).decode("ascii")
+
+    def decrypt(self, token: str) -> str:
+        """Decrypt a previously encrypted value.
+
+        If the value does not have the ``enc:`` prefix, it is returned
+        as-is (plaintext fallback for unencrypted legacy data).
+        """
+        if not token or not token.startswith("enc:"):
+            return token
+
+        if not self.enabled:
+            raise FieldEncryptionError(
+                "Cannot decrypt: SEPSIS_PII_KEY is not configured"
+            )
+
+        import base64
+
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        try:
+            raw = base64.b64decode(token[4:])
+            nonce = raw[:12]
+            ciphertext = raw[12:]
+            aesgcm = AESGCM(self._key)
+            plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+            return plaintext.decode("utf-8")
+        except Exception as exc:
+            raise FieldEncryptionError(f"Decryption failed: {exc}") from exc
+
+
+def compute_blind_index(value: str) -> str:
+    """Compute an HMAC-SHA256 blind index for encrypted-field lookups.
+
+    Uses ``SEPSIS_PII_KEY`` as the HMAC key. The index is deterministic
+    so ``WHERE email_hash = compute_blind_index('x')`` works, but cannot
+    be reversed to recover the plaintext.
+
+    If no key is configured, returns a plain SHA-256 hash (dev fallback).
+    """
+    enc = FieldEncryptor.get()
+    if enc.enabled and enc._key is not None:
+        digest = hmac.new(enc._key, value.lower().encode("utf-8"), hashlib.sha256)
+        return digest.hexdigest()
+    return hashlib.sha256(value.lower().encode("utf-8")).hexdigest()

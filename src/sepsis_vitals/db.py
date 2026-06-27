@@ -37,6 +37,36 @@ from sqlalchemy.orm import (
     relationship,
     sessionmaker,
 )
+import sqlalchemy.types as sa_types
+
+
+# ---------------------------------------------------------------------------
+# Encrypted string column type (AES-256-GCM via FieldEncryptor)
+# ---------------------------------------------------------------------------
+
+
+class EncryptedString(sa_types.TypeDecorator):
+    """SQLAlchemy column type that encrypts values at rest using AES-256-GCM.
+
+    Transparently encrypts on INSERT/UPDATE and decrypts on SELECT.
+    Falls through to plaintext when SEPSIS_PII_KEY is not configured
+    (dev mode) or when reading legacy unencrypted data (no ``enc:`` prefix).
+    """
+
+    impl = sa_types.Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        from sepsis_vitals.security import FieldEncryptor
+        return FieldEncryptor.get().encrypt(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        from sepsis_vitals.security import FieldEncryptor
+        return FieldEncryptor.get().decrypt(value)
 
 # ---------------------------------------------------------------------------
 # Database URL configuration
@@ -76,6 +106,17 @@ else:
     _engine_kwargs["pool_size"] = pool_size
     _engine_kwargs["max_overflow"] = max_overflow
 
+    # Enforce SSL for PostgreSQL in production (HIPAA transit encryption)
+    db_ssl = os.getenv("DB_SSL", "disable")
+    if db_ssl == "require":
+        _engine_kwargs["connect_args"] = {"sslmode": "require"}
+    elif os.getenv("SEPSIS_ENV") == "production" and db_ssl != "require":
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            "DB_SSL is not set to 'require' in production. "
+            "Database connections may transmit PHI in plaintext."
+        )
+
 engine = create_engine(DATABASE_URL, **_engine_kwargs)
 
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
@@ -103,12 +144,15 @@ class User(Base):
     id: Mapped[str] = mapped_column(
         UUIDType, primary_key=True, default=_uuid_default
     )
-    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    email: Mapped[str] = mapped_column(EncryptedString, nullable=False)
+    email_hash: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False, default=""
+    )
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     site_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     totp_secret: Mapped[Optional[str]] = mapped_column(
-        String(64), nullable=True
+        EncryptedString, nullable=True
     )
     mfa_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false"
@@ -152,7 +196,10 @@ class Patient(Base):
         UUIDType, primary_key=True, default=_uuid_default
     )
     external_id: Mapped[str] = mapped_column(
-        String(64), unique=True, nullable=False
+        EncryptedString, nullable=False
+    )
+    external_id_hash: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False, default=""
     )
     site_id: Mapped[str] = mapped_column(String(32), nullable=False)
     age_years: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)

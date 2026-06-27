@@ -164,8 +164,12 @@ class FHIRPatient:
             except ValueError:
                 pass
 
+        ext_id = self.external_id or self.resource_id
+        from sepsis_vitals.security import compute_blind_index
+
         return {
-            "external_id": self.external_id or self.resource_id,
+            "external_id": ext_id,
+            "external_id_hash": compute_blind_index(ext_id),
             "site_id": site_id,
             "age_years": age,
             "sex": sex_map.get(self.gender or "", "U"),

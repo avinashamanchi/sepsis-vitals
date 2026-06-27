@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from sepsis_vitals.db import Alert, Patient, Score, VitalReading
 from sepsis_vitals.scores import ScoreBundle, compute_scores
+from sepsis_vitals.security import compute_blind_index
 
 
 # ---------------------------------------------------------------------------
@@ -40,9 +41,10 @@ def create_patient(
     ValueError
         If a patient with the same *external_id* already exists.
     """
+    ext_id_hash = compute_blind_index(external_id)
     existing = (
         db.query(Patient)
-        .filter(Patient.external_id == external_id)
+        .filter(Patient.external_id_hash == ext_id_hash)
         .first()
     )
     if existing is not None:
@@ -52,6 +54,7 @@ def create_patient(
 
     patient = Patient(
         external_id=external_id,
+        external_id_hash=ext_id_hash,
         site_id=site_id,
         age_years=age_years,
         sex=sex,
@@ -71,9 +74,10 @@ def get_patient_by_external_id(
     external_id: str, db: Session
 ) -> Patient | None:
     """Return a patient by their external (site-assigned) identifier."""
+    ext_id_hash = compute_blind_index(external_id)
     return (
         db.query(Patient)
-        .filter(Patient.external_id == external_id)
+        .filter(Patient.external_id_hash == ext_id_hash)
         .first()
     )
 

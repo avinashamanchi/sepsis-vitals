@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from sepsis_vitals.api import verify_auth
 from sepsis_vitals.db import Patient, Score, VitalReading, get_db
 from sepsis_vitals.fhir.loinc import INTERNAL_TO_ENTRY
+from sepsis_vitals.security import compute_blind_index
 from sepsis_vitals.fhir.resources import (
     FHIR_CONTENT_TYPE,
     FHIRBundle,
@@ -92,7 +93,7 @@ async def create_patient(
     # Upsert by external_id
     existing = (
         db.query(Patient)
-        .filter(Patient.external_id == internal["external_id"])
+        .filter(Patient.external_id_hash == compute_blind_index(internal["external_id"]))
         .first()
     )
 
@@ -224,7 +225,7 @@ async def create_bundle(
         internal = fp.to_internal()
         existing = (
             db.query(Patient)
-            .filter(Patient.external_id == internal["external_id"])
+            .filter(Patient.external_id_hash == compute_blind_index(internal["external_id"]))
             .first()
         )
         if existing is not None:
@@ -483,7 +484,7 @@ async def process_vitals(
         internal = fp.to_internal()
         existing = (
             db.query(Patient)
-            .filter(Patient.external_id == internal["external_id"])
+            .filter(Patient.external_id_hash == compute_blind_index(internal["external_id"]))
             .first()
         )
         if existing is not None:
@@ -539,7 +540,7 @@ def _find_patient(patient_id: str, db: Session) -> Patient | None:
     if patient is None:
         patient = (
             db.query(Patient)
-            .filter(Patient.external_id == patient_id)
+            .filter(Patient.external_id_hash == compute_blind_index(patient_id))
             .first()
         )
     return patient
