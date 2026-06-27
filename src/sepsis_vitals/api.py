@@ -1005,9 +1005,21 @@ async def clinical_copilot(body: CopilotRequest, user: Dict = Depends(verify_aut
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if api_key:
             try:
+                # Sanitise and check for prompt injection before LLM call
+                safe_question = None
+                if body.question:
+                    from sepsis_vitals.security import check_prompt_injection, PromptInjectionError
+                    try:
+                        check_prompt_injection(body.question)
+                    except PromptInjectionError:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Invalid input detected in clinical question.",
+                        )
+                    safe_question = sanitise_string(body.question, max_length=500)
                 safe_vitals = _deidentify_vitals(vitals_dict)
                 analysis = await _anthropic_copilot(
-                    safe_vitals, scores_dict, ml_risk, body.age_years, body.question
+                    safe_vitals, scores_dict, ml_risk, body.age_years, safe_question
                 )
                 return analysis
             except Exception:

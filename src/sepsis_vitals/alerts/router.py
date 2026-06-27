@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from sepsis_vitals.alerts.dispatcher import (
@@ -20,6 +20,12 @@ from sepsis_vitals.alerts.dispatcher import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
+
+
+async def _require_auth(request: Request):
+    """Require authentication for alerts endpoints."""
+    from sepsis_vitals.api import verify_auth
+    return await verify_auth(request)
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +136,7 @@ class MessageResponse(BaseModel):
     response_model=ChannelsResponse,
     summary="List available notification channels",
 )
-async def list_channels() -> ChannelsResponse:
+async def list_channels(user = Depends(_require_auth)) -> ChannelsResponse:
     """Return the notification channels that are currently configured."""
     dispatcher = get_dispatcher()
     return ChannelsResponse(available=dispatcher.available_channels)
@@ -142,7 +148,7 @@ async def list_channels() -> ChannelsResponse:
     status_code=201,
     summary="Register a notification contact",
 )
-async def create_contact(body: ContactCreate) -> ContactResponse:
+async def create_contact(body: ContactCreate, user = Depends(_require_auth)) -> ContactResponse:
     """Register a new contact to receive sepsis alerts.
 
     Nurses in the field typically register their phone number once via
@@ -171,7 +177,7 @@ async def create_contact(body: ContactCreate) -> ContactResponse:
     response_model=ContactListResponse,
     summary="List registered contacts",
 )
-async def list_contacts() -> ContactListResponse:
+async def list_contacts(user = Depends(_require_auth)) -> ContactListResponse:
     """Return every notification contact currently registered."""
     dispatcher = get_dispatcher()
     contacts = dispatcher.list_contacts()
@@ -186,7 +192,7 @@ async def list_contacts() -> ContactListResponse:
     response_model=MessageResponse,
     summary="Remove a notification contact",
 )
-async def delete_contact(contact_id: str) -> MessageResponse:
+async def delete_contact(contact_id: str, user = Depends(_require_auth)) -> MessageResponse:
     """Unregister a contact so it no longer receives alerts."""
     dispatcher = get_dispatcher()
     removed = dispatcher.remove_contact(contact_id)
@@ -200,7 +206,7 @@ async def delete_contact(contact_id: str) -> MessageResponse:
     response_model=TestAlertResponse,
     summary="Send a test alert",
 )
-async def send_test_alert(body: TestAlertRequest) -> TestAlertResponse:
+async def send_test_alert(body: TestAlertRequest, user = Depends(_require_auth)) -> TestAlertResponse:
     """Send a one-off test notification to verify channel connectivity.
 
     Use this after registering a new phone number to confirm SMS
@@ -228,6 +234,7 @@ async def send_test_alert(body: TestAlertRequest) -> TestAlertResponse:
 async def delivery_history(
     limit: int = Query(50, ge=1, le=200, description="Max records to return."),
     offset: int = Query(0, ge=0, description="Number of records to skip."),
+    user = Depends(_require_auth),
 ) -> DeliveryHistoryResponse:
     """Return recent alert delivery attempts with their status.
 
@@ -248,7 +255,7 @@ async def delivery_history(
     status_code=201,
     summary="Register a Web Push subscription",
 )
-async def subscribe_push(body: PushSubscriptionRequest) -> PushSubscriptionResponse:
+async def subscribe_push(body: PushSubscriptionRequest, user = Depends(_require_auth)) -> PushSubscriptionResponse:
     """Register a browser push subscription.
 
     The client should call this with the ``PushSubscription`` object
