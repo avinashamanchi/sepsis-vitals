@@ -113,6 +113,7 @@ app.add_middleware(
 # 10 req/s burst 20 for general API, 2 req/s burst 5 for expensive ML predict
 _api_limiter = RateLimiter(rate=10.0, burst=20)
 _ml_limiter = RateLimiter(rate=2.0, burst=5)
+_auth_limiter = RateLimiter(rate=3.0, burst=10)   # Auth: 3/s burst 10 (brute-force protection)
 _copilot_limiter = RateLimiter(rate=0.5, burst=3)
 _billing_limiter = RateLimiter(rate=1.0, burst=3)  # Stripe mutations: 1/s
 _webhook_limiter = RateLimiter(rate=5.0, burst=10)  # Stripe webhooks: 5/s
@@ -157,6 +158,16 @@ async def check_ml_rate_limit(request: Request) -> None:
         raise HTTPException(
             status_code=429,
             detail="ML prediction rate limit exceeded. Max 2 requests/second.",
+        )
+
+
+async def check_auth_rate_limit(request: Request) -> None:
+    """Auth endpoint rate limit — brute-force protection."""
+    ip = _client_ip(request)
+    if not _auth_limiter.allow(ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many auth requests. Try again shortly.",
         )
 
 
@@ -660,7 +671,7 @@ async def health():
 
 
 @app.post("/score", response_model=ScoreResponse, dependencies=[Depends(check_rate_limit)])
-async def score_vitals(vitals: VitalsInput):
+async def score_vitals(vitals: VitalsInput, user: Dict = Depends(verify_auth)):
     """Compute clinical sepsis scores (qSOFA, SIRS, NEWS2, Shock Index, UVA)."""
     vitals_dict = {k: v for k, v in vitals.dict().items() if v is not None}
     if len(vitals_dict) < 2:
@@ -812,7 +823,7 @@ async def monitor_status(user: Dict = Depends(verify_auth)):
 # ---------------------------------------------------------------------------
 
 
-@app.post("/simulator/ward", dependencies=[Depends(check_rate_limit)])
+@app.post("/simulator/ward", dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
 async def simulator_start_ward(body: dict, user: Dict = Depends(verify_auth)):
     """Start a synthetic ward simulation."""
     if not _simulator_enabled:
@@ -834,7 +845,7 @@ async def simulator_start_ward(body: dict, user: Dict = Depends(verify_auth)):
     return {"session_id": session_id, "status": "started"}
 
 
-@app.post("/simulator/replay", dependencies=[Depends(check_rate_limit)])
+@app.post("/simulator/replay", dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
 async def simulator_start_replay(body: dict, user: Dict = Depends(verify_auth)):
     """Start a MIMIC-IV case replay."""
     if not _simulator_enabled:
@@ -1290,17 +1301,17 @@ def _init_database():
 def _include_routers():
     """Include sub-routers with graceful handling if optional deps are missing."""
     routers = [
-        ("sepsis_vitals.auth.router", "auth"),
-        ("sepsis_vitals.patients.router", "patients"),
-        ("sepsis_vitals.billing.router", "billing"),
-        ("sepsis_vitals.alerts.router", "alerts"),
-        ("sepsis_vitals.fhir.router", "fhir"),
+        ("sepsis_vitals.auth.router", "auth", [Depends(check_auth_rate_limit)]),
+        ("sepsis_vitals.patients.router", "patients", [Depends(check_rate_limit)]),
+        ("sepsis_vitals.billing.router", "billing", []),  # billing has its own limiters
+        ("sepsis_vitals.alerts.router", "alerts", [Depends(check_rate_limit)]),
+        ("sepsis_vitals.fhir.router", "fhir", [Depends(check_rate_limit)]),
     ]
-    for module_path, tag in routers:
+    for module_path, tag, deps in routers:
         try:
             import importlib
             mod = importlib.import_module(module_path)
-            app.include_router(mod.router, tags=[tag])
+            app.include_router(mod.router, tags=[tag], dependencies=deps)
         except ImportError as exc:
             logger.info("Skipping %s router (missing dependency: %s)", tag, exc)
         except Exception as exc:
