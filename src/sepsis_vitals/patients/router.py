@@ -79,6 +79,11 @@ class VitalsRecord(BaseModel):
     sbp: Optional[int] = Field(None, ge=30, le=300, description="Systolic blood pressure in mmHg")
     spo2: Optional[int] = Field(None, ge=0, le=100, description="Oxygen saturation percentage")
     gcs: Optional[int] = Field(None, ge=3, le=15, description="Glasgow Coma Scale")
+    dbp: Optional[int] = Field(None, ge=20, le=200, description="Diastolic blood pressure in mmHg")
+    map: Optional[float] = Field(None, ge=20, le=200, description="Mean arterial pressure in mmHg")
+    lactate: Optional[float] = Field(None, ge=0, le=30, description="Serum lactate in mmol/L")
+    wbc: Optional[float] = Field(None, ge=0, le=100, description="White blood cell count x10^9/L")
+    procalcitonin: Optional[float] = Field(None, ge=0, le=200, description="Procalcitonin in ng/mL")
     recorded_at: Optional[datetime] = Field(
         None, description="Observation timestamp (defaults to now UTC)"
     )
@@ -96,8 +101,13 @@ class VitalReadingOut(BaseModel):
     sbp: Optional[int] = None
     spo2: Optional[int] = None
     gcs: Optional[int] = None
+    dbp: Optional[int] = None
+    map_pressure: Optional[float] = Field(None, alias="map")
+    lactate: Optional[float] = None
+    wbc: Optional[float] = None
+    procalcitonin: Optional[float] = None
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 class ScoreOut(BaseModel):
@@ -148,6 +158,14 @@ class AlertAcknowledge(BaseModel):
     reason: str = Field(..., min_length=1, max_length=1000, description="Reason for acknowledgement")
 
 
+class AlertEscalate(BaseModel):
+    """Body for escalating an alert."""
+
+    user_id: str = Field(..., min_length=1, description="ID of the user escalating")
+    escalated_to: str = Field(..., min_length=1, max_length=200, description="Recipient (name, role, or pager ID)")
+    reason: str = Field(..., min_length=1, max_length=1000, description="Reason for escalation")
+
+
 class PatientHistoryOut(BaseModel):
     """Full clinical history for a patient."""
 
@@ -162,6 +180,22 @@ class DashboardStats(BaseModel):
     patient_count: int
     active_alerts: int
     recent_predictions: int
+
+
+class WeeklyTrendItem(BaseModel):
+    """Single day in the weekly trend."""
+
+    date: Optional[str] = None
+    predictions: int = 0
+    alerts: int = 0
+
+
+class RiskDistItem(BaseModel):
+    """Single risk level in the distribution."""
+
+    risk_level: str
+    count: int
+    percentage: float
 
 
 # ---------------------------------------------------------------------------
@@ -413,6 +447,40 @@ def acknowledge_alert(
     return AlertOut.model_validate(alert)
 
 
+@alerts_router.put(
+    "/{alert_id}/escalate",
+    response_model=AlertOut,
+    summary="Escalate alert",
+)
+def escalate_alert(
+    alert_id: str,
+    body: AlertEscalate,
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(verify_auth),
+) -> AlertOut:
+    """Escalate an active or acknowledged alert to a specified recipient."""
+    try:
+        alert = service.escalate_alert(
+            alert_id=alert_id,
+            user_id=body.user_id,
+            escalated_to=body.escalated_to,
+            reason=body.reason,
+            db=db,
+        )
+    except ValueError as exc:
+        error_msg = str(exc)
+        if "not found" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=error_msg,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=error_msg,
+        )
+    return AlertOut.model_validate(alert)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints — Dashboard
 # ---------------------------------------------------------------------------
@@ -433,3 +501,41 @@ def get_dashboard_stats(
     """Return aggregate statistics for the site dashboard."""
     stats = service.get_site_dashboard_stats(site_id=site_id, db=db)
     return DashboardStats(**stats)
+
+
+@dashboard_router.get(
+    "/weekly-trends",
+    response_model=List[WeeklyTrendItem],
+    summary="Weekly prediction and alert trends",
+)
+def get_weekly_trends(
+    days: int = Query(7, ge=1, le=90, description="Number of days to look back"),
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(verify_auth),
+) -> List[WeeklyTrendItem]:
+    """Return daily prediction and alert counts for the specified period."""
+    trends = service.get_weekly_trends(db=db, days=days)
+    return [WeeklyTrendItem(**t) for t in trends]
+
+
+@dashboard_router.get(
+    "/risk-distribution",
+    response_model=List[RiskDistItem],
+    summary="Risk level distribution",
+)
+def get_risk_distribution(
+    hours_back: int = Query(24, ge=1, le=720, description="Look-back window in hours"),
+    db: Session = Depends(get_db),
+    user: Dict[str, Any] = Depends(verify_auth),
+) -> List[RiskDistItem]:
+    """Return risk level breakdown from recent predictions."""
+    dist = service.get_risk_distribution(db=db, hours_back=hours_back)
+    return [RiskDistItem(**d) for d in dist]
+
+
+# ---------------------------------------------------------------------------
+# Include sub-routers under /patients
+# ---------------------------------------------------------------------------
+
+router.include_router(alerts_router)
+router.include_router(dashboard_router)

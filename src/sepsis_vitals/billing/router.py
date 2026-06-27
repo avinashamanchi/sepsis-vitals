@@ -72,18 +72,27 @@ async def _check_webhook_rate(request: Request) -> None:
 # Stripe webhook IP allowlist (production hardening)
 # ---------------------------------------------------------------------------
 
-_STRIPE_WEBHOOK_CIDRS: set[str] | None = None
+_STRIPE_WEBHOOK_CIDRS: list[ipaddress.IPv4Network] | None = None
 
 try:
     import ipaddress
 
     # Stripe's documented webhook IPs — https://docs.stripe.com/ips
-    _STRIPE_WEBHOOK_CIDRS = {
-        "3.18.12.63", "3.130.192.31", "13.235.14.237",
-        "13.235.122.149", "18.211.135.69", "35.154.171.200",
-        "52.15.183.38", "54.88.130.119", "54.88.130.237",
-        "54.187.174.169", "54.187.205.235", "54.187.216.72",
-    }
+    # Converted to /32 networks for CIDR-based validation
+    _STRIPE_WEBHOOK_CIDRS = [
+        ipaddress.ip_network("3.18.12.63/32", strict=False),
+        ipaddress.ip_network("3.130.192.31/32", strict=False),
+        ipaddress.ip_network("13.235.14.237/32", strict=False),
+        ipaddress.ip_network("13.235.122.149/32", strict=False),
+        ipaddress.ip_network("18.211.135.69/32", strict=False),
+        ipaddress.ip_network("35.154.171.200/32", strict=False),
+        ipaddress.ip_network("52.15.183.38/32", strict=False),
+        ipaddress.ip_network("54.88.130.119/32", strict=False),
+        ipaddress.ip_network("54.88.130.237/32", strict=False),
+        ipaddress.ip_network("54.187.174.169/32", strict=False),
+        ipaddress.ip_network("54.187.205.235/32", strict=False),
+        ipaddress.ip_network("54.187.216.72/32", strict=False),
+    ]
 except ImportError:
     pass
 
@@ -344,11 +353,19 @@ async def stripe_webhook(
     # IP allowlist in production
     if _STRIPE_WEBHOOK_CIDRS and os.getenv("SEPSIS_ENV") == "production":
         client_ip = _client_ip(request)
-        if client_ip not in _STRIPE_WEBHOOK_CIDRS:
-            logger.warning("Webhook from non-Stripe IP: %s", client_ip)
+        try:
+            addr = ipaddress.ip_address(client_ip)
+            if not any(addr in net for net in _STRIPE_WEBHOOK_CIDRS):
+                logger.warning("Webhook from non-Stripe IP: %s", client_ip)
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Webhook origin not in allowlist.",
+                )
+        except ValueError:
+            logger.warning("Invalid IP format in webhook request: %s", client_ip)
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Webhook origin not in allowlist.",
+                detail="Invalid client IP format.",
             )
 
     payload = await request.body()

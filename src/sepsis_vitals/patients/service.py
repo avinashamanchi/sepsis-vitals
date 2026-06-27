@@ -14,10 +14,10 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from sqlalchemy import func
+from sqlalchemy import case, cast, func, Date
 from sqlalchemy.orm import Session
 
-from sepsis_vitals.db import Alert, Patient, Score, VitalReading
+from sepsis_vitals.db import Alert, Patient, PredictionRecord, Score, VitalReading
 from sepsis_vitals.scores import ScoreBundle, compute_scores
 from sepsis_vitals.security import compute_blind_index
 
@@ -155,7 +155,8 @@ def record_vitals(
         UUID of the patient.
     vitals_dict:
         Dictionary whose keys are a subset of ``temperature``,
-        ``heart_rate``, ``resp_rate``, ``sbp``, ``spo2``, ``gcs``.
+        ``heart_rate``, ``resp_rate``, ``sbp``, ``spo2``, ``gcs``,
+        ``dbp``, ``map``, ``lactate``, ``wbc``, ``procalcitonin``.
     recorded_at:
         Timestamp of the observation.  Defaults to *now* (UTC).
     db:
@@ -187,6 +188,11 @@ def record_vitals(
         sbp=vitals_dict.get("sbp"),
         spo2=vitals_dict.get("spo2"),
         gcs=vitals_dict.get("gcs"),
+        dbp=vitals_dict.get("dbp"),
+        map_pressure=vitals_dict.get("map"),
+        lactate=vitals_dict.get("lactate"),
+        wbc=vitals_dict.get("wbc"),
+        procalcitonin=vitals_dict.get("procalcitonin"),
     )
     db.add(vital)
     db.flush()  # populate vital.id before creating Score
@@ -302,6 +308,11 @@ def get_patient_history(
             "sbp": v.sbp,
             "spo2": v.spo2,
             "gcs": v.gcs,
+            "dbp": v.dbp,
+            "map": v.map_pressure,
+            "lactate": v.lactate,
+            "wbc": v.wbc,
+            "procalcitonin": v.procalcitonin,
         }
 
     def _score_dict(s: Score) -> dict[str, Any]:
@@ -396,6 +407,45 @@ def acknowledge_alert(
     return alert
 
 
+def escalate_alert(
+    alert_id: str,
+    user_id: str,
+    escalated_to: str,
+    reason: str,
+    db: Session,
+) -> Alert:
+    """Escalate an active alert to a specified recipient.
+
+    Raises
+    ------
+    ValueError
+        If the alert does not exist or is not in ``active`` status.
+    """
+    alert = db.query(Alert).filter(Alert.id == alert_id).first()
+    if alert is None:
+        raise ValueError(f"Alert '{alert_id}' not found")
+    if alert.status not in ("active", "acknowledged"):
+        raise ValueError(
+            f"Alert '{alert_id}' is '{alert.status}', cannot escalate"
+        )
+
+    now = datetime.now(timezone.utc)
+    alert.status = "escalated"
+    alert.action_by = user_id
+    alert.action_reason = f"Escalated to {escalated_to}: {reason}"
+    alert.actioned_at = now
+
+    if alert.created_at is not None:
+        created = alert.created_at
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        alert.time_to_action_s = (now - created).total_seconds()
+
+    db.commit()
+    db.refresh(alert)
+    return alert
+
+
 # ---------------------------------------------------------------------------
 # Dashboard / aggregate statistics
 # ---------------------------------------------------------------------------
@@ -457,3 +507,67 @@ def get_site_dashboard_stats(
         "active_alerts": active_alerts,
         "recent_predictions": recent_predictions,
     }
+
+
+# ---------------------------------------------------------------------------
+# Analytics queries
+# ---------------------------------------------------------------------------
+
+
+def get_weekly_trends(
+    db: Session,
+    days: int = 7,
+) -> list[dict[str, Any]]:
+    """Return daily prediction and alert counts for the last *days* days."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    rows = (
+        db.query(
+            cast(PredictionRecord.created_at, Date).label("day"),
+            func.count(PredictionRecord.id).label("predictions"),
+            func.sum(
+                case((PredictionRecord.alert_fired == True, 1), else_=0)  # noqa: E712
+            ).label("alerts"),
+        )
+        .filter(PredictionRecord.created_at >= cutoff)
+        .group_by(cast(PredictionRecord.created_at, Date))
+        .order_by(cast(PredictionRecord.created_at, Date))
+        .all()
+    )
+
+    return [
+        {
+            "date": row.day.isoformat() if row.day else None,
+            "predictions": row.predictions or 0,
+            "alerts": int(row.alerts or 0),
+        }
+        for row in rows
+    ]
+
+
+def get_risk_distribution(
+    db: Session,
+    hours_back: int = 24,
+) -> list[dict[str, Any]]:
+    """Return a breakdown of risk levels from recent predictions."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours_back)
+
+    rows = (
+        db.query(
+            PredictionRecord.risk_level,
+            func.count(PredictionRecord.id).label("count"),
+        )
+        .filter(PredictionRecord.created_at >= cutoff)
+        .group_by(PredictionRecord.risk_level)
+        .all()
+    )
+
+    total = sum(r.count for r in rows) or 1
+    return [
+        {
+            "risk_level": row.risk_level,
+            "count": row.count,
+            "percentage": round(row.count / total * 100, 1),
+        }
+        for row in rows
+    ]

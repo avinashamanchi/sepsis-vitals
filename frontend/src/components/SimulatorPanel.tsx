@@ -96,6 +96,7 @@ export function SimulatorPanel() {
       {/* Toggle bar */}
       <button
         onClick={() => setCollapsed(!collapsed)}
+        aria-expanded={!collapsed}
         className="w-full flex items-center justify-between bg-overlay border border-border rounded-t-lg px-4 py-2 text-sm font-medium text-text-primary hover:bg-elevated transition-colors"
       >
         <span className="flex items-center gap-2">
@@ -133,8 +134,9 @@ export function SimulatorPanel() {
           {tab === 'ward' && (
             <div className="space-y-3">
               <div>
-                <label className="text-[10px] text-text-muted">Patients: {wardPatients}</label>
+                <label htmlFor="ward-patients" className="text-[10px] text-text-muted">Patients: {wardPatients}</label>
                 <input
+                  id="ward-patients"
                   type="range"
                   min={4}
                   max={20}
@@ -144,8 +146,9 @@ export function SimulatorPanel() {
                 />
               </div>
               <div>
-                <label className="text-[10px] text-text-muted">Speed: {wardSpeed}x</label>
+                <label htmlFor="ward-speed" className="text-[10px] text-text-muted">Speed: {wardSpeed}x</label>
                 <input
+                  id="ward-speed"
                   type="range"
                   min={1}
                   max={1000}
@@ -156,8 +159,9 @@ export function SimulatorPanel() {
                 />
               </div>
               <div>
-                <label className="text-[10px] text-text-muted">Sepsis patients: {wardSepsis}</label>
+                <label htmlFor="ward-sepsis" className="text-[10px] text-text-muted">Sepsis patients: {wardSepsis}</label>
                 <input
+                  id="ward-sepsis"
                   type="range"
                   min={0}
                   max={Math.floor(wardPatients / 2)}
@@ -193,8 +197,9 @@ export function SimulatorPanel() {
                 ))}
               </select>
               <div>
-                <label className="text-[10px] text-text-muted">Speed: {replaySpeed}x</label>
+                <label htmlFor="replay-speed" className="text-[10px] text-text-muted">Speed: {replaySpeed}x</label>
                 <input
+                  id="replay-speed"
                   type="range"
                   min={1}
                   max={1000}
@@ -232,6 +237,7 @@ export function SimulatorPanel() {
                     onClick={() => stopSession(s.session_id)}
                     className="p-1 text-text-muted hover:text-danger transition-colors"
                     title="Stop"
+                    aria-label="Stop simulation"
                   >
                     <Square className="w-3.5 h-3.5" />
                   </button>

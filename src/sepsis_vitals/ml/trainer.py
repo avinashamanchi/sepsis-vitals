@@ -48,7 +48,7 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 
 from sepsis_vitals.features import CORE_VITALS, build_feature_set
-from sepsis_vitals.ml.fairness import calibration_metrics
+from sepsis_vitals.ml.fairness import calibration_metrics, ConformalPredictor
 from sepsis_vitals.model_scaffold import ModelCard
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -203,6 +203,7 @@ class ModelResult:
     training_time: float
     card: ModelCard
     is_calibrated: bool = False
+    conformal_predictor: Optional[ConformalPredictor] = None
 
 
 def _get_model_configs() -> Dict[str, Dict[str, Any]]:
@@ -647,13 +648,26 @@ def calibrate_model(
     result: ModelResult,
     X_val: np.ndarray,
     y_val: np.ndarray,
+    conformal_alpha: float = 0.1,
 ) -> ModelResult:
-    """Apply Platt scaling calibration to improve probability estimates."""
+    """Apply Platt scaling calibration to improve probability estimates.
+
+    Also fits a ConformalPredictor on the calibration set so that
+    inference can produce statistically valid prediction intervals.
+    """
     calibrated = CalibratedClassifierCV(result.model, cv="prefit", method="sigmoid")
     calibrated.fit(X_val, y_val)
 
     result.model = calibrated
     result.is_calibrated = True
+
+    # Fit conformal predictor on the same calibration split.
+    # We use the calibrated model so nonconformity scores reflect
+    # the post-Platt-scaling probabilities.
+    cp = ConformalPredictor(alpha=conformal_alpha)
+    cp.calibrate(calibrated, X_val, pd.Series(y_val))
+    result.conformal_predictor = cp
+
     return result
 
 
@@ -725,6 +739,13 @@ def save_model(
         scaler_file = output_path / "scaler.joblib"
         joblib.dump(result.scaler, scaler_file)
 
+    # Save conformal predictor if fitted
+    conformal_quantile = None
+    if result.conformal_predictor is not None and result.conformal_predictor._calibrated:
+        cp_file = output_path / "conformal_predictor.joblib"
+        joblib.dump(result.conformal_predictor, cp_file)
+        conformal_quantile = result.conformal_predictor._quantile
+
     # Save metadata
     metadata = {
         "model_name": result.name,
@@ -732,6 +753,11 @@ def save_model(
         "feature_names": feature_names,
         "needs_scaling": result.scaler is not None,
         "is_calibrated": result.is_calibrated,
+        "has_conformal_predictor": result.conformal_predictor is not None
+            and result.conformal_predictor._calibrated,
+        "conformal_quantile": conformal_quantile,
+        "conformal_alpha": result.conformal_predictor.alpha
+            if result.conformal_predictor is not None else None,
         "metrics": {k: round(v, 4) if isinstance(v, float) else v
                     for k, v in result.metrics.items()},
         "feature_importance": {k: round(v, 4) for k, v in
@@ -750,6 +776,8 @@ def save_model(
     print(f"    - model_metadata.json")
     if result.scaler is not None:
         print(f"    - scaler.joblib")
+    if conformal_quantile is not None:
+        print(f"    - conformal_predictor.joblib (quantile={conformal_quantile:.4f})")
 
     return str(output_path)
 

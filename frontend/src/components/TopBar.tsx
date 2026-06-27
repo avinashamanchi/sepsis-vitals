@@ -39,10 +39,10 @@ export function TopBar() {
       <div className="flex-1" />
 
       <div className="flex items-center gap-4">
-        <button className="relative p-2 text-text-secondary hover:text-text-primary transition-colors">
+        <button aria-label="Notifications" className="relative p-2 text-text-secondary hover:text-text-primary transition-colors">
           <Bell className="w-5 h-5" />
           {unread > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-danger text-[10px] font-bold flex items-center justify-center text-white">
+            <span aria-live="polite" className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-danger text-[10px] font-bold flex items-center justify-center text-white">
               {unread > 9 ? '9+' : unread}
             </span>
           )}

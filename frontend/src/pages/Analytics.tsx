@@ -90,16 +90,18 @@ export function Analytics() {
             <h2 className="font-heading text-sm font-semibold">Predictions vs Alerts</h2>
           </div>
           <div className="p-4 h-[280px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={weeklyData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                <XAxis dataKey="day" stroke="#4a6080" tick={{ fill: '#4a6080', fontSize: 11 }} tickLine={false} />
-                <YAxis stroke="#4a6080" tick={{ fill: '#4a6080', fontSize: 11 }} tickLine={false} axisLine={false} />
-                <Tooltip {...CHART_TOOLTIP} />
-                <Bar dataKey="predictions" fill="#38b4ff" radius={[4, 4, 0, 0]} opacity={0.7} />
-                <Bar dataKey="alerts" fill="#ff3b5c" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <div role="img" aria-label="Bar chart showing daily predictions versus alerts over the past week">
+              <ResponsiveContainer width="100%" height={248}>
+                <BarChart data={weeklyData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                  <XAxis dataKey="day" stroke="#4a6080" tick={{ fill: '#4a6080', fontSize: 11 }} tickLine={false} />
+                  <YAxis stroke="#4a6080" tick={{ fill: '#4a6080', fontSize: 11 }} tickLine={false} axisLine={false} />
+                  <Tooltip {...CHART_TOOLTIP} />
+                  <Bar dataKey="predictions" fill="#38b4ff" radius={[4, 4, 0, 0]} opacity={0.7} />
+                  <Bar dataKey="alerts" fill="#ff3b5c" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
 
@@ -109,7 +111,7 @@ export function Analytics() {
             <h2 className="font-heading text-sm font-semibold">Risk Distribution</h2>
           </div>
           <div className="p-4 h-[280px] flex items-center">
-            <div className="w-1/2 h-full">
+            <div className="w-1/2 h-full" role="img" aria-label="Pie chart showing risk distribution: 58% low, 24% moderate, 12% high, 6% critical">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie data={riskDist} cx="50%" cy="50%" innerRadius={50} outerRadius={80} dataKey="value" paddingAngle={3}>
@@ -140,16 +142,18 @@ export function Analytics() {
           <h2 className="font-heading text-sm font-semibold">Alert Fatigue Monitor</h2>
         </div>
         <div className="p-4 h-[240px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={weeklyData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-              <XAxis dataKey="day" stroke="#4a6080" tick={{ fill: '#4a6080', fontSize: 11 }} tickLine={false} />
-              <YAxis stroke="#4a6080" tick={{ fill: '#4a6080', fontSize: 11 }} tickLine={false} axisLine={false} />
-              <Tooltip {...CHART_TOOLTIP} />
-              <Line type="monotone" dataKey="alerts" stroke="#ff3b5c" strokeWidth={2} dot={{ fill: '#ff3b5c', r: 4 }} />
-              <Line type="monotone" dataKey="dismissed" stroke="#ffb830" strokeWidth={2} dot={{ fill: '#ffb830', r: 4 }} strokeDasharray="5 5" />
-            </LineChart>
-          </ResponsiveContainer>
+          <div role="img" aria-label="Line chart showing weekly alert fatigue trend: alerts generated versus alerts dismissed">
+            <ResponsiveContainer width="100%" height={208}>
+              <LineChart data={weeklyData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                <XAxis dataKey="day" stroke="#4a6080" tick={{ fill: '#4a6080', fontSize: 11 }} tickLine={false} />
+                <YAxis stroke="#4a6080" tick={{ fill: '#4a6080', fontSize: 11 }} tickLine={false} axisLine={false} />
+                <Tooltip {...CHART_TOOLTIP} />
+                <Line type="monotone" dataKey="alerts" stroke="#ff3b5c" strokeWidth={2} dot={{ fill: '#ff3b5c', r: 4 }} />
+                <Line type="monotone" dataKey="dismissed" stroke="#ffb830" strokeWidth={2} dot={{ fill: '#ffb830', r: 4 }} strokeDasharray="5 5" />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       </div>
     </div>

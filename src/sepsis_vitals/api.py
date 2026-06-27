@@ -75,7 +75,15 @@ async def _lifespan(application: FastAPI):
     """Startup/shutdown lifecycle for the FastAPI application."""
     _init_database()
     _include_routers()
+
+    # Start PSI drift monitor background task
+    from sepsis_vitals.monitoring.drift_monitor import get_drift_monitor
+    drift_monitor = get_drift_monitor()
+    await drift_monitor.start()
+
     yield
+
+    await drift_monitor.stop()
 
 
 app = FastAPI(
@@ -746,6 +754,10 @@ async def predict_sepsis(body: PredictRequest, request: Request, user: Dict = De
     result = prediction.to_dict()
     _track_prediction(elapsed_ms, result.get("alert", False))
 
+    # ── Drift monitoring — record vitals into rolling PSI buffer ──────
+    from sepsis_vitals.monitoring.drift_monitor import get_drift_monitor
+    get_drift_monitor().record_prediction(vitals_dict)
+
     # ── Permanent audit trail (Postgres) ─────────────────────────────
     # Redis handles ephemeral rolling windows; Postgres is the immutable
     # ledger.  Every prediction is recorded so legal/risk-management can
@@ -775,25 +787,45 @@ async def predict_sepsis(body: PredictRequest, request: Request, user: Dict = De
 
 
 @app.post("/predict/batch", dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
-async def predict_batch(body: BatchPredictRequest, user: Dict = Depends(verify_auth)):
+async def predict_batch(body: BatchPredictRequest, request: Request, user: Dict = Depends(verify_auth)):
     """Batch prediction for multiple patients (max 50)."""
     predictor = _get_predictor()
     if predictor is None:
         raise HTTPException(status_code=503, detail="Model not loaded.")
 
     results = []
-    for patient in body.patients:
-        vitals_dict = {k: v for k, v in patient.vitals.dict().items() if v is not None}
-        comorbidities = patient.comorbidities.dict() if patient.comorbidities else None
-        prediction = predictor.predict(
-            vitals=vitals_dict,
-            patient_id=sanitise_string(patient.patient_id),
-            age_years=patient.age_years,
-            comorbidities=comorbidities,
-        )
-        results.append(prediction.to_dict())
+    errors = []
+    ip = _client_ip(request)
+    model_version = predictor.metadata.get("version") if predictor.metadata else None
 
-    return {"predictions": results, "count": len(results)}
+    for i, patient in enumerate(body.patients):
+        try:
+            vitals_dict = {k: v for k, v in patient.vitals.dict().items() if v is not None}
+            comorbidities = patient.comorbidities.dict() if patient.comorbidities else None
+            prediction = predictor.predict(
+                vitals=vitals_dict,
+                patient_id=sanitise_string(patient.patient_id),
+                age_years=patient.age_years,
+                comorbidities=comorbidities,
+            )
+            result = prediction.to_dict()
+            results.append(result)
+
+            # Persist each prediction for audit trail (HIPAA compliance)
+            await asyncio.to_thread(
+                _persist_prediction,
+                patient_id=patient.patient_id,
+                user_id=user.get("id"),
+                result=result,
+                input_vitals=vitals_dict,
+                ip_address=ip,
+                model_version=model_version,
+            )
+        except Exception as exc:
+            logger.warning("Batch predict failed for patient %d (%s): %s", i, patient.patient_id, exc)
+            errors.append({"index": i, "patient_id": patient.patient_id, "error": str(exc)})
+
+    return {"predictions": results, "count": len(results), "errors": errors}
 
 
 @app.get("/patient/{patient_id}/trend", dependencies=[Depends(check_rate_limit)])
@@ -1281,6 +1313,17 @@ async def websocket_alerts(websocket: WebSocket):
 @app.get("/metrics", response_class=PlainTextResponse, dependencies=[Depends(check_rate_limit)])
 async def prometheus_metrics(user: Dict = Depends(verify_auth)):
     """Prometheus-compatible metrics endpoint. Requires auth in production."""
+    from sepsis_vitals.monitoring.drift_monitor import get_drift_monitor
+    drift_status = get_drift_monitor().get_drift_status()
+
+    # Build per-vital PSI lines
+    drift_lines = []
+    for vital, info in drift_status.get("per_vital", {}).items():
+        psi_val = info.get("psi", 0.0)
+        drift_lines += [
+            f'sepsis_psi{{vital="{vital}"}} {psi_val:.6f}',
+        ]
+
     lines = [
         "# HELP sepsis_requests_total Total API requests",
         "# TYPE sepsis_requests_total counter",
@@ -1317,6 +1360,21 @@ async def prometheus_metrics(user: Dict = Depends(verify_auth)):
         "# HELP sepsis_model_loaded Whether the ML model is loaded",
         "# TYPE sepsis_model_loaded gauge",
         f"sepsis_model_loaded {1 if _get_predictor() is not None else 0}",
+        "",
+        "# HELP sepsis_drift_overall Whether overall population drift is detected (PSI>0.2)",
+        "# TYPE sepsis_drift_overall gauge",
+        f"sepsis_drift_overall {1 if drift_status['overall_drift'] else 0}",
+        "",
+        "# HELP sepsis_psi Population Stability Index per vital sign",
+        "# TYPE sepsis_psi gauge",
+        *drift_lines,
+        "",
+        "# HELP sepsis_drift_buffer_size Number of recent predictions buffered for drift detection",
+        "# TYPE sepsis_drift_buffer_size gauge",
+        *(
+            f'sepsis_drift_buffer_size{{vital="{v}"}} {n}'
+            for v, n in drift_status.get("buffer_counts", {}).items()
+        ),
     ]
     return "\n".join(lines) + "\n"
 

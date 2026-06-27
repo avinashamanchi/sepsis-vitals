@@ -67,6 +67,63 @@ def _error(
 
 
 # ---------------------------------------------------------------------------
+# GET /fhir/metadata
+# ---------------------------------------------------------------------------
+
+
+@router.get("/metadata", summary="FHIR CapabilityStatement")
+async def capability_statement() -> JSONResponse:
+    """Return FHIR R4 CapabilityStatement describing this server's capabilities."""
+    capability_statement_resource = {
+        "resourceType": "CapabilityStatement",
+        "status": "active",
+        "date": "2026-06-27",
+        "kind": "instance",
+        "fhirVersion": "4.0.1",
+        "format": ["json"],
+        "rest": [{
+            "mode": "server",
+            "resource": [
+                {
+                    "type": "Patient",
+                    "interaction": [
+                        {"code": "read"},
+                        {"code": "create"},
+                    ],
+                },
+                {
+                    "type": "Observation",
+                    "interaction": [
+                        {"code": "read"},
+                        {"code": "create"},
+                        {"code": "search-type"},
+                    ],
+                },
+                {
+                    "type": "RiskAssessment",
+                    "interaction": [
+                        {"code": "read"},
+                    ],
+                },
+                {
+                    "type": "Bundle",
+                    "interaction": [
+                        {"code": "create"},
+                    ],
+                },
+            ],
+            "operation": [
+                {
+                    "name": "process-vitals",
+                    "definition": "OperationDefinition/process-vitals",
+                },
+            ],
+        }],
+    }
+    return _fhir_response(capability_statement_resource)
+
+
+# ---------------------------------------------------------------------------
 # POST /fhir/Patient
 # ---------------------------------------------------------------------------
 

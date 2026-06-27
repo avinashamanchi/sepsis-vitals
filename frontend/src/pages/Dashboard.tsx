@@ -198,6 +198,7 @@ export function Dashboard() {
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
+            <caption className="sr-only">Monitored patients</caption>
             <thead>
               <tr className="text-text-muted text-xs uppercase border-b border-border">
                 <th className="text-left px-4 py-3 font-medium">Patient</th>
@@ -213,7 +214,14 @@ export function Dashboard() {
             </thead>
             <tbody>
               {DEMO_PATIENTS.map((p) => (
-                <tr key={p.id} className="border-b border-border/50 hover:bg-elevated/50 transition-colors cursor-pointer" onClick={() => navigate(`/patients/${p.id}`)}>
+                <tr
+                  key={p.id}
+                  className="border-b border-border/50 hover:bg-elevated/50 transition-colors cursor-pointer"
+                  onClick={() => navigate(`/patients/${p.id}`)}
+                  tabIndex={0}
+                  role="button"
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/patients/${p.id}`) } }}
+                >
                   <td className="px-4 py-3 font-medium">{p.id}</td>
                   <td className="px-4 py-3 text-text-secondary">{p.temp}°</td>
                   <td className="px-4 py-3 text-text-secondary">{p.hr}</td>

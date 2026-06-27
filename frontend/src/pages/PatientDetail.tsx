@@ -269,7 +269,8 @@ export function PatientDetail() {
               <h2 className="font-heading text-sm font-semibold">Risk Trajectory (24h)</h2>
             </div>
             <div className="p-4 h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
+              <div role="img" aria-label={`Area chart showing 24-hour sepsis risk trajectory for patient ${id}`}>
+              <ResponsiveContainer width="100%" height={268}>
                 <AreaChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                   <XAxis dataKey="time" stroke="#4a6080" tick={{ fill: '#4a6080', fontSize: 11 }} tickLine={false} interval={3} />
@@ -283,6 +284,7 @@ export function PatientDetail() {
                   <Line type="monotone" dataKey="risk" stroke="#ff3b5c" strokeWidth={2} dot={{ fill: '#ff3b5c', r: 3 }} name="Risk %" />
                 </AreaChart>
               </ResponsiveContainer>
+              </div>
             </div>
           </div>
 
@@ -293,7 +295,7 @@ export function PatientDetail() {
                 <TrendingUp className="w-4 h-4 text-info" />
                 Feature Importance
               </h2>
-              <div className="h-[200px]">
+              <div className="h-[200px]" role="img" aria-label="Horizontal bar chart showing feature importance scores for the sepsis risk prediction model">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={featureImportance} layout="vertical" margin={{ left: 80 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
@@ -317,7 +319,8 @@ export function PatientDetail() {
               <h2 className="font-heading text-sm font-semibold">Vitals History (24h)</h2>
             </div>
             <div className="p-4 h-[280px]">
-              <ResponsiveContainer width="100%" height="100%">
+              <div role="img" aria-label={`Line chart showing 24-hour vitals history for patient ${id}: heart rate, systolic blood pressure, and respiratory rate`}>
+              <ResponsiveContainer width="100%" height={248}>
                 <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                   <XAxis dataKey="time" stroke="#4a6080" tick={{ fill: '#4a6080', fontSize: 11 }} tickLine={false} interval={3} />
@@ -328,6 +331,7 @@ export function PatientDetail() {
                   <Line type="monotone" dataKey="rr" stroke="#00ff9d" strokeWidth={2} dot={false} name="RR (/min)" />
                 </LineChart>
               </ResponsiveContainer>
+              </div>
             </div>
           </div>
 

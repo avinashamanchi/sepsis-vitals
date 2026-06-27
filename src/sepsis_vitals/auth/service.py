@@ -122,14 +122,31 @@ def _validate_password_strength(password: str) -> None:
 
 _login_attempts: dict[str, list[float]] = {}
 _MAX_LOGIN_ATTEMPTS_PER_MINUTE = 5
+_MAX_TRACKED_EMAILS = 10_000
+_last_eviction: float = 0.0
 
 
 def _check_login_rate_limit(email: str) -> None:
     """Raise :class:`AuthServiceError` if the email has exceeded the login
     attempt rate limit (5 attempts per 60-second window).
+
+    Periodically evicts stale entries to prevent unbounded memory growth
+    under brute-force attacks targeting many distinct email addresses.
     """
+    global _last_eviction  # noqa: PLW0603
     now = time.monotonic()
     window = 60.0
+
+    # Evict stale entries every 60 seconds or when dict exceeds size cap
+    if now - _last_eviction > window or len(_login_attempts) > _MAX_TRACKED_EMAILS:
+        stale_keys = [
+            k for k, v in _login_attempts.items()
+            if not v or (now - v[-1]) > window
+        ]
+        for k in stale_keys:
+            del _login_attempts[k]
+        _last_eviction = now
+
     attempts = _login_attempts.setdefault(email, [])
     # Discard attempts older than the window.
     _login_attempts[email] = [t for t in attempts if now - t < window]

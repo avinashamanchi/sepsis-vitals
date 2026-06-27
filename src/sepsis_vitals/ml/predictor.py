@@ -186,6 +186,7 @@ class SepsisPredictor:
         self._state_store = None
         self._loaded = False
         self.dual_thresholds = None
+        self.conformal_predictor = None
 
     def load(self) -> None:
         """Load model, scaler, metadata, and imputation medians from disk."""
@@ -217,6 +218,11 @@ class SepsisPredictor:
             scaler_path = self.model_dir / "scaler.joblib"
             if scaler_path.exists():
                 self.scaler = joblib.load(scaler_path)
+
+        # Load conformal predictor if available (backwards-compatible)
+        cp_path = self.model_dir / "conformal_predictor.joblib"
+        if cp_path.exists() and self.metadata.get("has_conformal_predictor"):
+            self.conformal_predictor = joblib.load(cp_path)
 
         # Initialize persistent state store (SQLite-backed)
         from sepsis_vitals.ml.state_store import PatientStateStore
@@ -407,12 +413,25 @@ class SepsisPredictor:
     def _compute_confidence_interval(
         self, feature_vector: np.ndarray, risk_prob: float
     ) -> tuple:
-        """Compute confidence interval using ensemble stage variance.
+        """Compute confidence interval for the predicted risk probability.
 
-        For GradientBoosting: uses staged_predict_proba to get predictions
-        at each boosting stage, then computes variance across stages.
-        For other models: uses calibration ECE from metadata as uncertainty.
+        Priority:
+        1. Conformal predictor (statistically valid coverage guarantee at
+           the alpha level used during calibration) — used when available.
+        2. Ensemble stage variance for GradientBoosting models.
+        3. ECE-based heuristic — final fallback for all other models.
         """
+        # --- 1. Conformal prediction interval ---
+        if self.conformal_predictor is not None and self.conformal_predictor._calibrated:
+            try:
+                lower, upper, _ = self.conformal_predictor.predict_interval(
+                    self.model, feature_vector
+                )
+                return float(lower[0]), float(upper[0])
+            except Exception:
+                pass  # fall through to heuristics
+
+        # --- 2. Ensemble stage variance (GradientBoosting only) ---
         try:
             if hasattr(self.model, "staged_predict_proba"):
                 # Use last 20% of stages to estimate prediction variance
@@ -429,7 +448,7 @@ class SepsisPredictor:
         except Exception:
             pass
 
-        # Fallback: use ECE from model metadata as uncertainty width
+        # --- 3. Fallback: use ECE from model metadata as uncertainty width ---
         ece = 0.02  # default
         if self.metadata:
             cal = self.metadata.get("calibration", {})

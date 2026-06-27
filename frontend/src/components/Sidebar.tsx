@@ -38,6 +38,7 @@ export function Sidebar() {
       )}
 
       <aside
+        aria-label="Main navigation"
         className={clsx(
           'fixed top-0 left-0 h-full w-[220px] bg-surface border-r border-border z-50',
           'flex flex-col transition-transform duration-200',
@@ -61,7 +62,7 @@ export function Sidebar() {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 py-3 overflow-y-auto">
+        <nav aria-label="Site navigation" className="flex-1 py-3 overflow-y-auto">
           {NAV_ITEMS.map(({ to, icon: Icon, label }) => (
             <NavLink
               key={to}

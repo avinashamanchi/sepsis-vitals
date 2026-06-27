@@ -16,7 +16,7 @@ const NAV_ITEMS = [
 
 export function BottomNav() {
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 lg:hidden bg-surface/95 backdrop-blur-md border-t border-border">
+    <nav aria-label="Mobile navigation" className="fixed bottom-0 left-0 right-0 z-50 lg:hidden bg-surface/95 backdrop-blur-md border-t border-border">
       <div className="flex items-center justify-around h-14">
         {NAV_ITEMS.map(({ to, icon: Icon, label }) => (
           <NavLink
@@ -31,7 +31,7 @@ export function BottomNav() {
               )
             }
           >
-            <Icon className="w-5 h-5" />
+            <Icon className="w-5 h-5" aria-hidden="true" />
             {label}
           </NavLink>
         ))}

@@ -70,10 +70,11 @@ export function VitalsForm({ onSubmit, loading, submitLabel = 'Analyze' }: Vital
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <label className="block text-xs text-text-muted mb-1">
+        <label htmlFor="vitals-patient-id" className="block text-xs text-text-muted mb-1">
           Patient ID <span className="text-danger">*</span>
         </label>
         <input
+          id="vitals-patient-id"
           type="text"
           required
           value={patientId}
@@ -87,10 +88,11 @@ export function VitalsForm({ onSubmit, loading, submitLabel = 'Analyze' }: Vital
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {VITAL_FIELDS.map(({ key, label, unit, min, max, step }) => (
           <div key={key}>
-            <label className="block text-xs text-text-muted mb-1">
+            <label htmlFor={`vitals-${key.replace(/_/g, '-')}`} className="block text-xs text-text-muted mb-1">
               {label} <span className="text-text-muted/50">{unit}</span>
             </label>
             <input
+              id={`vitals-${key.replace(/_/g, '-')}`}
               type="number"
               min={min}
               max={max}

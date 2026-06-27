@@ -100,6 +100,7 @@ export function Patients() {
             <button
               key={level}
               onClick={() => setFilterRisk(level)}
+              aria-pressed={filterRisk === level}
               className={`px-3 py-2 text-xs rounded-lg border transition-colors ${
                 filterRisk === level
                   ? 'border-accent/50 text-accent bg-accent/10'
@@ -123,6 +124,7 @@ export function Patients() {
             <button
               key={p.id}
               onClick={() => navigate(`/patients/${p.id}`)}
+              aria-label={`View details for patient ${p.id}, ${p.bed}${p.age ? `, age ${p.age}` : ''}, ${p.risk} risk`}
               className="bg-surface border border-border rounded-lg p-4 hover:border-accent/30 transition-colors text-left w-full cursor-pointer"
             >
               <div className="flex items-center justify-between mb-3">

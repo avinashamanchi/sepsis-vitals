@@ -253,6 +253,13 @@ class VitalReading(Base):
     sbp: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
     spo2: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
     gcs: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
+    dbp: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
+    map_pressure: Mapped[Optional[float]] = mapped_column(
+        "map", Float, nullable=True
+    )
+    lactate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    wbc: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    procalcitonin: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     created_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), server_default="now()" if not _is_sqlite else None
     )
