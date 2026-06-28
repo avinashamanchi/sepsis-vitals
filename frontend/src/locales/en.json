@@ -121,7 +121,17 @@
     "emailInvalid": "Invalid email address",
     "passwordRequired": "Password is required",
     "passwordTooShort": "Password must be at least 6 characters",
-    "authFailed": "Authentication failed"
+    "authFailed": "Authentication failed",
+    "googleSignIn": "Sign in with Google",
+    "orEmail": "or sign in with email",
+    "forgotPassword": "Forgot password?",
+    "resetSent": "Password reset email sent. Check your inbox.",
+    "confirmPassword": "Confirm Password",
+    "confirmPlaceholder": "Re-enter password",
+    "passwordMismatch": "Passwords do not match",
+    "firebaseError": "Authentication error. Please try again.",
+    "emailInUse": "An account with this email already exists",
+    "weakPassword": "Password is too weak. Use at least 6 characters."
   },
   "dashboard": {
     "title": "Nurse Console",

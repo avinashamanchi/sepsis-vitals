@@ -4,9 +4,9 @@ import type { Alert, Patient, MonitoredPatient, SimSession } from '../types'
 interface AppState {
   // Auth
   token: string | null
-  user: { email: string; role: string } | null
+  user: { email: string; role: string; displayName?: string; photoURL?: string } | null
   lastActivity: number
-  setAuth: (token: string, user: { email: string; role: string }) => void
+  setAuth: (token: string, user: { email: string; role: string; displayName?: string; photoURL?: string }) => void
   logout: () => void
   updateActivity: () => void
 
