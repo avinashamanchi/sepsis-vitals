@@ -50,12 +50,23 @@ interface AppState {
   setSimulatorEnabled: (enabled: boolean) => void
 }
 
+/** Safe localStorage helpers — never throw (e.g. private browsing, quota exceeded). */
+function safeGet(key: string): string | null {
+  try { return localStorage.getItem(key) } catch { return null }
+}
+function safeSet(key: string, value: string): void {
+  try { localStorage.setItem(key, value) } catch { /* quota exceeded or private mode */ }
+}
+function safeRemove(key: string): void {
+  try { localStorage.removeItem(key) } catch { /* ignore */ }
+}
+
 export const useStore = create<AppState>((set) => ({
   // Auth
-  token: localStorage.getItem('sv_token'),
+  token: safeGet('sv_token'),
   user: (() => {
     try {
-      const raw = localStorage.getItem('sv_user')
+      const raw = safeGet('sv_user')
       return raw ? JSON.parse(raw) : null
     } catch {
       return null
@@ -63,13 +74,13 @@ export const useStore = create<AppState>((set) => ({
   })(),
   lastActivity: Date.now(),
   setAuth: (token, user) => {
-    localStorage.setItem('sv_token', token)
-    localStorage.setItem('sv_user', JSON.stringify(user))
+    safeSet('sv_token', token)
+    safeSet('sv_user', JSON.stringify(user))
     set({ token, user, lastActivity: Date.now() })
   },
   logout: () => {
-    localStorage.removeItem('sv_token')
-    localStorage.removeItem('sv_user')
+    safeRemove('sv_token')
+    safeRemove('sv_user')
     set({ token: null, user: null })
   },
   updateActivity: () => set({ lastActivity: Date.now() }),

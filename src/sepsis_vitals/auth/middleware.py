@@ -25,10 +25,28 @@ _SESSION_IDLE_TIMEOUT = int(os.getenv("SESSION_IDLE_TIMEOUT_SECONDS", "900"))
 
 # user_id -> last_activity unix timestamp (in-memory; Redis in production)
 _user_last_activity: dict[str, float] = {}
+_MAX_TRACKED_USERS = 50_000  # Cap to prevent OOM under attack
+_last_activity_cleanup: float = 0.0
+
+
+def _cleanup_idle_users() -> None:
+    """Evict users whose sessions have already expired to bound dict size."""
+    global _last_activity_cleanup  # noqa: PLW0603
+    now = time.time()
+    if now - _last_activity_cleanup < 60.0 and len(_user_last_activity) < _MAX_TRACKED_USERS:
+        return
+    _last_activity_cleanup = now
+    expired = [
+        uid for uid, ts in _user_last_activity.items()
+        if (now - ts) > _SESSION_IDLE_TIMEOUT
+    ]
+    for uid in expired:
+        del _user_last_activity[uid]
 
 
 def _check_idle_timeout(user_id: str) -> None:
     """Raise HTTPException(401) if the user has been idle too long."""
+    _cleanup_idle_users()
     now = time.time()
     last = _user_last_activity.get(user_id)
     if last is not None and (now - last) > _SESSION_IDLE_TIMEOUT:

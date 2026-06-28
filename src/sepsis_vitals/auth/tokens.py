@@ -53,6 +53,8 @@ class TokenBlacklist:
     _redis_client = None
     _redis_checked = False
 
+    _MAX_BLACKLISTED = 50_000  # Cap in-memory set to prevent OOM
+
     def __init__(self) -> None:
         self._blacklisted_jtis: set[str] = set()
         # user_id -> unix timestamp; tokens issued before this time are invalid
@@ -81,6 +83,13 @@ class TokenBlacklist:
                 return
             except Exception:
                 pass
+        # Evict oldest entries if set grows too large (no Redis fallback)
+        if len(self._blacklisted_jtis) >= self._MAX_BLACKLISTED:
+            # set is unordered; discard ~25% to amortize cleanup cost
+            to_remove = len(self._blacklisted_jtis) // 4
+            it = iter(self._blacklisted_jtis)
+            for _ in range(to_remove):
+                self._blacklisted_jtis.discard(next(it))
         self._blacklisted_jtis.add(jti)
 
     def revoke_all_for_user(self, user_id: str) -> None:

@@ -12,7 +12,7 @@ export function TopBar() {
   const sidebarOpen = useStore((s) => s.sidebarOpen)
   const unread = alerts.filter((a) => !a.dismissed).length
   const { pathname } = useLocation()
-  const isMac = navigator.platform.toUpperCase().includes('MAC')
+  const isMac = /mac/i.test(navigator.userAgent)
 
   const PAGE_TITLES: Record<string, string> = {
     '/': t('nav.dashboard'),

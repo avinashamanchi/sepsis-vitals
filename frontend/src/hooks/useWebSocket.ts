@@ -31,20 +31,32 @@ export function useWebSocket() {
   const hasConnectedOnce = useRef(false)
 
   useEffect(() => {
+    // Don't connect on GitHub Pages (no backend) — stay at 'offline'
+    if (window.location.hostname.includes('github.io')) {
+      return
+    }
+
+    let unmounted = false
+
     function connect() {
+      // Bail if the component was unmounted while a reconnect was pending
+      if (unmounted) return
+
       // Build WebSocket URL from current location
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      const host = import.meta.env.VITE_API_URL
-        ? new URL(import.meta.env.VITE_API_URL).host
-        : window.location.host
-      const token = localStorage.getItem('sv_token')
-      const params = token ? `?token=${token}` : ''
-      const url = `${protocol}//${host}/ws/alerts${params}`
-
-      // Don't connect if we're on GitHub Pages (no backend)
-      if (window.location.hostname.includes('github.io')) {
+      let host: string
+      try {
+        host = import.meta.env.VITE_API_URL
+          ? new URL(import.meta.env.VITE_API_URL).host
+          : window.location.host
+      } catch {
+        setWsState('offline')
         return
       }
+      let token: string | null = null
+      try { token = localStorage.getItem('sv_token') } catch { /* private browsing */ }
+      const params = token ? `?token=${token}` : ''
+      const url = `${protocol}//${host}/ws/alerts${params}`
 
       // If we've connected before, this is a reconnect attempt
       if (hasConnectedOnce.current) {
@@ -56,6 +68,7 @@ export function useWebSocket() {
         wsRef.current = ws
 
         ws.onopen = () => {
+          if (unmounted) { ws.close(); return }
           setWsConnected(true)
           setWsState('connected')
           hasConnectedOnce.current = true
@@ -121,6 +134,7 @@ export function useWebSocket() {
         }
 
         ws.onclose = () => {
+          if (unmounted) return
           setWsConnected(false)
           setWsState('reconnecting')
           wsRef.current = null
@@ -139,14 +153,17 @@ export function useWebSocket() {
         }
       } catch {
         // WebSocket constructor can throw if URL is invalid
-        setWsConnected(false)
-        setWsState('reconnecting')
+        if (!unmounted) {
+          setWsConnected(false)
+          setWsState('offline')
+        }
       }
     }
 
     connect()
 
     return () => {
+      unmounted = true
       clearTimeout(reconnectTimer.current)
       if (wsRef.current) {
         wsRef.current.onclose = null // prevent reconnect on intentional close

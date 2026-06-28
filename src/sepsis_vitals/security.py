@@ -50,10 +50,13 @@ class RateLimiter:
     _redis_client = None
     _redis_checked = False
 
+    _MAX_BUCKETS = 50_000  # Cap in-memory buckets to prevent OOM under scanning attacks
+
     def __init__(self, rate: float, burst: int) -> None:
         self.rate = rate
         self.burst = burst
         self._buckets: dict[str, Bucket] = {}
+        self._last_cleanup: float = 0.0
 
     @classmethod
     def _get_redis(cls):
@@ -107,8 +110,22 @@ class RateLimiter:
         except Exception:
             return self._allow_local(key)
 
+    def _cleanup_stale_buckets(self) -> None:
+        """Remove buckets that are full (idle) to bound memory usage."""
+        now = time.monotonic()
+        if now - self._last_cleanup < 60.0 and len(self._buckets) < self._MAX_BUCKETS:
+            return
+        stale_keys = [
+            k for k, b in self._buckets.items()
+            if (now - b.last_refill) > max(60.0, self.burst / self.rate)
+        ]
+        for k in stale_keys:
+            del self._buckets[k]
+        self._last_cleanup = now
+
     def _allow_local(self, key: str) -> bool:
         """In-process token bucket fallback."""
+        self._cleanup_stale_buckets()
         bucket = self._get_bucket(key)
         now = time.monotonic()
         elapsed = now - bucket.last_refill
@@ -555,6 +572,8 @@ class SecurityAlertTracker:
 
     _instance: "SecurityAlertTracker | None" = None
 
+    _MAX_TRACKED_KEYS = 10_000  # Cap per-dict to prevent OOM
+
     def __init__(self) -> None:
         # IP -> list of timestamps for failed auth
         self._failed_auth: dict[str, list[float]] = {}
@@ -564,6 +583,7 @@ class SecurityAlertTracker:
         self._error_burst: dict[str, list[float]] = {}
         # Already-fired alerts (prevent spam) — key -> last_alert_time
         self._alert_cooldown: dict[str, float] = {}
+        self._last_gc: float = 0.0
 
     @classmethod
     def get(cls) -> "SecurityAlertTracker":
@@ -576,6 +596,21 @@ class SecurityAlertTracker:
         cutoff = time.monotonic() - window
         return [t for t in entries if t > cutoff]
 
+    def _gc(self) -> None:
+        """Periodically evict empty/stale entries from all tracking dicts."""
+        now = time.monotonic()
+        if now - self._last_gc < 120.0:
+            return
+        self._last_gc = now
+        for store in (self._failed_auth, self._phi_access, self._error_burst):
+            dead = [k for k, v in store.items() if not v]
+            for k in dead:
+                del store[k]
+        # Evict old cooldowns
+        stale = [k for k, t in self._alert_cooldown.items() if now - t > 600.0]
+        for k in stale:
+            del self._alert_cooldown[k]
+
     def _should_alert(self, key: str, cooldown: float = 300.0) -> bool:
         """Return True if enough time has passed since the last alert for *key*."""
         last = self._alert_cooldown.get(key, 0)
@@ -586,6 +621,7 @@ class SecurityAlertTracker:
 
     def record_failed_auth(self, ip: str) -> None:
         """Record a failed authentication attempt from *ip*."""
+        self._gc()
         now = time.monotonic()
         self._failed_auth.setdefault(ip, []).append(now)
         self._failed_auth[ip] = self._prune(self._failed_auth[ip])
@@ -603,6 +639,7 @@ class SecurityAlertTracker:
 
     def record_phi_access(self, user_id: str, ip: str) -> None:
         """Record a PHI access event for anomaly detection."""
+        self._gc()
         now = time.monotonic()
         self._phi_access.setdefault(user_id, []).append(now)
         self._phi_access[user_id] = self._prune(self._phi_access[user_id], window=600.0)
@@ -623,6 +660,7 @@ class SecurityAlertTracker:
         """Record client/server errors for abuse detection."""
         if status_code < 400:
             return
+        self._gc()
         now = time.monotonic()
         self._error_burst.setdefault(ip, []).append(now)
         self._error_burst[ip] = self._prune(self._error_burst[ip], window=60.0)

@@ -1,5 +1,14 @@
 const BASE = import.meta.env.VITE_API_URL ?? ''
 
+/** Safe localStorage wrapper that never throws (e.g. private browsing). */
+function safeGetItem(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
 /** Callback set by the app to handle forced logouts (401). */
 let onUnauthorized: (() => void) | null = null
 
@@ -9,12 +18,19 @@ export function setOnUnauthorized(cb: () => void) {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = localStorage.getItem('sv_token')
+  const token = safeGetItem('sv_token')
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   }
-  const res = await fetch(`${BASE}${path}`, { ...options, headers })
+
+  let res: Response
+  try {
+    res = await fetch(`${BASE}${path}`, { ...options, headers })
+  } catch (err) {
+    throw new Error(err instanceof Error ? err.message : 'Network error — check your connection')
+  }
+
   if (!res.ok) {
     if (res.status === 401 && onUnauthorized) {
       onUnauthorized()
@@ -22,7 +38,15 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     const body = await res.json().catch(() => ({ detail: res.statusText }))
     throw new Error(body.detail ?? `HTTP ${res.status}`)
   }
-  return res.json()
+
+  // Handle empty responses (204 No Content, etc.)
+  const text = await res.text()
+  if (!text) return {} as T
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    throw new Error('Invalid JSON response from server')
+  }
 }
 
 /** True when running on GitHub Pages (no backend available). */
