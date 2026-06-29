@@ -35,6 +35,7 @@ docker/backups/
 data/
 physionet.org/
 !docs/data/
+!frontend/src/data/
 *.csv
 *.parquet
 *.feather
