@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useCallback } from 'react'
+import { lazy, Suspense, useEffect, useCallback, useState } from 'react'
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { LANGUAGES } from './i18n'
@@ -12,7 +12,10 @@ import { KeyboardShortcuts } from './components/KeyboardShortcuts'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useStore } from './stores/useStore'
 import { isDemo, setOnUnauthorized, api } from './lib/api'
+import { onAuthChange } from './lib/auth'
 
+const Landing = lazy(() => import('./pages/Landing').then((m) => ({ default: m.Landing })))
+const Pricing = lazy(() => import('./pages/Pricing').then((m) => ({ default: m.Pricing })))
 const Dashboard = lazy(() => import('./pages/Dashboard').then((m) => ({ default: m.Dashboard })))
 const Patients = lazy(() => import('./pages/Patients').then((m) => ({ default: m.Patients })))
 const PatientDetail = lazy(() => import('./pages/PatientDetail').then((m) => ({ default: m.PatientDetail })))
@@ -23,6 +26,7 @@ const Alerts = lazy(() => import('./pages/Alerts').then((m) => ({ default: m.Ale
 const Admin = lazy(() => import('./pages/Admin').then((m) => ({ default: m.Admin })))
 const Login = lazy(() => import('./pages/Login').then((m) => ({ default: m.Login })))
 const Monitor = lazy(() => import('./pages/Monitor').then((m) => ({ default: m.Monitor })))
+const Population = lazy(() => import('./pages/Population').then((m) => ({ default: m.Population })))
 
 const SESSION_TIMEOUT_MS = 15 * 60 * 1000 // 15 minutes HIPAA
 
@@ -43,7 +47,6 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   const navigate = useNavigate()
 
-  // Wire up 401 handler
   useEffect(() => {
     setOnUnauthorized(() => {
       logout()
@@ -51,7 +54,6 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     })
   }, [logout, navigate])
 
-  // Session timeout check
   useEffect(() => {
     if (!token || isDemo) return
     const interval = setInterval(() => {
@@ -63,16 +65,14 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
       } else if (idle > SESSION_TIMEOUT_MS - 60_000) {
         setShowSessionWarning(true)
       }
-    }, 5_000) // check every 5s
+    }, 5_000)
     return () => clearInterval(interval)
   }, [token, lastActivity, logout, navigate, setShowSessionWarning])
 
-  // Track activity on route change
   useEffect(() => {
     if (token) updateActivity()
   }, [location.pathname, token, updateActivity])
 
-  // Track activity on user interaction
   const handleActivity = useCallback(() => {
     updateActivity()
   }, [updateActivity])
@@ -87,7 +87,6 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     }
   }, [token, handleActivity])
 
-  // Redirect to login if not authenticated (skip in demo mode)
   if (!token && !isDemo) {
     return <Navigate to="/login" state={{ from: location }} replace />
   }
@@ -95,11 +94,43 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+/** Redirect `/` based on auth state: authenticated → /dashboard, else → Landing */
+function RootRedirect() {
+  const token = useStore((s) => s.token)
+  if (token || isDemo) {
+    return <Navigate to="/dashboard" replace />
+  }
+  return (
+    <Suspense fallback={<PageLoading />}>
+      <Landing />
+    </Suspense>
+  )
+}
+
 export default function App() {
   const { t, i18n } = useTranslation()
+  const setAuth = useStore((s) => s.setAuth)
+  const [authReady, setAuthReady] = useState(isDemo)
   useWebSocket()
 
-  // Set document direction for RTL languages (Arabic)
+  // Firebase auth state listener — restore session on load
+  useEffect(() => {
+    if (isDemo) return
+    const unsubscribe = onAuthChange(async (user) => {
+      if (user) {
+        const token = await user.getIdToken()
+        setAuth(token, {
+          email: user.email ?? '',
+          role: 'user',
+          displayName: user.displayName ?? undefined,
+          photoURL: user.photoURL ?? undefined,
+        })
+      }
+      setAuthReady(true)
+    })
+    return unsubscribe
+  }, [setAuth])
+
   useEffect(() => {
     const lang = LANGUAGES.find((l) => l.code === i18n.language)
     const dir = lang?.dir ?? 'ltr'
@@ -114,17 +145,29 @@ export default function App() {
       .catch(() => useStore.getState().setSimulatorEnabled(false))
   }, [])
 
+  if (!authReady) {
+    return (
+      <div className="min-h-screen bg-void flex items-center justify-center">
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
   return (
     <EulaGate>
       <Suspense fallback={<PageLoading />}>
         <Routes>
+          {/* Public routes — no sidebar/topbar */}
+          <Route path="/" element={<RootRedirect />} />
+          <Route path="/pricing" element={<Pricing />} />
           <Route path="/login" element={<Login />} />
+
+          {/* Authenticated routes — sidebar/topbar layout */}
           <Route
             path="/*"
             element={
               <AuthGuard>
                 <div className="min-h-screen bg-background text-text-primary font-mono">
-                  {/* Skip to content link for a11y */}
                   <a
                     href="#main-content"
                     className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:bg-accent focus:text-background focus:px-4 focus:py-2 focus:rounded"
@@ -138,10 +181,11 @@ export default function App() {
                     <main id="main-content" className="flex-1 p-4 lg:p-6 pb-20 lg:pb-6">
                       <Suspense fallback={<PageLoading />}>
                         <Routes>
-                          <Route path="/" element={<Dashboard />} />
+                          <Route path="/dashboard" element={<Dashboard />} />
                           <Route path="/patients" element={<Patients />} />
                           <Route path="/patients/:id" element={<PatientDetail />} />
                           <Route path="/monitor" element={<Monitor />} />
+                          <Route path="/population" element={<Population />} />
                           <Route path="/scores" element={<ScoreLab />} />
                           <Route path="/predict" element={<Predict />} />
                           <Route path="/analytics" element={<Analytics />} />

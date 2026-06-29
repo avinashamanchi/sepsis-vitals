@@ -1,18 +1,18 @@
 import { NavLink } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
-  Activity, Bell, Brain,
-  LayoutDashboard, Settings, Users,
+  Activity, Bell, Brain, Globe,
+  LayoutDashboard, Users,
 } from 'lucide-react'
 import clsx from 'clsx'
 
 const NAV_ITEMS = [
-  { to: '/', icon: LayoutDashboard, key: 'nav.home' },
+  { to: '/dashboard', icon: LayoutDashboard, key: 'nav.home' },
   { to: '/patients', icon: Users, key: 'nav.patients' },
   { to: '/monitor', icon: Activity, key: 'nav.monitor' },
   { to: '/predict', icon: Brain, key: 'nav.predict' },
+  { to: '/population', icon: Globe, key: 'nav.population' },
   { to: '/alerts', icon: Bell, key: 'nav.alerts' },
-  { to: '/admin', icon: Settings, key: 'nav.admin' },
 ]
 
 export function BottomNav() {

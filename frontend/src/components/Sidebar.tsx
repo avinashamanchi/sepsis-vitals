@@ -2,18 +2,19 @@ import { NavLink } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useStore } from '../stores/useStore'
 import {
-  Activity, BarChart3, Bell, Brain, Calculator,
+  Activity, BarChart3, Bell, Brain, Calculator, Globe,
   LayoutDashboard, LogOut, Settings, Shield, Users, Wifi, WifiOff,
 } from 'lucide-react'
 import clsx from 'clsx'
 
 const NAV_ITEMS = [
-  { to: '/', icon: LayoutDashboard, key: 'nav.dashboard' },
+  { to: '/dashboard', icon: LayoutDashboard, key: 'nav.dashboard' },
   { to: '/patients', icon: Users, key: 'nav.patients' },
   { to: '/monitor', icon: Activity, key: 'nav.monitor' },
   { to: '/scores', icon: Calculator, key: 'nav.scoreLab' },
   { to: '/predict', icon: Brain, key: 'nav.predict' },
   { to: '/analytics', icon: BarChart3, key: 'nav.analytics' },
+  { to: '/population', icon: Globe, key: 'nav.population' },
   { to: '/alerts', icon: Bell, key: 'nav.alerts' },
   { to: '/admin', icon: Settings, key: 'nav.admin' },
 ]
@@ -88,7 +89,10 @@ export function Sidebar() {
         {/* Footer */}
         <div className="p-4 border-t border-border">
           <button
-            onClick={logout}
+            onClick={() => {
+              import('../lib/auth').then(({ signOutUser }) => signOutUser().catch(() => {}))
+              logout()
+            }}
             className="flex items-center gap-2 text-xs text-text-muted hover:text-danger transition-colors w-full"
           >
             <LogOut className="w-3.5 h-3.5" />

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { Shield, LogIn, UserPlus, Mail } from 'lucide-react'
+import { Shield, LogIn, UserPlus } from 'lucide-react'
 import { isDemo } from '../lib/api'
 import { signInWithGoogle, signInWithEmail, signUpWithEmail, resetPassword } from '../lib/auth'
 import { useStore } from '../stores/useStore'

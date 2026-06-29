@@ -15,11 +15,12 @@ export function TopBar() {
   const isMac = /mac/i.test(navigator.userAgent)
 
   const PAGE_TITLES: Record<string, string> = {
-    '/': t('nav.dashboard'),
+    '/dashboard': t('nav.dashboard'),
     '/patients': t('nav.patients'),
     '/scores': t('nav.scoreLab'),
     '/predict': t('nav.predict'),
     '/analytics': t('nav.analytics'),
+    '/population': t('nav.population'),
     '/alerts': t('nav.alerts'),
     '/admin': t('nav.admin'),
   }
