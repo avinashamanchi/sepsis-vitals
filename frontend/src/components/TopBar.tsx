@@ -1,4 +1,4 @@
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Menu, Bell } from 'lucide-react'
 import { useStore } from '../stores/useStore'
@@ -10,6 +10,7 @@ export function TopBar() {
   const setSidebarOpen = useStore((s) => s.setSidebarOpen)
   const alerts = useStore((s) => s.alerts)
   const sidebarOpen = useStore((s) => s.sidebarOpen)
+  const navigate = useNavigate()
   const unread = alerts.filter((a) => !a.dismissed).length
   const { pathname } = useLocation()
   const isMac = /mac/i.test(navigator.userAgent)
@@ -51,7 +52,7 @@ export function TopBar() {
           {isMac ? '⌘' : 'Ctrl+'}K
         </span>
         <LanguageSwitcher />
-        <button aria-label={t('common.notifications')} className="relative p-2 text-text-secondary hover:text-text-primary transition-colors">
+        <button onClick={() => navigate('/alerts')} aria-label={t('common.notifications')} className="relative p-2 text-text-secondary hover:text-text-primary transition-colors">
           <Bell className="w-5 h-5" />
           {unread > 0 && (
             <span aria-live="polite" className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-danger text-[10px] font-bold flex items-center justify-center text-white">

@@ -92,6 +92,7 @@ export function Sidebar() {
             onClick={() => {
               import('../lib/auth').then(({ signOutUser }) => signOutUser().catch(() => {}))
               logout()
+              window.location.href = import.meta.env.BASE_URL
             }}
             className="flex items-center gap-2 text-xs text-text-muted hover:text-danger transition-colors w-full"
           >
