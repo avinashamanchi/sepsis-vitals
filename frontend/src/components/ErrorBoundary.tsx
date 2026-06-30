@@ -26,6 +26,22 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error('[ErrorBoundary] Uncaught render error:', error, info.componentStack)
+
+    // Auto-recover from stale chunk errors (e.g. after a new deploy
+    // when the service worker still caches old asset filenames)
+    if (this.isChunkLoadError(error)) {
+      navigator.serviceWorker?.getRegistrations().then((regs) =>
+        Promise.all(regs.map((r) => r.unregister()))
+      ).finally(() => window.location.reload())
+    }
+  }
+
+  private isChunkLoadError(error: Error): boolean {
+    const msg = error.message ?? ''
+    return msg.includes('dynamically imported module') ||
+           msg.includes('Failed to fetch') ||
+           msg.includes('Loading chunk') ||
+           msg.includes('Loading CSS chunk')
   }
 
   handleReload = () => {
