@@ -412,6 +412,7 @@ async def stripe_webhook(
     "/subscription",
     response_model=SubscriptionStatusResponse,
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(_check_billing_rate)],
 )
 async def get_subscription(
     org_id: str,

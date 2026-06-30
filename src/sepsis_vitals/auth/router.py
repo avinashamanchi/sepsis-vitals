@@ -53,9 +53,9 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=12, max_length=128)
     role: str = Field(
-        ...,
-        pattern=r"^(nurse|researcher|system_admin)$",
-        description="User role: nurse, researcher, or system_admin",
+        "nurse",
+        pattern=r"^(nurse|researcher)$",
+        description="User role: nurse or researcher",
     )
     org_id: Optional[str] = Field(
         None,

@@ -8,33 +8,46 @@ import {
   onAuthStateChanged,
   type User,
 } from 'firebase/auth'
-import { auth } from './firebase'
+import { getFirebaseAuth } from './firebase'
 
 const googleProvider = new GoogleAuthProvider()
 
+function requireAuth() {
+  const a = getFirebaseAuth()
+  if (!a) throw new Error('Firebase is not configured')
+  return a
+}
+
 export async function signInWithGoogle() {
-  const result = await signInWithPopup(auth, googleProvider)
+  const result = await signInWithPopup(requireAuth(), googleProvider)
   return result.user
 }
 
 export async function signInWithEmail(email: string, password: string) {
-  const result = await signInWithEmailAndPassword(auth, email, password)
+  const result = await signInWithEmailAndPassword(requireAuth(), email, password)
   return result.user
 }
 
 export async function signUpWithEmail(email: string, password: string) {
-  const result = await createUserWithEmailAndPassword(auth, email, password)
+  const result = await createUserWithEmailAndPassword(requireAuth(), email, password)
   return result.user
 }
 
 export async function signOutUser() {
-  await signOut(auth)
+  const a = getFirebaseAuth()
+  if (a) await signOut(a)
 }
 
 export async function resetPassword(email: string) {
-  await sendPasswordResetEmail(auth, email)
+  await sendPasswordResetEmail(requireAuth(), email)
 }
 
 export function onAuthChange(callback: (user: User | null) => void) {
-  return onAuthStateChanged(auth, callback)
+  const a = getFirebaseAuth()
+  if (!a) {
+    // No Firebase configured (demo mode) — invoke with null immediately
+    callback(null)
+    return () => {}
+  }
+  return onAuthStateChanged(a, callback)
 }

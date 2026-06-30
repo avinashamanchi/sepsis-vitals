@@ -270,7 +270,8 @@ def register_user(
     password:
         Plain-text password (validated for strength).
     role:
-        One of ``nurse``, ``researcher``, ``system_admin``.
+        One of ``nurse``, ``researcher``. The ``system_admin`` role cannot
+        be self-assigned during registration.
     org_id:
         Organisation / site identifier.
     db_session:
@@ -295,7 +296,13 @@ def register_user(
     if existing is not None:
         raise DuplicateEmailError(f"Email {email!r} is already registered")
 
-    valid_roles = {"nurse", "researcher", "system_admin"}
+    # Defense-in-depth: system_admin cannot be self-assigned during registration.
+    # Admin accounts must be provisioned through internal tooling / DB migration.
+    if role == "system_admin":
+        raise AuthServiceError(
+            "The system_admin role cannot be self-assigned during registration."
+        )
+    valid_roles = {"nurse", "researcher"}
     if role not in valid_roles:
         raise AuthServiceError(
             f"Invalid role {role!r}. Must be one of {sorted(valid_roles)}."

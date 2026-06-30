@@ -279,7 +279,7 @@ class PredictRequest(BaseModel):
 
 
 class BatchPredictRequest(BaseModel):
-    patients: List[PredictRequest] = Field(..., max_length=50)
+    patients: List[PredictRequest] = Field(..., max_length=10)
 
 
 class ConfidenceInterval(BaseModel):
@@ -788,14 +788,25 @@ async def predict_sepsis(body: PredictRequest, request: Request, user: Dict = De
 
 @app.post("/predict/batch", dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
 async def predict_batch(body: BatchPredictRequest, request: Request, user: Dict = Depends(verify_auth)):
-    """Batch prediction for multiple patients (max 50)."""
+    """Batch prediction for multiple patients (max 10)."""
+    # The check_ml_rate_limit dependency already consumed 1 token.
+    # Consume additional tokens proportional to batch size so that a batch
+    # of N patients costs N tokens, preventing rate-limit bypass via batching.
+    ip = _client_ip(request)
+    extra_tokens_needed = len(body.patients) - 1
+    for _ in range(extra_tokens_needed):
+        if not _ml_limiter.allow(ip):
+            raise HTTPException(
+                status_code=429,
+                detail="ML prediction rate limit exceeded. Reduce batch size or try again shortly.",
+            )
+
     predictor = _get_predictor()
     if predictor is None:
         raise HTTPException(status_code=503, detail="Model not loaded.")
 
     results = []
     errors = []
-    ip = _client_ip(request)
     model_version = predictor.metadata.get("version") if predictor.metadata else None
 
     for i, patient in enumerate(body.patients):

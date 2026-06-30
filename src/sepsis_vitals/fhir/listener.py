@@ -1505,6 +1505,25 @@ class FHIRWebhookServer:
                     writer, 403, {"error": "Invalid webhook signature"}
                 )
                 return
+        else:
+            env = os.environ.get("SEPSIS_ENV", "").lower()
+            if env == "production":
+                logger.error(
+                    "SEPSIS_WEBHOOK_SECRET is not configured in production; "
+                    "rejecting FHIR webhook request from %s:%s",
+                    peer[0], peer[1],
+                )
+                await self._send_response(
+                    writer,
+                    503,
+                    {"error": "Webhook secret is not configured"},
+                )
+                return
+            else:
+                logger.warning(
+                    "SEPSIS_WEBHOOK_SECRET is not set; accepting "
+                    "unauthenticated FHIR webhook data (non-production)"
+                )
 
         try:
             body = json.loads(body_bytes)

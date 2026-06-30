@@ -1,5 +1,5 @@
-import { initializeApp } from 'firebase/app'
-import { getAuth } from 'firebase/auth'
+import { initializeApp, type FirebaseApp } from 'firebase/app'
+import { getAuth, type Auth } from 'firebase/auth'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY ?? '',
@@ -10,5 +10,14 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID ?? '',
 }
 
-const app = initializeApp(firebaseConfig)
-export const auth = getAuth(app)
+/** Firebase is initialized lazily so the app doesn't crash in demo mode
+ *  (GitHub Pages) where no Firebase env vars are set. */
+let _app: FirebaseApp | null = null
+let _auth: Auth | null = null
+
+export function getFirebaseAuth(): Auth | null {
+  if (!firebaseConfig.apiKey) return null
+  if (!_app) _app = initializeApp(firebaseConfig)
+  if (!_auth) _auth = getAuth(_app)
+  return _auth
+}
