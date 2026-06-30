@@ -74,6 +74,13 @@ export function Login() {
     e.preventDefault()
     const validationError = validate()
     if (validationError) { setError(validationError); return }
+
+    if (isDemo) {
+      setAuth('demo-token', { email, role: 'demo' })
+      navigate('/dashboard')
+      return
+    }
+
     setLoading(true)
     setError('')
     try {
