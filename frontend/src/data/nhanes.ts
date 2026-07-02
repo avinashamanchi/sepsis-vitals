@@ -682,8 +682,8 @@ export function getCompleteBenchmark(
  */
 export function getRiskProfile(
   age: number,
-  sex: string,
-  ethnicity: string,
+  _sex: string,
+  _ethnicity: string,
   comorbidities?: string[],
 ): RiskProfile {
   const ageGroup = getAgeGroup(age);

@@ -378,7 +378,7 @@ export function Population() {
                   />
                   <Tooltip
                     {...CHART_TOOLTIP}
-                    formatter={(value: number) => [`${value} ${vitalUnit(vital)}`, t('population.value')]}
+                    formatter={(value) => [`${value} ${vitalUnit(vital)}`, t('population.value')]}
                   />
                   <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                     {distributionData.map((entry, i) => (
@@ -413,7 +413,7 @@ export function Population() {
                     />
                     <Tooltip
                       {...CHART_TOOLTIP}
-                      formatter={(value: number) => [`${value} mmHg`, t('population.value')]}
+                      formatter={(value) => [`${value} mmHg`, t('population.value')]}
                     />
                     <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                       {dbpDistributionData.map((entry, i) => (
@@ -566,7 +566,7 @@ export function Population() {
                 />
                 <Tooltip
                   {...CHART_TOOLTIP}
-                  formatter={(value: number) => [`${value}%`, t('population.prevalence')]}
+                  formatter={(value) => [`${value}%`, t('population.prevalence')]}
                 />
                 <Bar dataKey="prevalence" radius={[4, 4, 0, 0]}>
                   {prevalenceData.map((entry, i) => (
