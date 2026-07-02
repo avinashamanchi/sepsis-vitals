@@ -282,6 +282,22 @@ class BatchPredictRequest(BaseModel):
     patients: List[PredictRequest] = Field(..., max_length=10)
 
 
+class WhatIfRequest(BaseModel):
+    vitals: VitalsInput
+    modified_vitals: VitalsInput
+    patient_id: str = Field("unknown", max_length=100)
+    age_years: Optional[int] = Field(None, ge=0, le=120)
+
+
+class WhatIfResponse(BaseModel):
+    baseline_risk: float
+    baseline_level: str
+    counterfactual_risk: float
+    counterfactual_level: str
+    risk_delta: float
+    suggestion: Optional[str]
+
+
 class ConfidenceInterval(BaseModel):
     lower: float
     upper: float
@@ -837,6 +853,72 @@ async def predict_batch(body: BatchPredictRequest, request: Request, user: Dict 
             errors.append({"index": i, "patient_id": patient.patient_id, "error": str(exc)})
 
     return {"predictions": results, "count": len(results), "errors": errors}
+
+
+@app.post("/predict/what-if", response_model=WhatIfResponse, dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
+async def predict_what_if(body: WhatIfRequest, request: Request, user: Dict = Depends(verify_auth)):
+    """Counterfactual what-if analysis: compare baseline vs. modified vitals."""
+    predictor = _get_predictor()
+    if predictor is None:
+        raise HTTPException(status_code=503, detail="Model not loaded. Run 'python -m sepsis_vitals.train' first.")
+
+    current_dict = {k: v for k, v in body.vitals.dict().items() if v is not None}
+    if len(current_dict) < 3:
+        raise HTTPException(status_code=422, detail="Provide at least 3 vital signs for ML prediction.")
+
+    # Baseline prediction on current vitals
+    baseline = predictor.predict(
+        vitals=current_dict,
+        patient_id=sanitise_string(body.patient_id),
+        age_years=body.age_years,
+    )
+    baseline_result = baseline.to_dict()
+
+    # Merge modified vitals onto current (override only non-None fields)
+    modified_overrides = {k: v for k, v in body.modified_vitals.dict().items() if v is not None}
+    merged_dict = {**current_dict, **modified_overrides}
+
+    # Counterfactual prediction on merged vitals
+    counterfactual = predictor.predict(
+        vitals=merged_dict,
+        patient_id=sanitise_string(body.patient_id),
+        age_years=body.age_years,
+    )
+    cf_result = counterfactual.to_dict()
+
+    # Generate text suggestion from counterfactual module
+    from sepsis_vitals.ml.fairness import generate_counterfactual
+    suggestion = generate_counterfactual(current_dict, baseline_result["risk_level"])
+
+    return WhatIfResponse(
+        baseline_risk=baseline_result["risk_probability"],
+        baseline_level=baseline_result["risk_level"],
+        counterfactual_risk=cf_result["risk_probability"],
+        counterfactual_level=cf_result["risk_level"],
+        risk_delta=cf_result["risk_probability"] - baseline_result["risk_probability"],
+        suggestion=suggestion,
+    )
+
+
+@app.get("/patient/{patient_id}/forecast", dependencies=[Depends(check_rate_limit)])
+async def patient_forecast(patient_id: str, user: Dict = Depends(verify_auth)):
+    """Deterioration forecast based on the patient's prediction history."""
+    predictor = _get_predictor()
+    if predictor is None:
+        raise HTTPException(status_code=503, detail="Model not loaded.")
+
+    trend = predictor.get_patient_trend(sanitise_string(patient_id))
+    if trend is None:
+        raise HTTPException(status_code=404, detail=f"No data for patient {patient_id}")
+
+    # Build (timestamp, risk_probability) history from trend data
+    history = [(p["timestamp"], p["risk_probability"]) for p in trend.get("predictions", [])]
+    if len(history) < 1:
+        raise HTTPException(status_code=404, detail=f"Insufficient history for patient {patient_id}")
+
+    from sepsis_vitals.ml.forecast import forecast_deterioration
+    forecast = forecast_deterioration(history)
+    return forecast.to_dict()
 
 
 @app.get("/patient/{patient_id}/trend", dependencies=[Depends(check_rate_limit)])
@@ -1408,6 +1490,14 @@ def _init_database():
     except Exception as exc:
         logger.error("Failed to import billing models: %s", exc)
 
+    try:
+        # Import bundle models so their tables are registered with Base.metadata
+        import sepsis_vitals.bundles.models  # noqa: F401
+    except ImportError:
+        logger.info("Bundle models not available — skipping")
+    except Exception as exc:
+        logger.error("Failed to import bundle models: %s", exc)
+
     from sepsis_vitals.db import init_db
     init_db()
     logger.info("Database tables initialized")
@@ -1421,6 +1511,7 @@ def _include_routers():
         ("sepsis_vitals.billing.router", "billing", []),  # billing has its own limiters
         ("sepsis_vitals.alerts.router", "alerts", [Depends(check_rate_limit)]),
         ("sepsis_vitals.fhir.router", "fhir", [Depends(check_rate_limit)]),
+        ("sepsis_vitals.bundles.router", "bundles", [Depends(check_rate_limit)]),
     ]
     for module_path, tag, deps in routers:
         try:

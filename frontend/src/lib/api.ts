@@ -201,4 +201,63 @@ export const api = {
     }>('/simulator/cases'),
 
   ping: () => request<{ status: string }>('/auth/ping', { method: 'POST' }),
+
+  // Bundle endpoints
+  bundleGetForPatient: (patientId: string) =>
+    request<any>(`/bundles/patient/${patientId}`).catch(() => null),
+
+  bundleStart: (patientId: string, vitals?: Record<string, number>, riskLevel?: string) =>
+    request<any>('/bundles/start', {
+      method: 'POST',
+      body: JSON.stringify({ patient_id: patientId, vitals, risk_level: riskLevel }),
+    }),
+
+  bundleCompleteTask: (bundleId: string, taskKey: string, completed: boolean) =>
+    request<any>(`/bundles/${bundleId}/task`, {
+      method: 'PATCH',
+      body: JSON.stringify({ task_key: taskKey, completed }),
+    }),
+
+  bundleCancel: (bundleId: string) =>
+    request<any>(`/bundles/${bundleId}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
+  // What-if counterfactual
+  predictWhatIf: (vitals: Record<string, number>, modifiedVitals: Record<string, number>, patientId?: string) =>
+    request<{
+      baseline_risk: number
+      baseline_level: string
+      counterfactual_risk: number
+      counterfactual_level: string
+      risk_delta: number
+      suggestion: string | null
+    }>('/predict/what-if', {
+      method: 'POST',
+      body: JSON.stringify({ vitals, modified_vitals: modifiedVitals, patient_id: patientId ?? 'unknown' }),
+    }),
+
+  // Deterioration forecast
+  patientForecast: (patientId: string) =>
+    request<{
+      trend_per_hour: number
+      smoothed_risk: number
+      projected_risk_1h: number
+      hours_to_critical: number | null
+      lead_time_band: { low_hours: number; high_hours: number } | null
+      horizon_label: string
+      confidence: string
+      n_points: number
+    }>(`/patient/${patientId}/forecast`),
+
+  // Alert lifecycle
+  alertAcknowledge: (alertId: string) =>
+    request<any>(`/alerts/ack/${alertId}`, { method: 'POST', body: JSON.stringify({}) }),
+
+  alertResolve: (alertId: string, reason?: string) =>
+    request<any>(`/alerts/resolve/${alertId}`, { method: 'POST', body: JSON.stringify({ reason }) }),
+
+  alertSnooze: (alertId: string, minutes: number = 15) =>
+    request<any>(`/alerts/snooze/${alertId}`, { method: 'POST', body: JSON.stringify({ minutes }) }),
 }

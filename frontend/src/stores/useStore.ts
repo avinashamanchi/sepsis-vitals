@@ -48,6 +48,10 @@ interface AppState {
   updateSimSession: (sessionId: string, update: Partial<SimSession>) => void
   simulatorEnabled: boolean
   setSimulatorEnabled: (enabled: boolean) => void
+
+  // Outbox
+  outboxPending: number
+  setOutboxPending: (count: number) => void
 }
 
 /** Safe localStorage helpers — never throw (e.g. private browsing, quota exceeded). */
@@ -169,4 +173,8 @@ export const useStore = create<AppState>((set) => ({
     })),
   simulatorEnabled: false,
   setSimulatorEnabled: (enabled) => set({ simulatorEnabled: enabled }),
+
+  // Outbox
+  outboxPending: 0,
+  setOutboxPending: (count) => set({ outboxPending: count }),
 }))

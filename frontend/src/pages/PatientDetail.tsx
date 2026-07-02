@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { ArrowLeft, Activity, TrendingUp } from 'lucide-react'
 import { api, isDemo } from '../lib/api'
@@ -14,6 +14,8 @@ import {
   ReferenceLine,
 } from 'recharts'
 import { useTranslation } from 'react-i18next'
+import { BundlePanel } from '../components/BundlePanel'
+import type { BundleClient } from '../components/BundlePanel'
 
 interface TrendPoint {
   timestamp: string
@@ -176,6 +178,29 @@ export function PatientDetail() {
       ]
     : []
 
+  const bundleClient: BundleClient = useMemo(() => ({
+    getForPatient: (pid: string) => api.bundleGetForPatient(pid),
+    start: (pid: string) => api.bundleStart(pid),
+    completeTask: (bid: string, key: string, done: boolean) => api.bundleCompleteTask(bid, key, done),
+    cancel: (bid: string) => api.bundleCancel(bid),
+  }), [])
+
+  const [forecast, setForecast] = useState<{
+    trend_per_hour: number
+    projected_risk_1h: number
+    hours_to_critical: number | null
+    lead_time_band: { low_hours: number; high_hours: number } | null
+    horizon_label: string
+    confidence: string
+  } | null>(null)
+
+  useEffect(() => {
+    if (!id || isDemo) return
+    api.patientForecast(id)
+      .then(setForecast)
+      .catch(() => {})
+  }, [id])
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Back button & header */}
@@ -241,6 +266,61 @@ export function PatientDetail() {
                   <p className="text-[10px] text-text-muted mt-1">{s.desc}</p>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Hour-1 Bundle Tracker */}
+          <BundlePanel patientId={id!} client={bundleClient} />
+
+          {/* Deterioration Forecast */}
+          {forecast && (
+            <div className="bg-surface border border-border rounded-lg p-4">
+              <h3 className="font-heading text-sm font-semibold mb-3 flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-info" />
+                {t('patientDetail.forecast', 'Deterioration Forecast')}
+              </h3>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="text-center">
+                  <p className="text-[10px] uppercase tracking-wider text-text-muted">Trend</p>
+                  <p className={clsx(
+                    'text-lg font-bold font-heading',
+                    forecast.trend_per_hour > 0.02 ? 'text-danger' : forecast.trend_per_hour < -0.02 ? 'text-accent' : 'text-text-primary',
+                  )}>
+                    {forecast.trend_per_hour > 0 ? '+' : ''}{(forecast.trend_per_hour * 100).toFixed(1)}%/h
+                  </p>
+                </div>
+                <div className="text-center">
+                  <p className="text-[10px] uppercase tracking-wider text-text-muted">1h Projected</p>
+                  <p className="text-lg font-bold font-heading text-text-primary">
+                    {(forecast.projected_risk_1h * 100).toFixed(0)}%
+                  </p>
+                </div>
+                <div className="text-center">
+                  <p className="text-[10px] uppercase tracking-wider text-text-muted">Time to Critical</p>
+                  <p className="text-lg font-bold font-heading text-text-primary">
+                    {forecast.hours_to_critical != null
+                      ? forecast.hours_to_critical === 0
+                        ? 'NOW'
+                        : `~${forecast.hours_to_critical.toFixed(1)}h`
+                      : '—'}
+                  </p>
+                </div>
+                <div className="text-center">
+                  <p className="text-[10px] uppercase tracking-wider text-text-muted">Confidence</p>
+                  <p className={clsx(
+                    'text-lg font-bold font-heading',
+                    forecast.confidence === 'high' ? 'text-accent' : forecast.confidence === 'low' ? 'text-warning' : 'text-text-primary',
+                  )}>
+                    {forecast.confidence}
+                  </p>
+                </div>
+              </div>
+              <p className="text-xs text-text-secondary mt-3 text-center">{forecast.horizon_label}</p>
+              {forecast.lead_time_band && (
+                <p className="text-[10px] text-text-muted text-center mt-1">
+                  Lead time band: {forecast.lead_time_band.low_hours.toFixed(1)}–{forecast.lead_time_band.high_hours.toFixed(1)}h
+                </p>
+              )}
             </div>
           )}
 

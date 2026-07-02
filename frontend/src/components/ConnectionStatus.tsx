@@ -5,6 +5,7 @@ import { isDemo } from '../lib/api'
 export function ConnectionStatus() {
   const { t } = useTranslation()
   const wsState = useStore((s) => s.wsState)
+  const outboxPending = useStore((s) => s.outboxPending)
 
   // In demo mode, show a neutral offline state
   const state = isDemo ? 'offline' : wsState
@@ -42,6 +43,11 @@ export function ConnectionStatus() {
       <span className="hidden sm:inline text-[10px] text-text-muted font-mono">
         {config.label}
       </span>
+      {outboxPending > 0 && (
+        <span className="inline-flex items-center justify-center h-4 min-w-[16px] px-1 rounded-full bg-amber-500 text-[9px] font-bold text-white">
+          {outboxPending}
+        </span>
+      )}
     </div>
   )
 }

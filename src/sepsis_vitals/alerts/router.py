@@ -16,6 +16,7 @@ from sepsis_vitals.alerts.dispatcher import (
     VALID_CHANNELS,
     get_dispatcher,
 )
+from sepsis_vitals.alerts.escalation import get_escalation_manager
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,63 @@ class ChannelsResponse(BaseModel):
 
 class MessageResponse(BaseModel):
     detail: str
+
+
+class SnoozeRequest(BaseModel):
+    """Body for the snooze endpoint."""
+
+    minutes: int = Field(15, ge=1, le=120, description="Minutes to snooze.")
+
+
+class AckResponse(BaseModel):
+    alert_id: str
+    acknowledged_at: str
+    time_to_ack_seconds: float
+    status: str
+
+
+class ResolveRequest(BaseModel):
+    reason: Optional[str] = Field(None, max_length=500, description="Resolution reason.")
+
+
+class ResolveResponse(BaseModel):
+    alert_id: str
+    resolved_at: str
+    reason: Optional[str] = None
+    status: str
+
+
+class SnoozeResponse(BaseModel):
+    alert_id: str
+    snoozed_until: str
+    snooze_minutes: int
+    status: str
+
+
+class AuditEntry(BaseModel):
+    action: str
+    user_id: Optional[str] = None
+    detail: Optional[str] = None
+    timestamp: str
+
+
+class LifecycleResponse(BaseModel):
+    alert_id: str
+    audit_trail: list[AuditEntry]
+
+
+class EscalationItem(BaseModel):
+    alert_id: str
+    patient_id: str
+    risk_level: str
+    tier: int
+    tier_label: str
+    elapsed_minutes: float
+
+
+class EscalationCheckResponse(BaseModel):
+    escalations: list[EscalationItem]
+    count: int
 
 
 # ---------------------------------------------------------------------------
@@ -284,4 +342,110 @@ async def subscribe_push(body: PushSubscriptionRequest, user = Depends(_require_
         registered=registered,
         endpoint=body.endpoint,
         subscription_count=push_service.subscription_count,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Alert lifecycle / escalation endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/ack/{alert_id}",
+    response_model=AckResponse,
+    summary="Acknowledge an alert",
+)
+async def acknowledge_alert(alert_id: str, user=Depends(_require_auth)) -> AckResponse:
+    """Acknowledge an alert, stopping its escalation clock.
+
+    The authenticated user is recorded as the acknowledger.
+    """
+    manager = get_escalation_manager()
+    user_id = user.get("sub", "unknown") if isinstance(user, dict) else getattr(user, "id", "unknown")
+    try:
+        result = manager.acknowledge_alert(alert_id, user_id=user_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found.")
+    return AckResponse(**result)
+
+
+@router.post(
+    "/resolve/{alert_id}",
+    response_model=ResolveResponse,
+    summary="Resolve an alert",
+)
+async def resolve_alert(
+    alert_id: str,
+    body: ResolveRequest = None,
+    user=Depends(_require_auth),
+) -> ResolveResponse:
+    """Mark an alert as resolved with an optional reason."""
+    manager = get_escalation_manager()
+    user_id = user.get("sub", "unknown") if isinstance(user, dict) else getattr(user, "id", "unknown")
+    reason = body.reason if body else None
+    try:
+        result = manager.resolve_alert(alert_id, user_id=user_id, reason=reason)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found.")
+    return ResolveResponse(**result)
+
+
+@router.post(
+    "/snooze/{alert_id}",
+    response_model=SnoozeResponse,
+    summary="Snooze an alert",
+)
+async def snooze_alert(
+    alert_id: str,
+    body: SnoozeRequest = SnoozeRequest(),
+    user=Depends(_require_auth),
+) -> SnoozeResponse:
+    """Delay escalation of an alert for the specified number of minutes."""
+    manager = get_escalation_manager()
+    user_id = user.get("sub", "unknown") if isinstance(user, dict) else getattr(user, "id", "unknown")
+    try:
+        result = manager.snooze_alert(
+            alert_id, user_id=user_id, snooze_minutes=body.minutes
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found.")
+    return SnoozeResponse(**result)
+
+
+@router.get(
+    "/lifecycle/{alert_id}",
+    response_model=LifecycleResponse,
+    summary="Get alert audit trail",
+)
+async def get_alert_lifecycle(
+    alert_id: str, user=Depends(_require_auth)
+) -> LifecycleResponse:
+    """Return the full lifecycle audit trail for an alert."""
+    manager = get_escalation_manager()
+    try:
+        trail = manager.get_alert_lifecycle(alert_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found.")
+    return LifecycleResponse(
+        alert_id=alert_id,
+        audit_trail=[AuditEntry(**entry) for entry in trail],
+    )
+
+
+@router.post(
+    "/check-escalations",
+    response_model=EscalationCheckResponse,
+    summary="Check and trigger alert escalations",
+)
+async def check_escalations(user=Depends(_require_auth)) -> EscalationCheckResponse:
+    """Check all tracked alerts for escalation.
+
+    Intended to be called periodically (e.g. by a cron job every minute).
+    Returns any alerts that were escalated during this check.
+    """
+    manager = get_escalation_manager()
+    escalations = manager.check_escalations()
+    return EscalationCheckResponse(
+        escalations=[EscalationItem(**e) for e in escalations],
+        count=len(escalations),
     )
