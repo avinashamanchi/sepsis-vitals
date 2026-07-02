@@ -270,7 +270,7 @@ export function PatientDetail() {
           )}
 
           {/* Hour-1 Bundle Tracker */}
-          <BundlePanel patientId={id!} client={bundleClient} />
+          {!isDemo && <BundlePanel patientId={id!} client={bundleClient} />}
 
           {/* Deterioration Forecast */}
           {forecast && (
