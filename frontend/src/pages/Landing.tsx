@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Shield, ArrowRight, Brain, Activity, Globe, Calculator, Plug, Languages } from 'lucide-react'
+import { isDemo } from '../lib/api'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 
 const TEASER_DATA = [
@@ -47,7 +48,7 @@ export function Landing() {
           <Link to="/pricing" className="text-xs text-text-secondary hover:text-accent transition-colors hidden sm:inline">
             {t('landing.viewPricing')}
           </Link>
-          <Link to="/login" className="text-xs font-bold bg-accent text-void px-4 py-2 rounded hover:bg-accent-dim transition-colors">
+          <Link to={isDemo ? '/dashboard' : '/login'} className="text-xs font-bold bg-accent text-void px-4 py-2 rounded hover:bg-accent-dim transition-colors">
             {t('landing.signIn')}
           </Link>
         </div>
@@ -71,7 +72,7 @@ export function Landing() {
             {t('landing.heroSub')}
           </p>
           <div className="flex gap-3 justify-center flex-wrap">
-            <Link to="/login" className="inline-flex items-center gap-2 bg-accent text-void font-bold text-sm px-8 py-3.5 rounded hover:bg-accent-dim transition-all hover:shadow-[0_0_30px_rgba(0,255,157,0.3)]">
+            <Link to={isDemo ? '/dashboard' : '/login'} className="inline-flex items-center gap-2 bg-accent text-void font-bold text-sm px-8 py-3.5 rounded hover:bg-accent-dim transition-all hover:shadow-[0_0_30px_rgba(0,255,157,0.3)]">
               {t('landing.getStarted')} <ArrowRight className="w-4 h-4" />
             </Link>
             <Link to="/pricing" className="inline-flex items-center gap-2 border border-border text-text-primary text-sm px-8 py-3.5 rounded hover:border-accent hover:text-accent transition-colors">
@@ -150,7 +151,7 @@ export function Landing() {
               </BarChart>
             </ResponsiveContainer>
           </div>
-          <Link to="/login" className="inline-flex items-center gap-2 text-accent text-sm mt-6 hover:underline">
+          <Link to={isDemo ? '/dashboard' : '/login'} className="inline-flex items-center gap-2 text-accent text-sm mt-6 hover:underline">
             {t('landing.nhanesExplore')} <ArrowRight className="w-4 h-4" />
           </Link>
         </div>
@@ -174,7 +175,7 @@ export function Landing() {
           <span>&copy; {new Date().getFullYear()} {t('landing.copyright')}</span>
           <div className="flex gap-6">
             <Link to="/pricing" className="hover:text-accent transition-colors">{t('landing.viewPricing')}</Link>
-            <Link to="/login" className="hover:text-accent transition-colors">{t('landing.signIn')}</Link>
+            <Link to={isDemo ? '/dashboard' : '/login'} className="hover:text-accent transition-colors">{t('landing.signIn')}</Link>
           </div>
         </div>
       </footer>

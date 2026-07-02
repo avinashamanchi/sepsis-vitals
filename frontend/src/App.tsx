@@ -97,7 +97,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 /** Redirect `/` based on auth state: authenticated → /dashboard, else → Landing */
 function RootRedirect() {
   const token = useStore((s) => s.token)
-  if (token || isDemo) {
+  if (token) {
     return <Navigate to="/dashboard" replace />
   }
   return (
