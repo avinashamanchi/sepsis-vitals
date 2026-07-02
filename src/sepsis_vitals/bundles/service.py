@@ -32,10 +32,8 @@ from sepsis_vitals.bundles.models import BundleTask, SepsisBundle
 # ---------------------------------------------------------------------------
 
 
-def _aware(dt: Optional[datetime]) -> Optional[datetime]:
+def _aware(dt: datetime) -> datetime:
     """Coerce a possibly-naive datetime to UTC-aware."""
-    if dt is None:
-        return None
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
@@ -251,7 +249,7 @@ def _recompute_kpis(bundle: SepsisBundle, db: Session) -> None:
     tasks = list(bundle.tasks)
 
     abx = next((t for t in tasks if t.task_key == "antibiotics"), None)
-    if abx is not None and abx.completed and abx.completed_at is not None:
+    if abx is not None and abx.completed and abx.completed_at is not None and bundle.started_at is not None:
         bundle.time_to_antibiotics_s = (
             _aware(abx.completed_at) - _aware(bundle.started_at)
         ).total_seconds()
@@ -274,7 +272,8 @@ def _recompute_kpis(bundle: SepsisBundle, db: Session) -> None:
 def bundle_to_dict(bundle: SepsisBundle) -> Dict[str, Any]:
     """Serialise a bundle (plus a live countdown) to a JSON-safe dict."""
     now = datetime.now(timezone.utc)
-    elapsed_s = (now - _aware(bundle.started_at)).total_seconds()
+    started = bundle.started_at or now
+    elapsed_s = (now - _aware(started)).total_seconds()
 
     specs = protocol.HOUR1_BUNDLE.task_map()
     tasks_out: List[Dict[str, Any]] = []
