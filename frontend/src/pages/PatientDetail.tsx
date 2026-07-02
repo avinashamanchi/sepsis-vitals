@@ -436,7 +436,8 @@ export function PatientDetail() {
 
 /** Alert history for this patient, pulled from global alerts store */
 function AlertHistory({ patientId }: { patientId: string }) {
-  const alerts = useStore((s) => s.alerts.filter((a) => a.patientId === patientId))
+  const allAlerts = useStore((s) => s.alerts)
+  const alerts = allAlerts.filter((a) => a.patientId === patientId)
 
   if (alerts.length === 0) return null
 
