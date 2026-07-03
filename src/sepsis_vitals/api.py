@@ -222,7 +222,13 @@ async def verify_auth(request: Request) -> Dict[str, Any]:
             except StopIteration:
                 pass
     except ImportError:
-        logger.warning("Auth middleware not available — falling back to anonymous")
+        if _is_production:
+            logger.critical("Auth middleware not available in production — rejecting request")
+            raise HTTPException(
+                status_code=500,
+                detail="Authentication service unavailable",
+            )
+        logger.warning("Auth middleware not available — falling back to anonymous (dev only)")
         return _anonymous_user()
     except HTTPException:
         raise

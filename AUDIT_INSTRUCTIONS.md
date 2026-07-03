@@ -1,4 +1,4 @@
-# Sepsis-Vitals Code Audit — Claude Code Instructions
+# Sepsis-Vitals Code Audit v2 — Claude Code Instructions
 
 ## Constraints (READ FIRST — NON-NEGOTIABLE)
 
@@ -12,125 +12,138 @@
 
 ## Project Context
 
-- **Project:** sepsis-vitals (NOT "NextToken" — ignore that name if you see it)
+- **Project:** sepsis-vitals
+- **Repo:** https://github.com/avinashamanchi/sepsis-vitals.git
 - **Backend:** FastAPI + SQLAlchemy ORM + SQLite/PostgreSQL, Python 3.9+
 - **Frontend:** React 19 + TypeScript 6 + Zustand + Vite, deployed to GitHub Pages
-- **Auth:** JWT RS256 (key-pair, not shared secret) + Firebase (frontend)
+- **Auth:** Firebase (Google + email/password) on frontend; JWT RS256 with HS256 fallback on backend (`auth/tokens.py`)
 - **Encryption:** AES-256-GCM at-rest for PII columns, PBKDF2/bcrypt for passwords
 - **Entry points:** `src/sepsis_vitals/api.py` (backend), `frontend/src/main.tsx` (frontend)
 - **Tests:** `tests/` directory, pytest
 
----
+## Prior Audit — Already Fixed (skip these)
 
-## PASS 0 — Structural Inventory (5 min)
+A v1 audit was completed and the following findings were remediated. Do NOT re-flag these unless the fix is incomplete or introduced a new issue:
 
-**0.1** Generate a module dependency map. For each Python module under `src/sepsis_vitals/`, list what it imports and what imports it. Flag any module imported by >10 consumers or importing from >5 siblings.
+1. ~~IDOR / missing resource-level authz~~ → `verify_patient_org()` added to all patient/bundle/alert endpoints; WebSocket broadcasts scoped by org_id (`api.py`, `bundles/router.py`, `realtime/websocket.py`)
+2. ~~JWT HS256 vs documented RS256~~ → `tokens.py` now loads RSA keys from env with HS256 fallback
+3. ~~AUTH_ENABLED=false → silent admin in prod~~ → gated on `SEPSIS_ENV=production` (`api.py`)
+4. ~~state_store.py shared SQLite connection without lock~~ → `threading.Lock` added (`ml/state_store.py`)
+5. ~~Frontend re-derives risk instead of using backend risk_level~~ → uses `latest.risk_level ?? riskFromProb()` (`PatientDetail.tsx`)
+6. ~~React error #185 infinite re-render~~ → Zustand `.filter()` in selector fixed (`PatientDetail.tsx:AlertHistory`)
+7. ~~Duplicate JWT implementation~~ → `jwt.py` token functions are dead code, only hash/lockout functions used (known, not yet removed)
 
-**0.2** In `frontend/src/`, map component imports. Flag any component file >500 lines (monolith risk) or any circular import chains.
+## What to Focus On This Time
 
-**0.3** Run `git log --oneline -50` and `git shortlog -sn` to estimate AI-generation ratio and iteration depth. Note but do not act on findings.
+This is a **second-pass deep dive**. Go deeper than the v1 audit. Focus on:
 
----
-
-## PASS 1 — Architectural Integrity (10 min)
-
-**1.1 — Dead module detection.** For every Python module under `src/sepsis_vitals/`, grep for import references across the codebase. Flag modules with zero non-test callers.
-
-**1.2 — Orphan state (frontend).** In React components using `useState` or Zustand selectors: check that every `useEffect` with subscriptions, timers, or event listeners has a cleanup return. Check for Zustand selectors that call `.filter()`, `.map()`, or `.reduce()` inline (creates new references → infinite re-renders). *Note: one such bug was already fixed in `PatientDetail.tsx:AlertHistory` — check for remaining instances.*
-
-**1.3 — Pattern consistency.** The backend uses a layered pattern: router → service → ORM. Verify all routers delegate to service functions rather than containing inline business logic. Flag any router that directly queries the database or performs multi-step mutations.
-
-**1.4 — Abstraction audit.** Flag any abstract class or interface with exactly one implementation that adds no behavior. Focus on `src/sepsis_vitals/` Python code — the frontend uses a flat component model which is appropriate.
-
-**1.5 — Dead code paths.** Grep for unreachable branches: `if False`, `if True`, variables assigned but never read, imports never used. In frontend: check for components exported but never imported anywhere.
-
----
-
-## PASS 2 — Async Logic & State Machine Audit (10 min)
-
-**2.1 — Unhandled async (backend).** Search for `async def` functions. For each, verify exceptions propagate to FastAPI's error handler rather than being silently caught. Flag any `except` block that logs and returns `None`/`undefined` without re-raising or returning a typed error response.
-
-**2.2 — Unhandled async (frontend).** Search for `.then()` and `await` calls. Flag any `.catch(() => {})` (swallowed errors on non-trivial operations). *Note: some `.catch(() => {})` on optional API calls (forecast, simulator check) are acceptable — flag only those on critical paths like auth, vitals submission, or bundle operations.*
-
-**2.3 — Race conditions.** Check:
-- `src/sepsis_vitals/ml/state_store.py` — SQLite WAL mode, verify no concurrent write paths exist without transactions
-- `src/sepsis_vitals/alerts/escalation.py` — thread-safe singleton, verify locking
-- `frontend/src/lib/outbox.ts` — IndexedDB queue, verify flush() cannot overlap
-- `src/sepsis_vitals/security.py` — in-memory rate limiter buckets, verify cleanup doesn't race with reads
-
-**2.4 — Cleanup validation (frontend).** In `useWebSocket.ts`: verify the cleanup function closes the socket and clears reconnect timers. In `App.tsx`: verify activity listeners are removed on unmount. Check all `setInterval`/`setTimeout` calls have corresponding `clearInterval`/`clearTimeout`.
-
-**2.5 — Empty/null collection handling.** For functions that process arrays of vitals, patients, or alerts: trace what happens when the input is empty or null. Focus on `ml/predictor.py`, `ml/forecast.py`, `scores.py`.
+- **Things the v1 audit flagged as Medium/Low/Info that weren't fixed** (e.g., NEWS2 Scale 2 gap, dead modules, `except (TokenError, Exception)` redundancy)
+- **New code introduced by the security fixes** — verify the fixes themselves don't introduce bugs (e.g., does `verify_patient_org()` handle edge cases correctly? Does the RS256/HS256 key loading have race conditions?)
+- **Business logic correctness** — go deeper on clinical scoring, bundle protocol, and ML pipeline logic
+- **Frontend robustness** — look beyond PatientDetail; audit all pages for async issues, missing error handling, stale state
+- **Data flow integrity** — trace user input from API entry to database write to frontend display
+- **Test coverage gaps** — identify critical paths that have no test coverage
 
 ---
 
-## PASS 3 — Security Audit (15 min — highest priority)
+## PASS 0 — Verify Prior Fixes (5 min)
 
-**3.1 — Secrets scan.** Grep the entire repo for patterns: API keys, passwords, tokens, or secrets assigned as string literals (not `os.environ`, `os.getenv`, `process.env`, or `import.meta.env`). Check `.env.example` for real values (should contain only `REPLACE_ME` placeholders). Check `frontend/` for any hardcoded Firebase config values beyond what's in `firebase.ts`.
+**0.1** Spot-check each of the 6 remediated findings listed above. For each: read the relevant file and confirm the fix is correctly implemented. Flag if a fix is incomplete, has edge cases, or introduced a new issue.
 
-**3.2 — Injection surfaces.** This project uses SQLAlchemy ORM (parameterized by default), so raw SQL injection is unlikely. Instead focus on:
-- Any use of `text()`, `exec()`, `eval()`, `subprocess`, `os.system()`, or f-string SQL in Python
-- Any use of `dangerouslySetInnerHTML` in React
-- Any user input reaching file path construction (`os.path.join` with user-supplied segments)
-- Template injection in Jinja2 or string formatting with user input
-- The prompt injection guard in `security.py` — verify coverage of the `copilot` endpoint input
+**0.2** Check `verify_patient_org()` in `api.py`: What happens when `patient_id` doesn't exist in the Patient table but exists in other tables (e.g., bundles, vitals)? Is there a foreign key inconsistency risk?
 
-**3.3 — Auth & authorization completeness.** Map every FastAPI route (including those in routers). For each: (a) is auth middleware applied? (b) is resource-level authorization checked (does the user own this patient/alert/bundle)? Flag any endpoint that authenticates but doesn't authorize at the resource level (IDOR risk). Check the WebSocket `/ws/alerts` endpoint for auth enforcement.
-
-**3.4 — CORS & headers.** Read the CORS config in `api.py`. Verify no wildcard `*` origin on authenticated endpoints. Verify security headers middleware is applied globally (not just to specific routes). *Known: this project already sets HSTS, CSP, X-Frame-Options, nosniff — verify they're still present and not weakened.*
-
-**3.5 — Cryptographic audit.**
-- Verify password hashing uses PBKDF2 (>=100K iterations) or bcrypt — check `auth/service.py`
-- Verify JWT uses RS256 with key files, not HS256 with a string secret — check `auth/tokens.py`
-- Verify AES-256-GCM encryption in `security.py:FieldEncryptor` uses proper nonce handling (unique per encryption)
-- Check for any use of `MD5`, `SHA-1` for security purposes, or `random` (not `secrets`) for token generation
-
-**3.6 — Dependency audit.** Read `pyproject.toml` and `frontend/package.json`. Flag any dependency that looks unfamiliar or has an unusual name (hallucination risk). Do NOT run `npm audit` or `pip audit` — just review the dependency lists for obvious issues.
+**0.3** Check `tokens.py` key loading: Is `_load_keys()` thread-safe? Could two requests race on `_KEYS_LOADED`?
 
 ---
 
-## PASS 4 — Logic & Business Rule Integrity (10 min)
+## PASS 1 — Deep Architectural Audit (10 min)
 
-**4.1 — Clinical scoring correctness.** Read `src/sepsis_vitals/scores.py`. Verify qSOFA, SIRS, NEWS2 calculations against published criteria. Flag any threshold that doesn't match clinical literature.
+**1.1 — Monolith analysis.** `api.py` is 1527+ lines. Inventory all responsibilities it contains (routes, middleware, Pydantic models, copilot logic, WebSocket handler). Identify which responsibilities should be in separate modules. Count the number of route handlers, middleware functions, and Pydantic models in this one file.
 
-**4.2 — Bundle protocol correctness.** Read `src/sepsis_vitals/bundles/protocol.py`. Verify the Hour-1 Bundle tasks match the Surviving Sepsis Campaign guidelines. Check conditional task logic (fluids gated on MAP/SBP, repeat lactate gated on initial lactate >2).
+**1.2 — Cross-module contract validation.** For each router module (`bundles/router.py`, `alerts/router.py`, `patients/router.py`, `auth/router.py`): verify the Pydantic request/response models match what the frontend sends/expects. Check for field name mismatches, missing optional fields, or type disagreements.
 
-**4.3 — Return type consistency.** In service functions (`bundles/service.py`, `auth/service.py`, `patients/`): verify all code paths return the declared type. Flag functions that return `None` on error paths where the caller doesn't check for it.
+**1.3 — Database model integrity.** Read `db.py` and all migration files. Verify: (a) every foreign key has an index, (b) cascade deletes are configured correctly, (c) no orphan records can be created by the current API routes.
 
-**4.4 — Transaction atomicity.** In `bundles/service.py`: verify `start_bundle()` and `complete_task()` use proper transaction boundaries (`db.commit()` only after all mutations, `db.rollback()` on failure). Check that `expire_stale_bundles()` doesn't partially commit.
+**1.4 — Import cycle detection.** The IDOR fix added `from sepsis_vitals.db import Patient` inside function bodies (deferred imports). Trace all deferred imports and verify none create circular dependency issues.
 
-**4.5 — Risk level thresholds.** Verify consistency between backend risk classification (`ml/predictor.py`) and frontend risk display (`lib/risk.ts`, `PatientDetail.tsx:riskFromProb`). Flag any threshold mismatch.
-
----
-
-## PASS 5 — Code Quality (5 min)
-
-**5.1 — Duplication.** Spot-check for duplicate logic blocks >15 lines between: `api.py` route handlers and router files; scoring logic in `scores.py` vs `ml/predictor.py`; demo data generation across frontend pages.
-
-**5.2 — High-complexity functions.** Identify functions >80 lines or with deeply nested conditionals (>4 levels). Focus on `api.py`, `ml/predictor.py`, `ml/trainer.py`.
-
-**5.3 — Test quality.** Read 3-5 test files. Check whether tests assert specific behavioral outcomes or just assert "no exception thrown." Flag test files that mock the database when they should use the SQLite test fixture.
-
-**5.4 — Logging audit.** Grep for `console.log`, `print(`, `logger.debug` that might output PII, tokens, passwords, or patient data. Focus on error handlers and auth flows.
+**1.5 — Dead code inventory.** List ALL modules, functions, and classes that are never called from production code paths. Include: `jwt.py` token functions, `fhir/listener.py`, `state.py`, `model_scaffold.py`, `data_quality.py`, and anything else found. Quantify the dead code as a percentage of total codebase.
 
 ---
 
-## PASS 6 — AI-Specific Regression Patterns (5 min)
+## PASS 2 — Async & Concurrency Deep Dive (10 min)
 
-**6.1 — Naming consistency.** Spot-check variable naming conventions across files. Flag files that mix `camelCase` and `snake_case` in Python, or inconsistent component naming in TypeScript.
+**2.1 — FastAPI async/sync mixing.** FastAPI runs `async def` handlers on the event loop and `def` handlers in a threadpool. Identify any `async def` handler that calls synchronous blocking code (e.g., `db.query()`, `time.sleep()`, file I/O) without using `run_in_executor`. This blocks the event loop.
 
-**6.2 — Context boundary seams.** Identify integration points between modules that use different patterns (different error handling styles, different abstraction levels). Focus on: bundles ↔ api.py, alerts/escalation ↔ alerts/router, ml/forecast ↔ api.py.
+**2.2 — Database session lifecycle.** Trace every `SessionLocal()` call. Verify every session is closed in a `finally` block or context manager. Look for sessions opened in route handlers that could leak on exception. Check the new `verify_patient_org()` sessions added in the IDOR fix.
 
-**6.3 — Phantom guards.** Flag `if` checks for conditions that cannot occur given the type system or ORM constraints (e.g., checking for `None` on a `NOT NULL` column, guarding against negative IDs on UUID fields).
+**2.3 — WebSocket connection leak.** In `realtime/websocket.py`, the IDOR fix added `_patient_org_id()` which opens a DB session inside `broadcast()`. Since `broadcast()` is called for every message to every client, verify: (a) the session is always closed, (b) it doesn't create a performance bottleneck, (c) what happens if the DB query fails mid-broadcast.
+
+**2.4 — Rate limiter atomicity.** In `security.py`, the in-memory `RateLimiter` uses a `dict` for buckets. Under FastAPI's threadpool, concurrent requests could corrupt the bucket dict. Verify thread safety. Compare with the Redis-backed path which uses Lua scripts for atomicity.
+
+**2.5 — Background task safety.** Check `monitoring/drift_monitor.py` background task. Verify it handles exceptions without crashing the server, doesn't leak memory in its rolling buffer, and doesn't conflict with the main request-handling threads.
+
+---
+
+## PASS 3 — Security Deep Dive (15 min)
+
+**3.1 — Firebase config exposure.** `frontend/src/lib/firebase.ts` now embeds Firebase config values as fallback defaults. Verify these are genuinely public-safe (API key, project ID, etc.) and that no server-side secrets are exposed. Check that Firebase Security Rules are the actual security boundary, not client-side checks.
+
+**3.2 — Session management.** Trace the full auth flow: Firebase issues a token → frontend stores it → frontend sends it to backend. How does the backend validate Firebase tokens? Does it verify the token signature against Firebase's public keys, or does it just decode without verification? Check `auth/middleware.py` and `auth/tokens.py`.
+
+**3.3 — Input validation completeness.** For each API endpoint that accepts user input: verify Pydantic models enforce type constraints, string length limits, and value ranges. Focus on: vitals input (can you submit heart_rate=99999?), patient creation, alert actions, bundle operations. Check for missing validation that could corrupt data or crash the ML model.
+
+**3.4 — Rate limiting bypass.** Check if the rate limiter can be bypassed by: (a) using different IP addresses (X-Forwarded-For spoofing), (b) sending requests without auth (do unauthenticated requests hit the limiter?), (c) WebSocket connections (are they rate-limited?).
+
+**3.5 — CORS configuration edge cases.** Read the CORS config in `api.py`. Check: what happens when `SEPSIS_ALLOWED_ORIGINS` is not set? Is there a default that's too permissive? Does the wildcard stripping logic handle edge cases like `*` embedded in a longer string?
+
+**3.6 — Prompt injection depth.** The copilot endpoint has prompt injection detection. Read the regex patterns in `security.py`. Try to identify bypasses: unicode homoglyphs, zero-width characters, base64-encoded payloads, nested injection attempts. How robust is `_deidentify_vitals()`?
+
+**3.7 — Encryption key management.** If `SEPSIS_PII_KEY` is not set, `FieldEncryptor` falls back to plaintext. Verify there's a startup warning or check. What happens if the key is rotated — can existing encrypted data still be read? Is there a key rotation mechanism?
+
+---
+
+## PASS 4 — Business Logic Deep Dive (10 min)
+
+**4.1 — ML prediction pipeline.** Trace a prediction request from API entry (`/predict`) through feature engineering, model inference, and response. Verify: (a) input features are validated before reaching the model, (b) model output is bounded (probabilities between 0 and 1), (c) SHAP explanations can't leak training data.
+
+**4.2 — Deterioration detection correctness.** Read `ml/monitor.py` and `ml/forecast.py`. Verify the deterioration detection thresholds, trend calculations, and alert generation logic. Are the EWMA parameters clinically reasonable? Could false positives flood alerts?
+
+**4.3 — Bundle state machine integrity.** Read `bundles/service.py`. Trace all state transitions: open → completed, open → expired, open → cancelled. Verify: (a) no invalid transitions are possible, (b) concurrent task completions can't corrupt bundle state, (c) the auto-complete logic (`_all_critical_done`) handles race conditions.
+
+**4.4 — Score calculation edge cases.** For each scoring function in `scores.py`: what happens with extreme vitals (HR=0, temp=45, SBP=-1, GCS=0)? Are there boundary conditions that produce NaN, infinity, or division by zero?
+
+**4.5 — Simulator data isolation.** The simulator generates synthetic patients. Verify simulator data cannot leak into real patient data paths, real alerts, or real prediction records. Check `ml/simulator.py` integration points.
+
+---
+
+## PASS 5 — Frontend Deep Dive (10 min)
+
+**5.1 — All pages async audit.** For every page component (Dashboard, Patients, Monitor, ScoreLab, Predict, Analytics, Alerts, Admin, Population): check that every `useEffect` with API calls handles loading, error, and empty states. Flag any `.catch(() => {})` on critical paths.
+
+**5.2 — Store mutation safety.** Read `stores/useStore.ts`. Check for Zustand selectors that create new references (`.filter()`, `.map()`, object spread in selectors). We fixed one in AlertHistory — check all other consumers.
+
+**5.3 — XSS surface.** Search for any `dangerouslySetInnerHTML` in project source (not vendored/build output). Search for any user input rendered without escaping. Check if alert messages, patient notes, or copilot responses could contain HTML/script.
+
+**5.4 — Auth state consistency.** Trace what happens when: (a) Firebase token expires mid-session, (b) user signs out in another tab, (c) network goes offline then online. Does the app handle these gracefully or show stale/broken state?
+
+**5.5 — Accessibility basics.** Spot-check 3 pages for: missing aria labels on interactive elements, form inputs without labels, color-only risk indicators (no text/icon fallback for colorblind users), keyboard navigation traps.
+
+---
+
+## PASS 6 — Test Coverage Analysis (5 min)
+
+**6.1 — Critical untested paths.** Identify the 5 most critical code paths that have NO test coverage. Prioritize: auth flows, patient data CRUD, prediction pipeline, bundle state machine, alert escalation.
+
+**6.2 — Test isolation.** Check if tests share global state (singleton instances, module-level variables) that could make test order matter. Check if the `PatientStateStore` singleton or `AlertEscalationManager` singleton could leak state between tests.
+
+**6.3 — Frontend test existence.** Does any frontend test infrastructure exist (Jest, Vitest, Playwright, Cypress)? If not, flag as a gap.
 
 ---
 
 ## Output Format
 
-Structure your report as:
-
 ```
-# Sepsis-Vitals Audit Report
+# Sepsis-Vitals Audit Report v2
 
 ## Summary
 - Critical: N findings
@@ -139,10 +152,10 @@ Structure your report as:
 - Low: N findings
 - Info: N findings
 
-## PASS 0 — Structural Inventory
-[findings or "Clean"]
+## Prior Fix Verification
+[confirm each fix or flag issues]
 
-## PASS 1 — Architectural Integrity
+## PASS 1 — Architectural Audit
 ### [SEVERITY] Finding title
 - **Location:** file:line
 - **Issue:** description
@@ -156,7 +169,7 @@ Structure your report as:
 | Severity | Criteria |
 |---|---|
 | **Critical** | Exploitable auth bypass, secret exposure, injection vector, RCE surface |
-| **High** | Swallowed error on critical path, missing authorization check, weak crypto |
-| **Medium** | Orphan state, missing input validation on non-critical path, dead code |
-| **Low** | Naming inconsistency, duplicate logic, excessive comments |
-| **Info** | Cosmetic abstraction, phantom guard, style drift |
+| **High** | Swallowed error on critical path, missing authorization check, weak crypto, data corruption risk |
+| **Medium** | Missing input validation, dead code with security implications, performance bottleneck, missing test coverage on critical path |
+| **Low** | Naming inconsistency, duplicate logic, excessive comments, minor UX issue |
+| **Info** | Cosmetic abstraction, phantom guard, style drift, documentation gap |

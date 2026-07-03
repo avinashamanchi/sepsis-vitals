@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 import uuid
 from typing import Any
@@ -21,6 +22,7 @@ _SECRET_KEY: str | None = None
 _RSA_PRIVATE_KEY: str | None = None
 _RSA_PUBLIC_KEY: str | None = None
 _KEYS_LOADED = False
+_keys_lock = threading.Lock()
 
 
 def _load_keys() -> None:
@@ -28,28 +30,31 @@ def _load_keys() -> None:
     global _SECRET_KEY, _RSA_PRIVATE_KEY, _RSA_PUBLIC_KEY, _KEYS_LOADED, _ALGORITHM  # noqa: PLW0603
     if _KEYS_LOADED:
         return
-    _KEYS_LOADED = True
+    with _keys_lock:
+        if _KEYS_LOADED:
+            return
 
-    # Try RSA keys first
-    raw_private = os.environ.get("JWT_PRIVATE_KEY", "")
-    raw_public = os.environ.get("JWT_PUBLIC_KEY", "")
-    if raw_private and raw_public:
-        _RSA_PRIVATE_KEY = raw_private.replace("\\n", "\n")
-        _RSA_PUBLIC_KEY = raw_public.replace("\\n", "\n")
-        _ALGORITHM = "RS256"
-        _logger.info("JWT configured with RS256 (RSA key pair)")
-        return
+        # Try RSA keys first
+        raw_private = os.environ.get("JWT_PRIVATE_KEY", "")
+        raw_public = os.environ.get("JWT_PUBLIC_KEY", "")
+        if raw_private and raw_public:
+            _RSA_PRIVATE_KEY = raw_private.replace("\\n", "\n")
+            _RSA_PUBLIC_KEY = raw_public.replace("\\n", "\n")
+            _ALGORITHM = "RS256"
+            _logger.info("JWT configured with RS256 (RSA key pair)")
+        else:
+            # Fall back to symmetric secret
+            _SECRET_KEY = os.environ.get("SEPSIS_JWT_SECRET", "")
+            if not _SECRET_KEY:
+                raise RuntimeError(
+                    "Neither RSA key pair (JWT_PRIVATE_KEY + JWT_PUBLIC_KEY) nor "
+                    "SEPSIS_JWT_SECRET environment variable is set. "
+                    "Configure one of these before starting the server."
+                )
+            _ALGORITHM = "HS256"
+            _logger.info("JWT configured with HS256 (symmetric secret fallback)")
 
-    # Fall back to symmetric secret
-    _SECRET_KEY = os.environ.get("SEPSIS_JWT_SECRET", "")
-    if not _SECRET_KEY:
-        raise RuntimeError(
-            "Neither RSA key pair (JWT_PRIVATE_KEY + JWT_PUBLIC_KEY) nor "
-            "SEPSIS_JWT_SECRET environment variable is set. "
-            "Configure one of these before starting the server."
-        )
-    _ALGORITHM = "HS256"
-    _logger.info("JWT configured with HS256 (symmetric secret fallback)")
+        _KEYS_LOADED = True
 
 
 def _get_signing_key() -> str:

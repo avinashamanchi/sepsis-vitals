@@ -53,6 +53,10 @@ class ConnectionManager:
         patient_org = self._patient_org_id(patient_id) if patient_id else None
 
         for ws, conn_org_id in self._connections:
+            # If the message has a patient_id but we couldn't resolve the org,
+            # only send to connections with no org (demo/dev mode).
+            if patient_id and patient_org is None and conn_org_id is not None:
+                continue
             # Skip if this connection has an org and it doesn't match the patient's org
             if conn_org_id is not None and patient_org is not None and conn_org_id != patient_org:
                 continue
