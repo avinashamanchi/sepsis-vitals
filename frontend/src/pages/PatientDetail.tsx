@@ -20,6 +20,7 @@ import type { BundleClient } from '../components/BundlePanel'
 interface TrendPoint {
   timestamp: string
   risk_probability: number
+  risk_level?: RiskLevel
   vitals: Record<string, number>
 }
 
@@ -137,7 +138,11 @@ export function PatientDetail() {
   }, [id])
 
   const latest = trend.length > 0 ? trend[trend.length - 1] : null
-  const currentRisk: RiskLevel = latest ? riskFromProb(latest.risk_probability) : 'low'
+  // Prefer backend-computed risk_level (uses model's dual_thresholds);
+  // fall back to local riskFromProb() for demo mode or legacy responses.
+  const currentRisk: RiskLevel = latest
+    ? (latest.risk_level ?? riskFromProb(latest.risk_probability))
+    : 'low'
   const scores = latest ? computeScores(latest.vitals) : null
 
   // Determine trend direction from monitored state or from data

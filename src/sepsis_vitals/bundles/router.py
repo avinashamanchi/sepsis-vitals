@@ -24,12 +24,17 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from sepsis_vitals.api import verify_auth
+from sepsis_vitals.api import verify_auth, verify_patient_org
 from sepsis_vitals.bundles import service
 from sepsis_vitals.bundles.protocol import list_task_keys
 from sepsis_vitals.db import get_db
 
 router = APIRouter(prefix="/bundles", tags=["bundles"])
+
+
+def _verify_bundle_org(bundle_patient_id: str, user: Dict, db: Session) -> None:
+    """Check that the bundle's patient belongs to the requesting user's org."""
+    verify_patient_org(bundle_patient_id, user, db)
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +82,7 @@ def start_bundle(
     user: Dict = Depends(verify_auth),
 ):
     """Open a Hour-1 bundle (idempotent per patient)."""
+    _verify_bundle_org(body.patient_id, user, db)
     try:
         bundle = service.start_bundle(
             body.patient_id,
@@ -98,6 +104,7 @@ def get_patient_bundle(
     user: Dict = Depends(verify_auth),
 ):
     """Return the patient's currently-open bundle, or 404 if none."""
+    _verify_bundle_org(patient_id, user, db)
     bundle = service.get_open_bundle(patient_id, db)
     if bundle is None:
         raise HTTPException(status_code=404, detail="No open bundle")
@@ -115,6 +122,7 @@ def get_bundle(
     bundle = db.query(SepsisBundle).filter(SepsisBundle.id == bundle_id).first()
     if bundle is None:
         raise HTTPException(status_code=404, detail="Bundle not found")
+    _verify_bundle_org(bundle.patient_id, user, db)
     return service.bundle_to_dict(bundle)
 
 
@@ -126,6 +134,14 @@ def update_task(
     user: Dict = Depends(verify_auth),
 ):
     """Mark a bundle task complete (or undo it)."""
+    # Verify org ownership before allowing task mutation
+    from sepsis_vitals.bundles.models import SepsisBundle
+
+    bundle = db.query(SepsisBundle).filter(SepsisBundle.id == bundle_id).first()
+    if bundle is None:
+        raise HTTPException(status_code=404, detail="Bundle not found")
+    _verify_bundle_org(bundle.patient_id, user, db)
+
     if body.task_key not in list_task_keys():
         raise HTTPException(
             status_code=400, detail=f"Unknown task '{body.task_key}'"
@@ -151,6 +167,14 @@ def cancel_bundle(
     db: Session = Depends(get_db),
     user: Dict = Depends(verify_auth),
 ):
+    # Verify org ownership before allowing cancellation
+    from sepsis_vitals.bundles.models import SepsisBundle
+
+    bundle = db.query(SepsisBundle).filter(SepsisBundle.id == bundle_id).first()
+    if bundle is None:
+        raise HTTPException(status_code=404, detail="Bundle not found")
+    _verify_bundle_org(bundle.patient_id, user, db)
+
     try:
         bundle = service.cancel_bundle(
             bundle_id, db, cancelled_by=_uid(user), reason=body.reason

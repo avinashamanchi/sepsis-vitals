@@ -10,23 +10,52 @@ from typing import Any
 
 
 class ConnectionManager:
-    """Manages WebSocket connections for real-time alert broadcasting."""
+    """Manages WebSocket connections for real-time alert broadcasting.
+
+    Each connection can optionally be associated with an ``org_id``.
+    When broadcasting, messages that include a ``patient_id`` are only
+    sent to connections whose org owns that patient.  Connections with
+    ``org_id=None`` (demo/dev mode) receive all messages.
+    """
 
     def __init__(self):
-        self._connections: list[Any] = []
+        # List of (websocket, org_id) tuples
+        self._connections: list[tuple[Any, str | None]] = []
 
-    async def connect(self, websocket: Any) -> None:
+    async def connect(self, websocket: Any, *, org_id: str | None = None) -> None:
         await websocket.accept()
-        self._connections.append(websocket)
+        self._connections.append((websocket, org_id))
 
     def disconnect(self, websocket: Any) -> None:
-        if websocket in self._connections:
-            self._connections.remove(websocket)
+        self._connections = [
+            (ws, oid) for ws, oid in self._connections if ws is not websocket
+        ]
+
+    def _patient_org_id(self, patient_id: str) -> str | None:
+        """Look up the site_id (org) for a patient. Returns None if not found."""
+        try:
+            from sepsis_vitals.db import SessionLocal, Patient
+            db = SessionLocal()
+            try:
+                patient = db.query(Patient).filter(Patient.id == patient_id).first()
+                return patient.site_id if patient else None
+            finally:
+                db.close()
+        except Exception:
+            return None
 
     async def broadcast(self, message: dict) -> None:
         payload = json.dumps(message)
         disconnected = []
-        for ws in self._connections:
+
+        # Determine which org owns the patient in this message (if any)
+        patient_id = message.get("patient_id")
+        patient_org = self._patient_org_id(patient_id) if patient_id else None
+
+        for ws, conn_org_id in self._connections:
+            # Skip if this connection has an org and it doesn't match the patient's org
+            if conn_org_id is not None and patient_org is not None and conn_org_id != patient_org:
+                continue
             try:
                 await ws.send_text(payload)
             except Exception:

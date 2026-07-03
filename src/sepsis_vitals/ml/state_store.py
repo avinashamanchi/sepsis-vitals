@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,6 +58,8 @@ class PatientStateStore:
         # Return rows as sqlite3.Row so we can access columns by name.
         self._conn.row_factory = sqlite3.Row
 
+        self._lock = threading.Lock()
+
         self._init_db()
 
     # ------------------------------------------------------------------
@@ -65,7 +68,7 @@ class PatientStateStore:
 
     def _init_db(self) -> None:
         """Create tables and indices if they don't already exist."""
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS patients (
@@ -108,7 +111,7 @@ class PatientStateStore:
         now = time.time()
 
         try:
-            with self._conn:
+            with self._lock, self._conn:
                 # Ensure the patient row exists.
                 self._conn.execute(
                     """
@@ -170,16 +173,17 @@ class PatientStateStore:
     ) -> List[StoredPrediction]:
         """Return recent predictions for *patient_id*, newest first."""
         try:
-            rows = self._conn.execute(
-                """
-                SELECT timestamp, risk_probability, risk_level
-                FROM predictions
-                WHERE patient_id = ?
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (patient_id, limit),
-            ).fetchall()
+            with self._lock:
+                rows = self._conn.execute(
+                    """
+                    SELECT timestamp, risk_probability, risk_level
+                    FROM predictions
+                    WHERE patient_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (patient_id, limit),
+                ).fetchall()
         except sqlite3.Error:
             logger.exception(
                 "Failed to retrieve predictions for patient %s", patient_id
@@ -200,10 +204,11 @@ class PatientStateStore:
     def get_baseline_risk(self, patient_id: str) -> Optional[float]:
         """Return the baseline risk for *patient_id*, or ``None``."""
         try:
-            row = self._conn.execute(
-                "SELECT baseline_risk FROM patients WHERE patient_id = ?",
-                (patient_id,),
-            ).fetchone()
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT baseline_risk FROM patients WHERE patient_id = ?",
+                    (patient_id,),
+                ).fetchone()
         except sqlite3.Error:
             logger.exception(
                 "Failed to retrieve baseline risk for patient %s", patient_id
@@ -342,7 +347,7 @@ class PatientStateStore:
         """
         cutoff = time.time() - (max_age_hours * 3600)
         try:
-            with self._conn:
+            with self._lock, self._conn:
                 cursor = self._conn.execute(
                     "DELETE FROM predictions WHERE created_at < ?",
                     (cutoff,),

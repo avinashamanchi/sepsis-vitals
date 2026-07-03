@@ -18,18 +18,55 @@ _logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _SECRET_KEY: str | None = None
+_RSA_PRIVATE_KEY: str | None = None
+_RSA_PUBLIC_KEY: str | None = None
+_KEYS_LOADED = False
 
 
-def _get_secret_key() -> str:
-    """Return the JWT signing key, reading from the environment on first call."""
-    global _SECRET_KEY  # noqa: PLW0603
-    if _SECRET_KEY is None:
-        _SECRET_KEY = os.environ.get("SEPSIS_JWT_SECRET", "")
-        if not _SECRET_KEY:
-            raise RuntimeError(
-                "SEPSIS_JWT_SECRET environment variable is not set. "
-                "Generate a strong random value and export it before starting the server."
-            )
+def _load_keys() -> None:
+    """Load RSA keys (if available) and symmetric secret from the environment."""
+    global _SECRET_KEY, _RSA_PRIVATE_KEY, _RSA_PUBLIC_KEY, _KEYS_LOADED, _ALGORITHM  # noqa: PLW0603
+    if _KEYS_LOADED:
+        return
+    _KEYS_LOADED = True
+
+    # Try RSA keys first
+    raw_private = os.environ.get("JWT_PRIVATE_KEY", "")
+    raw_public = os.environ.get("JWT_PUBLIC_KEY", "")
+    if raw_private and raw_public:
+        _RSA_PRIVATE_KEY = raw_private.replace("\\n", "\n")
+        _RSA_PUBLIC_KEY = raw_public.replace("\\n", "\n")
+        _ALGORITHM = "RS256"
+        _logger.info("JWT configured with RS256 (RSA key pair)")
+        return
+
+    # Fall back to symmetric secret
+    _SECRET_KEY = os.environ.get("SEPSIS_JWT_SECRET", "")
+    if not _SECRET_KEY:
+        raise RuntimeError(
+            "Neither RSA key pair (JWT_PRIVATE_KEY + JWT_PUBLIC_KEY) nor "
+            "SEPSIS_JWT_SECRET environment variable is set. "
+            "Configure one of these before starting the server."
+        )
+    _ALGORITHM = "HS256"
+    _logger.info("JWT configured with HS256 (symmetric secret fallback)")
+
+
+def _get_signing_key() -> str:
+    """Return the key used to *sign* tokens."""
+    _load_keys()
+    if _RSA_PRIVATE_KEY:
+        return _RSA_PRIVATE_KEY
+    assert _SECRET_KEY is not None
+    return _SECRET_KEY
+
+
+def _get_verification_key() -> str:
+    """Return the key used to *verify* token signatures."""
+    _load_keys()
+    if _RSA_PUBLIC_KEY:
+        return _RSA_PUBLIC_KEY
+    assert _SECRET_KEY is not None
     return _SECRET_KEY
 
 
@@ -182,7 +219,7 @@ def create_access_token(
         "iat": now,
         "exp": now + expires_minutes * 60,
     }
-    return pyjwt.encode(payload, _get_secret_key(), algorithm=_ALGORITHM)
+    return pyjwt.encode(payload, _get_signing_key(), algorithm=_ALGORITHM)
 
 
 def create_refresh_token(
@@ -221,7 +258,7 @@ def create_refresh_token(
         "iat": now,
         "exp": now + expires_days * 86400,
     }
-    return pyjwt.encode(payload, _get_secret_key(), algorithm=_ALGORITHM)
+    return pyjwt.encode(payload, _get_signing_key(), algorithm=_ALGORITHM)
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +294,7 @@ def decode_token(token: str) -> dict[str, Any]:
     try:
         payload: dict[str, Any] = pyjwt.decode(
             token,
-            _get_secret_key(),
+            _get_verification_key(),
             algorithms=[_ALGORITHM],
             options={"require": ["sub", "exp", "iat", "type"]},
         )

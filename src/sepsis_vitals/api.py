@@ -184,6 +184,11 @@ async def check_auth_rate_limit(request: Request) -> None:
 # ---------------------------------------------------------------------------
 
 _auth_enabled = os.getenv("SEPSIS_AUTH_ENABLED", "true").lower() == "true"
+if _is_production and not _auth_enabled:
+    logger.warning(
+        "SEPSIS_AUTH_ENABLED=false is ignored in production — forcing auth on"
+    )
+    _auth_enabled = True
 
 
 def _anonymous_user() -> Dict[str, Any]:
@@ -228,6 +233,26 @@ async def verify_auth(request: Request) -> Dict[str, Any]:
             detail="Authentication failed",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+def verify_patient_org(patient_id: str, user: Dict[str, Any], db) -> None:
+    """Verify that the patient belongs to the requesting user's org.
+
+    Compares the patient's ``site_id`` against the user's ``org_id``.
+    Raises HTTP 404 when the patient exists but belongs to another org
+    (avoids leaking existence information).  Skips the check when
+    ``org_id`` is None (demo mode / auth disabled).
+    """
+    org_id = user.get("org_id")
+    if org_id is None:
+        return  # demo mode / auth disabled — allow all
+
+    from sepsis_vitals.db import Patient
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    if patient.site_id != org_id:
+        raise HTTPException(status_code=404, detail="Patient not found")
 
 
 def require_role_dep(*roles: str):
@@ -901,8 +926,18 @@ async def predict_what_if(body: WhatIfRequest, request: Request, user: Dict = De
 
 
 @app.get("/patient/{patient_id}/forecast", dependencies=[Depends(check_rate_limit)])
-async def patient_forecast(patient_id: str, user: Dict = Depends(verify_auth)):
+async def patient_forecast(patient_id: str, request: Request, user: Dict = Depends(verify_auth)):
     """Deterioration forecast based on the patient's prediction history."""
+    # Org-level authorization: verify patient belongs to user's org
+    org_id = user.get("org_id")
+    if org_id is not None:
+        from sepsis_vitals.db import SessionLocal, Patient
+        db = SessionLocal()
+        try:
+            verify_patient_org(patient_id, user, db)
+        finally:
+            db.close()
+
     predictor = _get_predictor()
     if predictor is None:
         raise HTTPException(status_code=503, detail="Model not loaded.")
@@ -922,8 +957,18 @@ async def patient_forecast(patient_id: str, user: Dict = Depends(verify_auth)):
 
 
 @app.get("/patient/{patient_id}/trend", dependencies=[Depends(check_rate_limit)])
-async def patient_trend(patient_id: str, user: Dict = Depends(verify_auth)):
+async def patient_trend(patient_id: str, request: Request, user: Dict = Depends(verify_auth)):
     """Get risk trend for a monitored patient."""
+    # Org-level authorization: verify patient belongs to user's org
+    org_id = user.get("org_id")
+    if org_id is not None:
+        from sepsis_vitals.db import SessionLocal, Patient
+        db = SessionLocal()
+        try:
+            verify_patient_org(patient_id, user, db)
+        finally:
+            db.close()
+
     predictor = _get_predictor()
     if predictor is None:
         raise HTTPException(status_code=503, detail="Model not loaded.")
@@ -957,6 +1002,16 @@ async def monitor_register(body: MonitorRegisterRequest, user: Dict = Depends(ve
 @app.delete("/monitor/{patient_id}", dependencies=[Depends(check_rate_limit)])
 async def monitor_unregister(patient_id: str, user: Dict = Depends(verify_auth)):
     """Remove a patient from continuous monitoring."""
+    # Org-level authorization: verify patient belongs to user's org
+    org_id = user.get("org_id")
+    if org_id is not None:
+        from sepsis_vitals.db import SessionLocal, Patient
+        db = SessionLocal()
+        try:
+            verify_patient_org(patient_id, user, db)
+        finally:
+            db.close()
+
     registry, tracker, ingester = _get_monitor_components()
     registry.unregister(sanitise_string(patient_id))
     tracker.remove_patient(sanitise_string(patient_id))
@@ -1365,6 +1420,7 @@ async def websocket_alerts(websocket: WebSocket):
     Requires a valid API key via ``?token=<key>`` query parameter when auth is enabled.
     """
     # Authenticate WebSocket handshake via JWT
+    ws_org_id = None  # org_id for filtering broadcasts
     if _auth_enabled:
         token = websocket.query_params.get("token")
         if not token:
@@ -1376,11 +1432,12 @@ async def websocket_alerts(websocket: WebSocket):
             if payload.get("type") != "access":
                 await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                 return
+            ws_org_id = payload.get("org_id")
         except (TokenError, Exception):
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
 
-    await ws_manager.connect(websocket)
+    await ws_manager.connect(websocket, org_id=ws_org_id)
     try:
         while True:
             # Keep connection alive, receive any client messages
