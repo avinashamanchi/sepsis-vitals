@@ -110,12 +110,11 @@ function RootRedirect() {
 export default function App() {
   const { t, i18n } = useTranslation()
   const setAuth = useStore((s) => s.setAuth)
-  const [authReady, setAuthReady] = useState(isDemo)
+  const [authReady, setAuthReady] = useState(false)
   useWebSocket()
 
   // Firebase auth state listener — restore session on load
   useEffect(() => {
-    if (isDemo) return
     const unsubscribe = onAuthChange(async (user) => {
       if (user) {
         const token = await user.getIdToken()
