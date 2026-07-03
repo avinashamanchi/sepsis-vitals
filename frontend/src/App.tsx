@@ -87,7 +87,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     }
   }, [token, handleActivity])
 
-  if (!token && !isDemo) {
+  if (!token) {
     return <Navigate to="/login" state={{ from: location }} replace />
   }
 
