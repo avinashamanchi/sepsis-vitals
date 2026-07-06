@@ -474,9 +474,19 @@ class FieldEncryptor:
     @classmethod
     def _load_key(cls) -> None:
         import base64
+        import logging
+
+        _logger = logging.getLogger(__name__)
+        _production = os.getenv("SEPSIS_ENV", "development") == "production"
 
         raw = os.environ.get("SEPSIS_PII_KEY", "")
         if not raw or raw == "REPLACE_ME_BASE64_32_BYTES":
+            if _production:
+                raise RuntimeError(
+                    "SEPSIS_PII_KEY must be set in production. "
+                    "PII encryption cannot be disabled in production mode."
+                )
+            _logger.warning("SEPSIS_PII_KEY not set — field encryption disabled (dev only)")
             cls._key = None
             return
         try:
@@ -486,9 +496,12 @@ class FieldEncryptor:
                     f"SEPSIS_PII_KEY must decode to 32 bytes, got {len(cls._key)}"
                 )
         except Exception as exc:
+            if _production:
+                raise RuntimeError(
+                    f"SEPSIS_PII_KEY not usable in production: {exc}"
+                ) from exc
             cls._key = None
-            import logging
-            logging.getLogger(__name__).warning(
+            _logger.warning(
                 "SEPSIS_PII_KEY not usable, field encryption disabled: %s", exc
             )
 

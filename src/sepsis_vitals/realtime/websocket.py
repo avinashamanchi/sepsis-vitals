@@ -50,7 +50,10 @@ class ConnectionManager:
 
         # Determine which org owns the patient in this message (if any)
         patient_id = message.get("patient_id")
-        patient_org = self._patient_org_id(patient_id) if patient_id else None
+        if patient_id:
+            patient_org = await asyncio.to_thread(self._patient_org_id, patient_id)
+        else:
+            patient_org = None
 
         for ws, conn_org_id in self._connections:
             # If the message has a patient_id but we couldn't resolve the org,

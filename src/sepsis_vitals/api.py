@@ -257,7 +257,7 @@ def verify_patient_org(patient_id: str, user: Dict[str, Any], db) -> None:
     patient = db.query(Patient).filter(Patient.id == patient_id).first()
     if patient is None:
         raise HTTPException(status_code=404, detail="Patient not found")
-    if patient.site_id != org_id:
+    if patient.site_id is None or patient.site_id != org_id:
         raise HTTPException(status_code=404, detail="Patient not found")
 
 
@@ -937,12 +937,14 @@ async def patient_forecast(patient_id: str, request: Request, user: Dict = Depen
     # Org-level authorization: verify patient belongs to user's org
     org_id = user.get("org_id")
     if org_id is not None:
-        from sepsis_vitals.db import SessionLocal, Patient
-        db = SessionLocal()
-        try:
-            verify_patient_org(patient_id, user, db)
-        finally:
-            db.close()
+        def _check_org():
+            from sepsis_vitals.db import SessionLocal
+            db = SessionLocal()
+            try:
+                verify_patient_org(patient_id, user, db)
+            finally:
+                db.close()
+        await asyncio.to_thread(_check_org)
 
     predictor = _get_predictor()
     if predictor is None:
@@ -968,12 +970,14 @@ async def patient_trend(patient_id: str, request: Request, user: Dict = Depends(
     # Org-level authorization: verify patient belongs to user's org
     org_id = user.get("org_id")
     if org_id is not None:
-        from sepsis_vitals.db import SessionLocal, Patient
-        db = SessionLocal()
-        try:
-            verify_patient_org(patient_id, user, db)
-        finally:
-            db.close()
+        def _check_org():
+            from sepsis_vitals.db import SessionLocal
+            db = SessionLocal()
+            try:
+                verify_patient_org(patient_id, user, db)
+            finally:
+                db.close()
+        await asyncio.to_thread(_check_org)
 
     predictor = _get_predictor()
     if predictor is None:
@@ -1011,12 +1015,14 @@ async def monitor_unregister(patient_id: str, user: Dict = Depends(verify_auth))
     # Org-level authorization: verify patient belongs to user's org
     org_id = user.get("org_id")
     if org_id is not None:
-        from sepsis_vitals.db import SessionLocal, Patient
-        db = SessionLocal()
-        try:
-            verify_patient_org(patient_id, user, db)
-        finally:
-            db.close()
+        def _check_org():
+            from sepsis_vitals.db import SessionLocal
+            db = SessionLocal()
+            try:
+                verify_patient_org(patient_id, user, db)
+            finally:
+                db.close()
+        await asyncio.to_thread(_check_org)
 
     registry, tracker, ingester = _get_monitor_components()
     registry.unregister(sanitise_string(patient_id))

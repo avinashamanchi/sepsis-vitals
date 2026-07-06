@@ -94,8 +94,14 @@ def shock_index(vitals: dict) -> float | None:
 
 
 def news2_style(vitals: dict) -> int:
-    """NEWS2-style aggregate score. Returns total score."""
+    """NEWS2-style aggregate score. Returns total score.
+
+    Supports both Scale 1 (default) and Scale 2 (for patients on
+    supplemental oxygen or with hypercapnic respiratory failure).
+    Pass ``on_supplemental_o2=True`` in vitals to use Scale 2.
+    """
     total = 0
+    use_scale2 = bool(vitals.get("on_supplemental_o2"))
 
     # Respiratory rate
     if "resp_rate" in vitals:
@@ -114,14 +120,32 @@ def news2_style(vitals: dict) -> int:
     # SpO2
     if "spo2" in vitals:
         spo2 = vitals["spo2"]
-        if spo2 <= 91:
-            total += 3
-        elif spo2 <= 93:
-            total += 2
-        elif spo2 <= 95:
-            total += 1
-        else:  # >= 96
-            total += 0
+        if use_scale2:
+            # Scale 2: target 88-92% for hypercapnic patients
+            if spo2 <= 83:
+                total += 3
+            elif spo2 <= 85:
+                total += 2
+            elif spo2 <= 87:
+                total += 1
+            elif spo2 <= 92:
+                total += 0  # target range
+            elif spo2 <= 94:
+                total += 1
+            elif spo2 <= 96:
+                total += 2
+            else:  # >= 97
+                total += 3
+        else:
+            # Scale 1: standard (room air / non-hypercapnic)
+            if spo2 <= 91:
+                total += 3
+            elif spo2 <= 93:
+                total += 2
+            elif spo2 <= 95:
+                total += 1
+            else:  # >= 96
+                total += 0
 
     # SBP
     if "sbp" in vitals:
