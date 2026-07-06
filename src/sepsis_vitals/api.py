@@ -1445,7 +1445,7 @@ async def websocket_alerts(websocket: WebSocket):
                 await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                 return
             ws_org_id = payload.get("org_id")
-        except (TokenError, Exception):
+        except Exception:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
 
@@ -1462,7 +1462,7 @@ async def websocket_alerts(websocket: WebSocket):
                     "type": "score_result",
                     "scores": scores.as_dict(),
                 })
-            except (json.JSONDecodeError, Exception):
+            except Exception:
                 await websocket.send_json({"type": "error", "detail": "Invalid JSON"})
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)

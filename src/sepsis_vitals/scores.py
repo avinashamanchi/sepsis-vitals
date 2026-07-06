@@ -7,13 +7,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+def _has(vitals: dict, key: str) -> bool:
+    """Check if a vital sign key is present and not None."""
+    return key in vitals and vitals[key] is not None
+
+
 def qsofa(vitals: dict) -> tuple[int, dict]:
     """Quick SOFA score. Returns (score, flags_dict)."""
     score = 0
     flags: dict[str, bool] = {}
 
     # Respiratory rate >= 22
-    if "resp_rate" in vitals:
+    if _has(vitals, "resp_rate"):
         fired = vitals["resp_rate"] >= 22
         flags["qsofa_rr"] = fired
         if fired:
@@ -22,7 +27,7 @@ def qsofa(vitals: dict) -> tuple[int, dict]:
         flags["qsofa_rr"] = False
 
     # GCS <= 13
-    if "gcs" in vitals:
+    if _has(vitals, "gcs"):
         fired = vitals["gcs"] <= 13
         flags["qsofa_gcs"] = fired
         if fired:
@@ -31,7 +36,7 @@ def qsofa(vitals: dict) -> tuple[int, dict]:
         flags["qsofa_gcs"] = False
 
     # SBP <= 100
-    if "sbp" in vitals:
+    if _has(vitals, "sbp"):
         fired = vitals["sbp"] <= 100
         flags["qsofa_sbp"] = fired
         if fired:
@@ -50,7 +55,7 @@ def partial_sirs(vitals: dict) -> tuple[int, dict]:
     flags: dict[str, bool] = {}
 
     # Temperature > 38.3 or < 36
-    if "temperature" in vitals:
+    if _has(vitals, "temperature"):
         temp = vitals["temperature"]
         fired = temp > 38.3 or temp < 36.0
         flags["sirs_temp"] = fired
@@ -60,7 +65,7 @@ def partial_sirs(vitals: dict) -> tuple[int, dict]:
         flags["sirs_temp"] = False
 
     # Heart rate > 90
-    if "heart_rate" in vitals:
+    if _has(vitals, "heart_rate"):
         fired = vitals["heart_rate"] > 90
         flags["sirs_hr"] = fired
         if fired:
@@ -69,7 +74,7 @@ def partial_sirs(vitals: dict) -> tuple[int, dict]:
         flags["sirs_hr"] = False
 
     # Respiratory rate > 20
-    if "resp_rate" in vitals:
+    if _has(vitals, "resp_rate"):
         fired = vitals["resp_rate"] > 20
         flags["sirs_rr"] = fired
         if fired:
@@ -104,7 +109,7 @@ def news2_style(vitals: dict) -> int:
     use_scale2 = bool(vitals.get("on_supplemental_o2"))
 
     # Respiratory rate
-    if "resp_rate" in vitals:
+    if _has(vitals, "resp_rate"):
         rr = vitals["resp_rate"]
         if rr <= 8:
             total += 3
@@ -118,7 +123,7 @@ def news2_style(vitals: dict) -> int:
             total += 3
 
     # SpO2
-    if "spo2" in vitals:
+    if _has(vitals, "spo2"):
         spo2 = vitals["spo2"]
         if use_scale2:
             # Scale 2: target 88-92% for hypercapnic patients
@@ -148,7 +153,7 @@ def news2_style(vitals: dict) -> int:
                 total += 0
 
     # SBP
-    if "sbp" in vitals:
+    if _has(vitals, "sbp"):
         sbp = vitals["sbp"]
         if sbp <= 90:
             total += 3
@@ -162,7 +167,7 @@ def news2_style(vitals: dict) -> int:
             total += 3
 
     # Heart rate
-    if "heart_rate" in vitals:
+    if _has(vitals, "heart_rate"):
         hr = vitals["heart_rate"]
         if hr <= 40:
             total += 3
@@ -178,7 +183,7 @@ def news2_style(vitals: dict) -> int:
             total += 3
 
     # Temperature
-    if "temperature" in vitals:
+    if _has(vitals, "temperature"):
         temp = vitals["temperature"]
         if temp <= 35.0:
             total += 3
@@ -192,7 +197,7 @@ def news2_style(vitals: dict) -> int:
             total += 2
 
     # GCS
-    if "gcs" in vitals:
+    if _has(vitals, "gcs"):
         gcs = vitals["gcs"]
         if gcs < 15:
             total += 3
@@ -206,25 +211,25 @@ def uva_style(vitals: dict) -> int:
     total = 0
 
     # Respiratory rate: < 10 or > 29 -> 2
-    if "resp_rate" in vitals:
+    if _has(vitals, "resp_rate"):
         rr = vitals["resp_rate"]
         if rr < 10 or rr > 29:
             total += 2
 
     # SBP: < 90 -> 3
-    if "sbp" in vitals:
+    if _has(vitals, "sbp"):
         sbp = vitals["sbp"]
         if sbp < 90:
             total += 3
 
     # Temperature: < 36.0 -> 2
-    if "temperature" in vitals:
+    if _has(vitals, "temperature"):
         temp = vitals["temperature"]
         if temp < 36.0:
             total += 2
 
     # GCS: < 14 -> 2
-    if "gcs" in vitals:
+    if _has(vitals, "gcs"):
         gcs = vitals["gcs"]
         if gcs < 14:
             total += 2

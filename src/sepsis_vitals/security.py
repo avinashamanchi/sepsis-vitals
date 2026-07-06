@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass
 from functools import wraps
@@ -57,6 +58,7 @@ class RateLimiter:
         self.burst = burst
         self._buckets: dict[str, Bucket] = {}
         self._last_cleanup: float = 0.0
+        self._lock = threading.Lock()
 
     @classmethod
     def _get_redis(cls):
@@ -125,16 +127,17 @@ class RateLimiter:
 
     def _allow_local(self, key: str) -> bool:
         """In-process token bucket fallback."""
-        self._cleanup_stale_buckets()
-        bucket = self._get_bucket(key)
-        now = time.monotonic()
-        elapsed = now - bucket.last_refill
-        bucket.tokens = min(self.burst, bucket.tokens + elapsed * self.rate)
-        bucket.last_refill = now
-        if bucket.tokens >= 1:
-            bucket.tokens -= 1
-            return True
-        return False
+        with self._lock:
+            self._cleanup_stale_buckets()
+            bucket = self._get_bucket(key)
+            now = time.monotonic()
+            elapsed = now - bucket.last_refill
+            bucket.tokens = min(self.burst, bucket.tokens + elapsed * self.rate)
+            bucket.last_refill = now
+            if bucket.tokens >= 1:
+                bucket.tokens -= 1
+                return True
+            return False
 
     def allow(self, key: str) -> bool:
         """Consume one token from *key*'s bucket. Return True if allowed."""
@@ -282,13 +285,26 @@ _INJECTION_PATTERNS = [
 ]
 
 
+def _normalize_for_injection_check(text: str) -> str:
+    """Strip zero-width characters and normalize unicode for injection detection."""
+    import unicodedata
+    # Remove zero-width characters that could break pattern matching
+    _ZERO_WIDTH = "\u200b\u200c\u200d\u200e\u200f\ufeff\u2060\u2061\u2062\u2063\u2064\u00ad"
+    cleaned = text.translate(str.maketrans("", "", _ZERO_WIDTH))
+    # NFKC normalization maps homoglyphs (Cyrillic а→a, fullwidth Ａ→A, etc.)
+    cleaned = unicodedata.normalize("NFKC", cleaned)
+    return cleaned
+
+
 def check_prompt_injection(text: str) -> str:
     """Check *text* for prompt injection attempts.
 
     Returns the text unchanged if clean, or raises :class:`PromptInjectionError`.
+    Normalizes unicode (NFKC) and strips zero-width characters before checking.
     """
+    normalized = _normalize_for_injection_check(text)
     for pattern in _INJECTION_PATTERNS:
-        if pattern.search(text):
+        if pattern.search(normalized):
             raise PromptInjectionError(
                 f"Potential prompt injection detected: {pattern.pattern}"
             )

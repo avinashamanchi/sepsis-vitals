@@ -133,7 +133,12 @@ def complete_task(
     ValueError
         If the bundle or task does not exist, or the bundle is not open.
     """
-    bundle = db.query(SepsisBundle).filter(SepsisBundle.id == bundle_id).first()
+    bundle = (
+        db.query(SepsisBundle)
+        .filter(SepsisBundle.id == bundle_id)
+        .with_for_update()
+        .first()
+    )
     if bundle is None:
         raise ValueError(f"Bundle '{bundle_id}' not found")
     if bundle.status != "open":
@@ -147,6 +152,7 @@ def complete_task(
             BundleTask.bundle_id == bundle_id,
             BundleTask.task_key == task_key,
         )
+        .with_for_update()
         .first()
     )
     if task is None:
@@ -189,7 +195,12 @@ def cancel_bundle(
     reason: Optional[str] = None,
 ) -> SepsisBundle:
     """Close an open bundle without completing it (e.g. sepsis ruled out)."""
-    bundle = db.query(SepsisBundle).filter(SepsisBundle.id == bundle_id).first()
+    bundle = (
+        db.query(SepsisBundle)
+        .filter(SepsisBundle.id == bundle_id)
+        .with_for_update()
+        .first()
+    )
     if bundle is None:
         raise ValueError(f"Bundle '{bundle_id}' not found")
     if bundle.status != "open":
@@ -214,7 +225,10 @@ def expire_stale_bundles(db: Session, *, grace_minutes: int = 0) -> int:
     """
     now = datetime.now(timezone.utc)
     open_bundles = (
-        db.query(SepsisBundle).filter(SepsisBundle.status == "open").all()
+        db.query(SepsisBundle)
+        .filter(SepsisBundle.status == "open")
+        .with_for_update()
+        .all()
     )
     expired = 0
     for bundle in open_bundles:

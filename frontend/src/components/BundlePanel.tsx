@@ -211,7 +211,7 @@ export function BundlePanel({ patientId, client }: BundlePanelProps) {
           {t('bundle.title', 'Hour-1 Sepsis Bundle')}
         </h3>
         <button
-          onClick={() => client.cancel(bundle.id).then(setBundle).catch(() => {})}
+          onClick={() => client.cancel(bundle.id).then(setBundle).catch((e) => setError(e?.message ?? 'Failed to cancel bundle'))}
           className="text-xs text-text-muted hover:text-text-secondary"
         >
           {t('bundle.close', 'Close')}
