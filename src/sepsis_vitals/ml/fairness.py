@@ -35,8 +35,8 @@ def audit_fairness(
     subgroups: List[Dict[str, Any]] = []
 
     # --- overall ---
-    y_true = df[label_col].values
-    y_prob = df[prob_col].values
+    y_true = df[label_col].to_numpy()
+    y_prob = df[prob_col].to_numpy(dtype=float)
     y_pred = (y_prob >= 0.5).astype(int)
 
     try:
@@ -59,8 +59,8 @@ def audit_fairness(
             if len(grp) < min_group_size:
                 continue
 
-            yt = grp[label_col].values
-            yp = grp[prob_col].values
+            yt = grp[label_col].to_numpy()
+            yp = grp[prob_col].to_numpy(dtype=float)
             ypr = (yp >= 0.5).astype(int)
 
             try:
@@ -217,6 +217,7 @@ class ConformalPredictor:
 
         proba = model.predict_proba(X)[:, 1]
         q = self._quantile
+        assert q is not None
 
         # Prediction set: classes whose nonconformity score <= quantile
         # For class 1: score = 1 - proba  =>  include if 1 - proba <= q  => proba >= 1 - q

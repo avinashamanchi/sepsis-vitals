@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sepsis_vitals.ml.forecast import forecast_deterioration, CRITICAL_THRESHOLD
+from sepsis_vitals.ml.forecast import forecast_deterioration
 
 
 def _series(start_risk, step, n, minutes=30):

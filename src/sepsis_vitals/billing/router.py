@@ -8,6 +8,7 @@ authentication.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 import time
@@ -20,8 +21,6 @@ from sqlalchemy.orm import Session
 from sepsis_vitals.billing.models import Invoice, Organization, Subscription
 from sepsis_vitals.billing.plans import (
     PLANS,
-    Plan,
-    PlanTier,
     get_plan_by_tier,
     is_annual_price,
 )
@@ -72,14 +71,9 @@ async def _check_webhook_rate(request: Request) -> None:
 # Stripe webhook IP allowlist (production hardening)
 # ---------------------------------------------------------------------------
 
-_STRIPE_WEBHOOK_CIDRS: list[ipaddress.IPv4Network] | None = None
-
-try:
-    import ipaddress
-
-    # Stripe's documented webhook IPs — https://docs.stripe.com/ips
-    # Converted to /32 networks for CIDR-based validation
-    _STRIPE_WEBHOOK_CIDRS = [
+_STRIPE_WEBHOOK_CIDRS: list[
+    ipaddress.IPv4Network | ipaddress.IPv6Network
+] | None = [
         ipaddress.ip_network("3.18.12.63/32", strict=False),
         ipaddress.ip_network("3.130.192.31/32", strict=False),
         ipaddress.ip_network("13.235.14.237/32", strict=False),
@@ -92,9 +86,7 @@ try:
         ipaddress.ip_network("54.187.174.169/32", strict=False),
         ipaddress.ip_network("54.187.205.235/32", strict=False),
         ipaddress.ip_network("54.187.216.72/32", strict=False),
-    ]
-except ImportError:
-    pass
+]
 
 # In-memory deduplication cache for webhook events
 _processed_webhook_events: Dict[str, float] = {}

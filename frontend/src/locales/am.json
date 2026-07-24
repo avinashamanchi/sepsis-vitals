@@ -94,9 +94,7 @@
     "highRisk": "ከፍተኛ አደጋ",
     "mediumRisk": "መካከለኛ አደጋ",
     "lowRisk": "ዝቅተኛ አደጋ",
-    "elevated": "ከፍ ያለ",
-    "highMortality": "ከፍተኛ ሞት አደጋ",
-    "lowerRisk": "ዝቅተኛ አደጋ"
+    "elevated": "ከፍ ያለ"
   },
   "login": {
     "signIn": "ለመቀጠል ይግቡ",
@@ -181,9 +179,7 @@
     "riskProbability": "የሴፕሲስ አደጋ ዕድል",
     "confidenceInterval": "95% CI: [{{lower}}% - {{upper}}%]",
     "continuousMonitoring": "ቀጣይ ክትትል",
-    "specificityThreshold99": "99% ልዩነት ደፍ",
     "clinicalAssessment": "ክሊኒካዊ ምዘና",
-    "specificityThreshold95": "95% ልዩነት ደፍ",
     "riskFactors": "የአደጋ ሁኔታዎች (SHAP)",
     "emptyState": "ML ትንበያ ለማካሄድ ህይወት ምልክቶችን ያስገቡ",
     "emptyStateHint": "ክሊኒካዊ ነጥቦችና SHAP ማብራሪያ ያለው GradientBoosting ሞዴል"
@@ -287,7 +283,6 @@
     "riskTrajectoryLabel": "ለታካሚ {{id}} 24 ሰዓት የሴፕሲስ አደጋ ሂደት የሚያሳይ ቻርት",
     "featureImportance": "የባህሪ ጠቃሚነት",
     "featureImportanceLabel": "ለሴፕሲስ አደጋ ትንበያ ሞዴል የባህሪ ጠቃሚነት ነጥቦች የሚያሳይ አግድም ባር ቻርት",
-    "vitalsHistory": "የህይወት ምልክቶች ታሪክ (24ሰ)",
     "vitalsHistory": "የህይወት ምልክቶች ታሪክ (24ሰ)",
     "vitalsHistoryLabel": "ለታካሚ {{id}} 24 ሰዓት የህይወት ምልክቶች ታሪክ፡ የልብ ምት፣ ሲስቶሊካዊ የደም ግፊት እና የመተንፈስ ፍጥነት",
     "alertHistory": "የማንቂያ ታሪክ",

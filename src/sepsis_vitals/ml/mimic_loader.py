@@ -34,7 +34,6 @@ Usage::
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -682,11 +681,8 @@ class MIMICLoader:
         cultures = self.load_cultures()
         infections = find_suspected_infections(antibiotics, cultures)
 
-        # Build onset map: hadm_id -> t_sepsis_onset
-        sofa_labs = self.load_sofa_labs(hadm_id_set)
-        from sepsis_vitals.ml.sepsis3_labeler import compute_sofa_scores
-        # Reuse the SOFA DataFrame already computed in derive_sepsis_labels
-        # by re-deriving onsets from the same infections
+        # Build onset map: hadm_id -> t_sepsis_onset by re-deriving onsets
+        # from the same suspected-infection pairs.
         onset_map: dict = {}
         if not infections.empty:
             # Build lightweight SOFA series for onset derivation

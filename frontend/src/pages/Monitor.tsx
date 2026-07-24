@@ -90,9 +90,11 @@ export function Monitor() {
   // Load initial state from REST API
   useEffect(() => {
     if (isDemo) {
-      setMonitoredPatients(makeDemoPatients())
-      setLoading(false)
-      return
+      const timer = window.setTimeout(() => {
+        setMonitoredPatients(makeDemoPatients())
+        setLoading(false)
+      }, 0)
+      return () => window.clearTimeout(timer)
     }
     api.monitorStatus()
       .then((data) => {

@@ -4,7 +4,6 @@ predictor, and trainer modules.
 """
 
 import numpy as np
-import pandas as pd
 import pytest
 
 
@@ -181,8 +180,6 @@ class TestTraining:
         assert result.model is not None
 
     def test_model_selection(self, small_dataset):
-        from sklearn.ensemble import RandomForestClassifier
-        from sklearn.linear_model import LogisticRegression
         from sepsis_vitals.ml.trainer import ModelResult, select_best_model
         from sepsis_vitals.model_scaffold import ModelCard
 
@@ -326,11 +323,13 @@ class TestAPI:
         assert data["status"] == "ok"
         assert "model_loaded" in data
 
-    def test_score_endpoint(self):
+    def test_score_endpoint(self, monkeypatch):
         from fastapi.testclient import TestClient
-        from sepsis_vitals.api import app
+        import sepsis_vitals.api as api
 
-        client = TestClient(app)
+        monkeypatch.setattr(api, "_auth_enabled", False)
+
+        client = TestClient(api.app)
         vitals = {"temperature": 39.0, "heart_rate": 120, "resp_rate": 24, "sbp": 85, "gcs": 13}
         resp = client.post("/score", json=vitals)
         assert resp.status_code == 200
@@ -338,14 +337,14 @@ class TestAPI:
         assert "qsofa" in data
         assert "risk_level" in data
 
-    def test_model_info_returns_503_without_model(self):
+    def test_model_info_returns_503_without_model(self, monkeypatch):
         from fastapi.testclient import TestClient
-        from sepsis_vitals.api import app
+        import sepsis_vitals.api as api
 
-        client = TestClient(app)
+        monkeypatch.setattr(api, "_auth_enabled", False)
+        client = TestClient(api.app)
         # Reset predictor
-        import sepsis_vitals.api
-        sepsis_vitals.api._predictor = None
+        api._predictor = None
 
         resp = client.get("/model/info")
         # May be 503 if model not trained, or 200 if model exists

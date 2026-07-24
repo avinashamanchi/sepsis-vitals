@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useStore } from '../stores/useStore'
+import { isDemo } from '../lib/api'
 
 const WS_RECONNECT_DELAY = 3000
 const WS_MAX_RECONNECT_DELAY = 30000
@@ -25,14 +26,17 @@ export function useWebSocket() {
   const setWsState = useStore((s) => s.setWsState)
   const addAlert = useStore((s) => s.addAlert)
   const updatePatientRisk = useStore((s) => s.updatePatientRisk)
+  const token = useStore((s) => s.token)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectDelay = useRef(WS_RECONNECT_DELAY)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const hasConnectedOnce = useRef(false)
 
   useEffect(() => {
-    // Don't connect on GitHub Pages (no backend) — stay at 'offline'
-    if (window.location.hostname.includes('github.io')) {
+    // Public pages and the static demo never open a PHI-bearing connection.
+    if (isDemo || !token || token.startsWith('demo-')) {
+      setWsConnected(false)
+      setWsState('offline')
       return
     }
 
@@ -53,10 +57,7 @@ export function useWebSocket() {
         setWsState('offline')
         return
       }
-      let token: string | null = null
-      try { token = localStorage.getItem('sv_token') } catch { /* private browsing */ }
-      const params = token ? `?token=${token}` : ''
-      const url = `${protocol}//${host}/ws/alerts${params}`
+      const url = `${protocol}//${host}/ws/alerts`
 
       // If we've connected before, this is a reconnect attempt
       if (hasConnectedOnce.current) {
@@ -64,7 +65,8 @@ export function useWebSocket() {
       }
 
       try {
-        const ws = new WebSocket(url)
+        // Subprotocol auth keeps bearer tokens out of URLs, access logs, and history.
+        const ws = new WebSocket(url, ['sepsis-vitals', `bearer.${token}`])
         wsRef.current = ws
 
         ws.onopen = () => {
@@ -172,5 +174,5 @@ export function useWebSocket() {
       setWsConnected(false)
       setWsState('offline')
     }
-  }, [setWsConnected, setWsState, addAlert, updatePatientRisk])
+  }, [token, setWsConnected, setWsState, addAlert, updatePatientRisk])
 }

@@ -32,11 +32,12 @@ describe('useStore', () => {
     useStore.getState().addAlert({
       id: 'a1',
       patientId: 'P1',
-      type: 'sepsis_alert',
+      riskLevel: 'high',
+      riskProbability: 0.8,
       message: 'High risk',
-      timestamp: Date.now(),
-      severity: 'high',
-    } as any)
+      timestamp: new Date().toISOString(),
+      dismissed: false,
+    })
 
     expect(useStore.getState().alerts).toHaveLength(1)
 

@@ -5,6 +5,7 @@ Covers: JWT key loading, WebSocket org scoping, FieldEncryptor production guard,
 NEWS2 Scale 2, verify_patient_org (when fastapi available).
 """
 import asyncio
+import importlib.util
 import os
 import threading
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,11 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # Check if fastapi is available (not installed in all test envs)
-try:
-    import fastapi
-    HAS_FASTAPI = True
-except ImportError:
-    HAS_FASTAPI = False
+HAS_FASTAPI = importlib.util.find_spec("fastapi") is not None
 
 
 # ---------------------------------------------------------------------------

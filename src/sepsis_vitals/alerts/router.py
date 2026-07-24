@@ -376,7 +376,7 @@ async def acknowledge_alert(alert_id: str, user=Depends(_require_auth)) -> AckRe
 )
 async def resolve_alert(
     alert_id: str,
-    body: ResolveRequest = None,
+    body: Optional[ResolveRequest] = None,
     user=Depends(_require_auth),
 ) -> ResolveResponse:
     """Mark an alert as resolved with an optional reason."""
@@ -397,7 +397,7 @@ async def resolve_alert(
 )
 async def snooze_alert(
     alert_id: str,
-    body: SnoozeRequest = SnoozeRequest(),
+    body: Optional[SnoozeRequest] = None,
     user=Depends(_require_auth),
 ) -> SnoozeResponse:
     """Delay escalation of an alert for the specified number of minutes."""
@@ -405,7 +405,7 @@ async def snooze_alert(
     user_id = user.get("sub", "unknown") if isinstance(user, dict) else getattr(user, "id", "unknown")
     try:
         result = manager.snooze_alert(
-            alert_id, user_id=user_id, snooze_minutes=body.minutes
+            alert_id, user_id=user_id, snooze_minutes=body.minutes if body else 15
         )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found.")

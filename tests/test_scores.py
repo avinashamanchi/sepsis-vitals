@@ -2,7 +2,6 @@
 tests/test_scores.py – Unit tests for all clinical scoring functions.
 """
 
-import pytest
 from sepsis_vitals.scores import (
     qsofa,
     partial_sirs,

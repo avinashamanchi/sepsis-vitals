@@ -5,21 +5,22 @@ import { useStore } from '../stores/useStore'
 import { api, isDemo } from '../lib/api'
 
 export function SessionWarning() {
-  const { t } = useTranslation()
   const show = useStore((s) => s.showSessionWarning)
+  const token = useStore((s) => s.token)
+
+  if (!show || !token) return null
+
+  return <SessionWarningDialog />
+}
+
+function SessionWarningDialog() {
+  const { t } = useTranslation()
   const setShow = useStore((s) => s.setShowSessionWarning)
   const updateActivity = useStore((s) => s.updateActivity)
-  const token = useStore((s) => s.token)
   const [secondsLeft, setSecondsLeft] = useState(60)
-
-  // Reset countdown when modal opens
-  useEffect(() => {
-    if (show) setSecondsLeft(60)
-  }, [show])
 
   // Countdown timer
   useEffect(() => {
-    if (!show) return
     const interval = setInterval(() => {
       setSecondsLeft((prev) => {
         if (prev <= 1) {
@@ -30,7 +31,7 @@ export function SessionWarning() {
       })
     }, 1000)
     return () => clearInterval(interval)
-  }, [show])
+  }, [])
 
   const handleKeepWorking = useCallback(async () => {
     setShow(false)
@@ -43,8 +44,6 @@ export function SessionWarning() {
       }
     }
   }, [setShow, updateActivity])
-
-  if (!show || !token) return null
 
   const progress = (secondsLeft / 60) * 100
 

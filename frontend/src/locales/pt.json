@@ -94,9 +94,7 @@
     "highRisk": "Alto risco",
     "mediumRisk": "Risco moderado",
     "lowRisk": "Baixo risco",
-    "elevated": "Elevado",
-    "highMortality": "Alta mortalidade",
-    "lowerRisk": "Risco reduzido"
+    "elevated": "Elevado"
   },
   "login": {
     "signIn": "Entre para continuar",
@@ -181,9 +179,7 @@
     "riskProbability": "Probabilidade de Risco de Sepse",
     "confidenceInterval": "IC 95%: [{{lower}}% - {{upper}}%]",
     "continuousMonitoring": "Monitoramento Contínuo",
-    "specificityThreshold99": "Limiar de especificidade de 99%",
     "clinicalAssessment": "Avaliação Clínica",
-    "specificityThreshold95": "Limiar de especificidade de 95%",
     "riskFactors": "Fatores de Risco (SHAP)",
     "emptyState": "Insira os sinais vitais para executar a predição com ML",
     "emptyStateHint": "Modelo GradientBoosting com escores clínicos e explicações SHAP"

@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from sepsis_vitals.db import Base, Patient
 # Importing models registers the bundle tables on the shared Base.metadata.
 from sepsis_vitals.bundles import service
-from sepsis_vitals.bundles.models import BundleTask, SepsisBundle
+from sepsis_vitals.bundles.models import SepsisBundle
 from sepsis_vitals.bundles import protocol
 
 

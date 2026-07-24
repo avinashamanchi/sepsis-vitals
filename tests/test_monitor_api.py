@@ -1,7 +1,6 @@
 """Tests for monitoring API endpoints."""
 
-import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, AsyncMock
 
 
 class TestMonitorEndpoints:

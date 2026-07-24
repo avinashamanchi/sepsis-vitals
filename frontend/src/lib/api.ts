@@ -1,9 +1,9 @@
 const BASE = import.meta.env.VITE_API_URL ?? ''
 
-/** Safe localStorage wrapper that never throws (e.g. private browsing). */
+/** Session-scoped tokens reduce exposure if a shared clinical workstation is left behind. */
 function safeGetItem(key: string): string | null {
   try {
-    return localStorage.getItem(key)
+    return sessionStorage.getItem(key)
   } catch {
     return null
   }
@@ -28,7 +28,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   try {
     res = await fetch(`${BASE}${path}`, { ...options, headers })
   } catch (err) {
-    throw new Error(err instanceof Error ? err.message : 'Network error — check your connection')
+    throw new Error(
+      err instanceof Error ? err.message : 'Network error — check your connection',
+      { cause: err },
+    )
   }
 
   if (!res.ok) {
@@ -49,29 +52,103 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
 }
 
-/** True when running on GitHub Pages (no backend available). */
-export const isDemo = window.location.hostname.includes('github.io')
+/** Explicit public-demo mode; GitHub Pages remains the default demo host. */
+export const isDemo =
+  import.meta.env.VITE_DEMO_MODE === 'true' ||
+  window.location.hostname.includes('github.io')
+
+function simulateDemoPrediction(body: {
+  vitals: Record<string, number>
+  patient_id: string
+}) {
+  const vitals = body.vitals
+  const signals = [
+    ['resp_rate', vitals.resp_rate != null && vitals.resp_rate >= 22, vitals.resp_rate ?? 0],
+    ['heart_rate', vitals.heart_rate != null && vitals.heart_rate > 100, vitals.heart_rate ?? 0],
+    ['sbp', vitals.sbp != null && vitals.sbp <= 100, vitals.sbp ?? 0],
+    ['temperature', vitals.temperature != null && (vitals.temperature < 36 || vitals.temperature > 38), vitals.temperature ?? 0],
+    ['spo2', vitals.spo2 != null && vitals.spo2 < 94, vitals.spo2 ?? 0],
+    ['lactate', vitals.lactate != null && vitals.lactate >= 2, vitals.lactate ?? 0],
+  ] as const
+  const active = signals.filter(([, present]) => present)
+  const probability = Math.min(0.92, 0.08 + active.length * 0.14)
+  const riskLevel =
+    probability >= 0.7 ? 'critical' :
+      probability >= 0.5 ? 'high' :
+        probability >= 0.25 ? 'moderate' : 'low'
+  const qsofa =
+    Number((vitals.sbp ?? 999) <= 100) +
+    Number((vitals.resp_rate ?? 0) >= 22) +
+    Number((vitals.gcs ?? 15) < 15)
+  const sirs =
+    Number((vitals.temperature ?? 37) < 36 || (vitals.temperature ?? 37) > 38) +
+    Number((vitals.heart_rate ?? 0) > 90) +
+    Number((vitals.resp_rate ?? 0) > 20) +
+    Number(vitals.wbc != null && (vitals.wbc < 4 || vitals.wbc > 12))
+
+  return Promise.resolve({
+    patient_id: body.patient_id,
+    timestamp: new Date().toISOString(),
+    risk_probability: probability,
+    risk_level: riskLevel,
+    confidence_interval: {
+      lower: Math.max(0, probability - 0.12),
+      upper: Math.min(1, probability + 0.12),
+    },
+    alert: probability >= 0.5,
+    clinical_scores: {
+      qsofa,
+      sirs_count: sirs,
+      news2_style: Math.min(12, active.length * 2),
+      shock_index: vitals.heart_rate && vitals.sbp
+        ? vitals.heart_rate / vitals.sbp
+        : null,
+    },
+    top_risk_factors: active.map(([feature], index) => ({
+      feature,
+      importance: Number((0.32 - index * 0.04).toFixed(2)),
+    })),
+    recommendation:
+      'Synthetic UI simulation only. Record the result for workflow evaluation; do not use it to guide diagnosis or treatment.',
+    model: { name: 'Synthetic interface simulator', version: 'demo' },
+    research_only: true,
+    validation_status: 'Synthetic demonstration; not a model inference',
+    intended_use: 'Interface evaluation only',
+  })
+}
 
 export const api = {
   health: () => request<{ status: string; version: string }>('/health'),
 
   login: (email: string, password: string) =>
-    request<{ access_token: string; user: { email: string; role: string } }>(
+    request<{
+      access_token: string
+      refresh_token: string
+      user?: { email: string; role: string }
+    }>(
       '/auth/login',
       { method: 'POST', body: JSON.stringify({ email, password }) },
     ),
 
-  register: (email: string, password: string) =>
-    request<{ access_token: string; user: { email: string; role: string } }>(
-      '/auth/register',
-      { method: 'POST', body: JSON.stringify({ email, password }) },
-    ),
+  requestPasswordReset: (email: string) =>
+    request<{ detail: string }>('/auth/password-reset/request', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+
+  logout: () =>
+    request<{ detail: string }>('/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
 
   score: (vitals: Record<string, number>) =>
     request('/score', { method: 'POST', body: JSON.stringify(vitals) }),
 
   predict: (body: { vitals: Record<string, number>; patient_id: string; age_years?: number }) =>
-    request('/predict', { method: 'POST', body: JSON.stringify(body) }),
+    isDemo
+      ? simulateDemoPrediction(body)
+      : request('/predict', { method: 'POST', body: JSON.stringify(body) }),
 
   predictBatch: (patients: Array<{ vitals: Record<string, number>; patient_id: string }>) =>
     request('/predict/batch', { method: 'POST', body: JSON.stringify({ patients }) }),
@@ -202,62 +279,13 @@ export const api = {
 
   ping: () => request<{ status: string }>('/auth/ping', { method: 'POST' }),
 
-  // Bundle endpoints
-  bundleGetForPatient: (patientId: string) =>
-    request<any>(`/bundles/patient/${patientId}`).catch(() => null),
-
-  bundleStart: (patientId: string, vitals?: Record<string, number>, riskLevel?: string) =>
-    request<any>('/bundles/start', {
-      method: 'POST',
-      body: JSON.stringify({ patient_id: patientId, vitals, risk_level: riskLevel }),
-    }),
-
-  bundleCompleteTask: (bundleId: string, taskKey: string, completed: boolean) =>
-    request<any>(`/bundles/${bundleId}/task`, {
-      method: 'PATCH',
-      body: JSON.stringify({ task_key: taskKey, completed }),
-    }),
-
-  bundleCancel: (bundleId: string) =>
-    request<any>(`/bundles/${bundleId}/cancel`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    }),
-
-  // What-if counterfactual
-  predictWhatIf: (vitals: Record<string, number>, modifiedVitals: Record<string, number>, patientId?: string) =>
-    request<{
-      baseline_risk: number
-      baseline_level: string
-      counterfactual_risk: number
-      counterfactual_level: string
-      risk_delta: number
-      suggestion: string | null
-    }>('/predict/what-if', {
-      method: 'POST',
-      body: JSON.stringify({ vitals, modified_vitals: modifiedVitals, patient_id: patientId ?? 'unknown' }),
-    }),
-
-  // Deterioration forecast
-  patientForecast: (patientId: string) =>
-    request<{
-      trend_per_hour: number
-      smoothed_risk: number
-      projected_risk_1h: number
-      hours_to_critical: number | null
-      lead_time_band: { low_hours: number; high_hours: number } | null
-      horizon_label: string
-      confidence: string
-      n_points: number
-    }>(`/patient/${patientId}/forecast`),
-
   // Alert lifecycle
   alertAcknowledge: (alertId: string) =>
-    request<any>(`/alerts/ack/${alertId}`, { method: 'POST', body: JSON.stringify({}) }),
+    request<Record<string, unknown>>(`/alerts/ack/${alertId}`, { method: 'POST', body: JSON.stringify({}) }),
 
   alertResolve: (alertId: string, reason?: string) =>
-    request<any>(`/alerts/resolve/${alertId}`, { method: 'POST', body: JSON.stringify({ reason }) }),
+    request<Record<string, unknown>>(`/alerts/resolve/${alertId}`, { method: 'POST', body: JSON.stringify({ reason }) }),
 
   alertSnooze: (alertId: string, minutes: number = 15) =>
-    request<any>(`/alerts/snooze/${alertId}`, { method: 'POST', body: JSON.stringify({ minutes }) }),
+    request<Record<string, unknown>>(`/alerts/snooze/${alertId}`, { method: 'POST', body: JSON.stringify({ minutes }) }),
 }

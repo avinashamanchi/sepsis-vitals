@@ -1,8 +1,9 @@
 import { NavLink } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useStore } from '../stores/useStore'
+import { api } from '../lib/api'
 import {
-  Activity, BarChart3, Bell, Brain, Calculator, Globe,
+  Activity, BarChart3, Bell, Brain, Calculator,
   LayoutDashboard, LogOut, Settings, Shield, Users, Wifi, WifiOff,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -14,7 +15,6 @@ const NAV_ITEMS = [
   { to: '/scores', icon: Calculator, key: 'nav.scoreLab' },
   { to: '/predict', icon: Brain, key: 'nav.predict' },
   { to: '/analytics', icon: BarChart3, key: 'nav.analytics' },
-  { to: '/population', icon: Globe, key: 'nav.population' },
   { to: '/alerts', icon: Bell, key: 'nav.alerts' },
   { to: '/admin', icon: Settings, key: 'nav.admin' },
 ]
@@ -90,7 +90,9 @@ export function Sidebar() {
         <div className="p-4 border-t border-border">
           <button
             onClick={() => {
-              import('../lib/auth').then(({ signOutUser }) => signOutUser().catch(() => {}))
+              if (!useStore.getState().token?.startsWith('demo-')) {
+                api.logout().catch(() => {})
+              }
               logout()
               window.location.href = import.meta.env.BASE_URL
             }}

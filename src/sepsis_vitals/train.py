@@ -15,12 +15,10 @@ and saves the best model with a full evaluation report.
 from __future__ import annotations
 
 import argparse
-import sys
 import time
 import warnings
 
 import numpy as np
-import pandas as pd
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -71,9 +69,9 @@ def main(args=None):
     opts = parser.parse_args(args)
 
     print("=" * 70)
-    print("  SEPSIS VITALS — AUTONOMOUS MODEL TRAINING PIPELINE")
+    print("  SEPSIS VITALS — INVESTIGATIONAL MODEL TRAINING PIPELINE")
     print("=" * 70)
-    print(f"\n  Configuration:")
+    print("\n  Configuration:")
     print(f"    Data source:      {opts.data_source}")
     print(f"    Patients:         {opts.max_patients or opts.patients:,}")
     print(f"    Sepsis prevalence:{opts.prevalence:.0%}")
@@ -127,7 +125,7 @@ def main(args=None):
     else:
         use_lopocv = False
         print("\n" + "─" * 70)
-        print("  STEP 1: Generating clinically-grounded synthetic data")
+        print("  STEP 1: Generating heuristic synthetic development data")
         print("─" * 70)
 
         from sepsis_vitals.ml.synthetic_data import generate_train_val_test
@@ -163,11 +161,17 @@ def main(args=None):
 
     # Extract X, y arrays
     X_train = train_features[feature_cols].values.astype(np.float64)
-    y_train = train_features["sepsis_label"].values.astype(int)
+    y_train: np.ndarray = np.asarray(
+        train_features["sepsis_label"].to_numpy(), dtype=np.int64
+    )
     X_val = val_features[feature_cols].values.astype(np.float64)
-    y_val = val_features["sepsis_label"].values.astype(int)
+    y_val: np.ndarray = np.asarray(
+        val_features["sepsis_label"].to_numpy(), dtype=np.int64
+    )
     X_test = test_features[feature_cols].values.astype(np.float64)
-    y_test = test_features["sepsis_label"].values.astype(int)
+    y_test: np.ndarray = np.asarray(
+        test_features["sepsis_label"].to_numpy(), dtype=np.int64
+    )
 
     # Handle NaN values
     nan_mask_train = np.isnan(X_train)
@@ -188,7 +192,7 @@ def main(args=None):
     print(f"\n  X_train: {X_train.shape}")
     print(f"  X_val:   {X_val.shape}")
     print(f"  X_test:  {X_test.shape}")
-    print(f"  NaN imputed with training medians")
+    print("  NaN imputed with training medians")
 
     # ── Step 3: Train all models ─────────────────────────────────────────
     print("\n" + "─" * 70)
@@ -229,7 +233,7 @@ def main(args=None):
         X_val_scaled = X_val
 
     best = calibrate_model(best, X_val_scaled, y_val)
-    print(f"  Calibrated: Yes (Platt scaling)")
+    print("  Calibrated: Yes (Platt scaling)")
 
     # ── Dual operating points ───────────────────────────────────────────
     from sepsis_vitals.ml.trainer import compute_dual_thresholds
@@ -239,14 +243,14 @@ def main(args=None):
     )[:, 1]
     dual_thresholds = compute_dual_thresholds(y_val, y_prob_val)
 
-    print(f"\n  Dual operating points:")
+    print("\n  Dual operating points:")
     print(f"    Continuous (99% spec): threshold={dual_thresholds['continuous']['threshold']:.3f}, "
           f"sensitivity={dual_thresholds['continuous']['sensitivity']:.3f}")
     print(f"    On-demand  (95% spec): threshold={dual_thresholds['on_demand']['threshold']:.3f}, "
           f"sensitivity={dual_thresholds['on_demand']['sensitivity']:.3f}")
 
     # ── Step 5: SHAP explanations ────────────────────────────────────────
-    shap_importance = {}
+    shap_importance: dict[str, float] = {}
     if not opts.skip_shap:
         print("\n" + "─" * 70)
         print("  STEP 5: Computing SHAP explanations")
@@ -260,7 +264,7 @@ def main(args=None):
                 max_samples=min(1000, len(X_test)),
             )
             print(f"\n  SHAP values computed for {min(1000, len(X_test))} samples")
-            print(f"\n  Top 5 SHAP features:")
+            print("\n  Top 5 SHAP features:")
             for i, (feat, imp) in enumerate(list(shap_importance.items())[:5]):
                 print(f"    {i+1}. {feat}: {imp:.4f}")
         except Exception as e:
@@ -297,7 +301,7 @@ def main(args=None):
     print("  STEP 7: Saving model artifacts")
     print("─" * 70)
 
-    model_path = save_model(
+    save_model(
         result=best,
         feature_names=feature_cols,
         output_dir=opts.output,
@@ -311,7 +315,7 @@ def main(args=None):
             {k: float(v) if not np.isnan(v) else 0.0 for k, v in imputation_medians.items()},
             f, indent=2,
         )
-    print(f"    - imputation_medians.json")
+    print("    - imputation_medians.json")
 
     # Add dual thresholds to model metadata
     metadata_file = f"{opts.output}/model_metadata.json"
@@ -320,7 +324,7 @@ def main(args=None):
     meta["dual_thresholds"] = dual_thresholds
     with open(metadata_file, "w") as f:
         json.dump(meta, f, indent=2, default=str)
-    print(f"    - dual_thresholds added to model_metadata.json")
+    print("    - dual_thresholds added to model_metadata.json")
 
     # ── LOPOCV evaluation (for small MIMIC datasets) ────────────────────
     if opts.data_source == "mimic-demo" and use_lopocv:
@@ -348,14 +352,14 @@ def main(args=None):
     print(f"  Val AUROC:        {best.metrics['val_auroc']:.4f}")
     print(f"  Val Sensitivity:  {best.metrics['val_recall']:.4f}")
     print(f"  Val Specificity:  {best.metrics['val_specificity']:.4f}")
-    print(f"  Calibrated:       Yes")
+    print("  Calibrated:       Yes")
     print(f"  Total Time:       {total_time:.1f}s")
     print(f"  Output Directory: {opts.output}/")
-    print(f"\n  To use the model:")
-    print(f"    from sepsis_vitals.ml.predictor import SepsisPredictor")
+    print("\n  To use the model:")
+    print("    from sepsis_vitals.ml.predictor import SepsisPredictor")
     print(f"    predictor = SepsisPredictor('{opts.output}')")
-    print(f"    result = predictor.predict(vitals)")
-    print(f"\n" + "=" * 70)
+    print("    result = predictor.predict(vitals)")
+    print("\n" + "=" * 70)
 
     return best
 

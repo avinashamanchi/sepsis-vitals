@@ -23,8 +23,8 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 
 # Risk band cut-points, aligned with scores.classify_risk / predictor bands.
@@ -176,7 +176,6 @@ def forecast_deterioration(
     slope, intercept = _ols(xs, ys)          # risk units per hour
     se = _slope_std_error(xs, ys, slope, intercept)
 
-    now_x = xs[-1]
     current_risk = ys[-1]
     projected_1h = _clamp(current_risk + slope * 1.0)
 

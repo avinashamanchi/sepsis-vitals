@@ -196,16 +196,16 @@
       "val_npv": 0.9143763488390234,
       "val_ppv": 0.7609056603773585
     },
-    "intended_use": "Sepsis risk screening in district hospitals",
-    "limitations": "Trained on synthetic data only. Performance metrics are pre-validation estimates and may not generalize to real clinical populations. MIMIC-IV or institutional EHR validation REQUIRED. Fairness audit across demographic subgroups not yet completed.",
-    "training_data": "Synthetic dataset (20,000 patients) calibrated to NHANES population distributions. NOT trained on real patient data. Clinical validation on MIMIC-IV or institutional EHR data is REQUIRED.",
+    "intended_use": "Retrospective research and prospective silent-mode evaluation only",
+    "limitations": "Trained on procedurally generated synthetic data using hand-authored assumptions. Metrics do not establish clinical performance or transportability. Independent external validation and subgroup evaluation are required before any clinical-use assessment.",
+    "training_data": "Procedurally generated synthetic dataset (20,000 patients) using demographic and vital-sign assumptions encoded in source. Not trained on real patient data.",
     "fairness_notes": "Trained with demographic features; fairness audit recommended",
-    "regulatory_status": "Research use only. Not FDA-cleared, not CE-marked. Must complete 510(k) or De Novo pathway before clinical use."
+    "regulatory_status": "Research use only. Not FDA-cleared or CE-marked; regulatory pathway has not been determined."
   },
   "timestamp": "2026-06-20T02:11:47.960904",
   "data_provenance": {
     "source": "synthetic",
-    "generator": "NHANES-calibrated synthetic (sepsis_vitals.ml.synthetic_data)",
+    "generator": "Heuristic synthetic generator (sepsis_vitals.ml.synthetic_data)",
     "n_patients": 20000,
     "sepsis_prevalence": 0.15,
     "seed": 42,

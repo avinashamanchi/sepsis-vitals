@@ -12,7 +12,7 @@ export function ScoreLab() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const handleSubmit = async (vitals: Record<string, number>, _patientId: string) => {
+  const handleSubmit = async (vitals: Record<string, number>) => {
     setLoading(true)
     setError('')
     try {
@@ -61,7 +61,7 @@ export function ScoreLab() {
                     { label: t('scores.sirs'), value: `${result.sirs_count}/3`, desc: result.sirs_count >= 2 ? t('scores.criteriaMet') : t('scores.belowThreshold') },
                     { label: t('scores.news2'), value: `${result.news2_style}`, desc: result.news2_style >= 7 ? t('scores.highRisk') : result.news2_style >= 5 ? t('scores.mediumRisk') : t('scores.lowRisk') },
                     { label: t('scores.si'), value: result.shock_index?.toFixed(2) ?? 'N/A', desc: (result.shock_index ?? 0) >= 1.0 ? t('scores.elevated') : t('scores.normal') },
-                    { label: t('scores.uva'), value: `${result.uva}`, desc: result.uva >= 4 ? t('scores.highMortality') : t('scores.lowerRisk') },
+                    { label: t('scores.uva'), value: `${result.uva}`, desc: result.uva >= 4 ? t('scores.elevated') : t('scores.normal') },
                   ].map(({ label, value, desc }) => (
                     <div key={label} className="bg-elevated rounded-lg p-3">
                       <p className="text-xs text-text-muted">{label}</p>

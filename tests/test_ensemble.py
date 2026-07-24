@@ -1,7 +1,6 @@
 """Tests for ensemble module (gated at ≥500 patients)."""
 
 import numpy as np
-import pytest
 from unittest.mock import MagicMock
 
 

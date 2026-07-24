@@ -22,8 +22,12 @@ class ModelCard:
     version: str
     description: str
     metrics: dict = field(default_factory=dict)
-    intended_use: str = "Sepsis risk screening in district hospitals"
-    limitations: str = "Vitals-only — no lab or imaging features"
+    intended_use: str = (
+        "Retrospective research and prospective silent-mode evaluation only"
+    )
+    limitations: str = (
+        "Development scaffold; clinical validity and transportability are unestablished"
+    )
     training_data: str = ""
     fairness_notes: str = ""
 

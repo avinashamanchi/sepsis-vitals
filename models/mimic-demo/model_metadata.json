@@ -196,9 +196,9 @@
       "val_npv": 0.927536231884058,
       "val_ppv": 0.8873239436619719
     },
-    "intended_use": "Sepsis risk screening in district hospitals",
-    "limitations": "Vitals-only \u2014 no lab or imaging features",
-    "training_data": "Synthetic dataset calibrated to NHANES population distributions",
+    "intended_use": "Software development with the MIMIC-IV demo subset only",
+    "limitations": "Tiny public demo subset with reused development observations; not an independent clinical validation and not representative of an intended-use population.",
+    "training_data": "MIMIC-IV demo development subset",
     "fairness_notes": "Trained with demographic features; fairness audit recommended"
   },
   "timestamp": "2026-06-25T18:22:10.645461",

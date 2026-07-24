@@ -1,7 +1,5 @@
 """Tests for enhanced WebSocket alert messages."""
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock
 
 
 class TestWebSocketMessages:

@@ -1,11 +1,12 @@
 """
 sepsis_vitals.ml.synthetic_data
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Clinically-grounded synthetic patient data generator for sepsis model training.
+Heuristic synthetic patient data generator for software development.
 
-Generates realistic vital sign trajectories calibrated to population-level
-reference distributions from the National Health and Nutrition Examination
-Survey (NHANES), with age-, sex-, and ethnicity-stratified vital sign norms.
+Generates plausible-looking vital sign trajectories from hand-authored
+distribution assumptions. Some assumptions were informed by the sources listed
+below, but they are not the output of a reproducible source-data extraction
+pipeline and must not be treated as clinical evidence.
 
 Sepsis phenotypes are based on published clinical distributions:
 - MIMIC-III vital sign distributions (early, severe, hypothermic sepsis)
@@ -20,9 +21,8 @@ NHANES data sources:
 - Temperature, respiratory rate: supplemented from published
   population norms indexed to NHANES age/sex strata
 
-Produces temporal patient encounters with realistic septic deterioration
-patterns, including early/late sepsis phases, septic shock, and recovery
-trajectories.
+Produces temporal development fixtures for septic deterioration and recovery
+scenarios. Data from this module is not suitable for clinical validation.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ import pandas as pd
 
 
 # ---------------------------------------------------------------------------
-# NHANES population reference distributions by age and sex
+# Hand-authored development distributions by age and sex
 # Each entry is (mean, standard_deviation)
 # ---------------------------------------------------------------------------
 
@@ -125,12 +125,12 @@ NHANES_VITALS = {
     },
 }
 
-# GCS has no NHANES data; healthy baseline is universally 15
+# Hand-authored development baseline; not a population estimate.
 NHANES_GCS_NORMAL = (15.0, 0.0)
 
 # ---------------------------------------------------------------------------
-# NHANES ethnicity-based blood pressure adjustments
-# Offsets relative to population mean (~124 SBP)
+# Hand-authored demographic blood-pressure offsets for synthetic variation.
+# Do not interpret these as causal effects or subgroup performance evidence.
 # ---------------------------------------------------------------------------
 
 ETHNICITY_BP_ADJUSTMENTS = {
@@ -143,7 +143,7 @@ ETHNICITY_BP_ADJUSTMENTS = {
 }
 
 # ---------------------------------------------------------------------------
-# NHANES comorbidity prevalence by age bracket (proportion)
+# Hand-authored comorbidity proportions used only to diversify fixtures.
 # ---------------------------------------------------------------------------
 
 NHANES_COMORBIDITY_PREVALENCE = {
@@ -397,7 +397,7 @@ COMORBIDITY_LIST = [
 
 
 def _get_nhanes_age_bucket(age: int) -> str:
-    """Map a numeric age to the NHANES age bucket used for vital sign lookup."""
+    """Map age to the generator's coarse development bucket."""
     if age <= 29:
         return "18-29"
     elif age <= 49:
@@ -427,9 +427,10 @@ def _get_sepsis_age_bucket(age: int) -> str:
 
 
 def get_nhanes_normals(age: int, sex: str) -> dict:
-    """Return a dict of normal vital sign distributions for a given age and sex.
+    """Return hand-authored development distributions for an age and sex.
 
-    Uses NHANES population reference data stratified by age bracket and sex.
+    The legacy function name is retained for artifact compatibility. Values are
+    encoded assumptions, not a reproducible analysis of NHANES microdata.
     MAP is computed from the SBP and DBP distributions rather than stored
     independently.
 
@@ -471,7 +472,7 @@ def _get_ethnicity_bp_adj(ethnicity: str) -> Tuple[float, float]:
 
 
 def _get_sepsis_risk_multiplier(age: int) -> float:
-    """Return an age-dependent sepsis risk multiplier based on NHANES incidence.
+    """Return a heuristic age-dependent multiplier for synthetic sampling.
 
     The multiplier is normalized so that the overall population-weighted
     average is approximately 1.0, preserving the caller's requested
@@ -521,12 +522,12 @@ def generate_patient_trajectory(
     sepsis presentations (the key clinical confounder).
     For healthy patients, generates stable vitals with normal variation.
 
-    Baseline vitals are drawn from NHANES age/sex-stratified distributions,
-    with ethnicity-based blood pressure adjustments applied.
+    Baseline vitals are drawn from hand-authored age/sex distributions, with
+    synthetic demographic offsets applied for fixture diversity.
     """
     rows: list[dict] = []
 
-    # Get NHANES-calibrated normals for this patient's age and sex
+    # Get hand-authored development distributions for age and sex.
     normal_vitals = get_nhanes_normals(age, sex)
 
     # Ethnicity-based BP offsets
@@ -799,10 +800,10 @@ def generate_dataset(
         sex = rng.choice(SEXES)
         ethnicity = rng.choice(ETHNICITIES, p=ETHNICITY_WEIGHTS)
 
-        # NHANES age bucket for comorbidity prevalence lookup
+        # Coarse age bucket for synthetic comorbidity sampling.
         age_bucket = _get_nhanes_age_bucket(age)
 
-        # Comorbidities -- prevalence drawn from NHANES age-stratified data
+        # Comorbidities use hand-authored proportions for fixture diversity.
         comorbidities: list[str] = []
         for comorb, prev_by_age in NHANES_COMORBIDITY_PREVALENCE.items():
             prevalence = prev_by_age.get(age_bucket, 0.0)
@@ -918,7 +919,9 @@ def generate_train_val_test(
     )
 
     # Patient-level split to prevent leakage
-    patient_ids = df["patient_id"].unique()
+    # Convert pandas extension arrays to an owned NumPy array before in-place
+    # shuffling; shuffling a StringArray can duplicate values.
+    patient_ids = df["patient_id"].drop_duplicates().to_numpy(copy=True)
     rng = np.random.default_rng(seed + 1)
     rng.shuffle(patient_ids)
 

@@ -37,9 +37,9 @@ import os
 import re
 import ssl
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -856,7 +856,8 @@ class MLLPServer:
     Parameters
     ----------
     host : str
-        Bind address.  Defaults to ``"0.0.0.0"`` (all interfaces).
+        Bind address. Defaults to loopback; explicitly configure a protected
+        interface when receiving traffic from another host.
     port : int
         TCP port.  The HL7 MLLP default is 2575.
     queue : VitalsIngestionQueue | None
@@ -872,7 +873,7 @@ class MLLPServer:
 
     def __init__(
         self,
-        host: str = "0.0.0.0",
+        host: str = "127.0.0.1",
         port: int = 2575,
         queue: Optional[VitalsIngestionQueue] = None,
         tls_cert: Optional[str] = None,
@@ -1338,7 +1339,7 @@ class FHIRWebhookServer:
 
     def __init__(
         self,
-        host: str = "0.0.0.0",
+        host: str = "127.0.0.1",
         port: int = 8090,
         path: str = "/fhir/webhook",
         queue: Optional[VitalsIngestionQueue] = None,

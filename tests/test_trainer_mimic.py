@@ -3,7 +3,6 @@
 import numpy as np
 import pandas as pd
 import pytest
-from unittest.mock import patch
 
 
 class TestLOPOCV:
@@ -105,6 +104,7 @@ class TestMIMICDemoTraining:
                 "--output", tmpdir,
                 "--skip-shap",
             ])
+            assert result is not None
 
             # Should produce model artifacts
             assert Path(tmpdir, "sepsis_model.joblib").exists()

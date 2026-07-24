@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
-  Activity, Bell, Brain, Globe,
+  Activity, Bell, Brain,
   LayoutDashboard, Users,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -11,7 +11,6 @@ const NAV_ITEMS = [
   { to: '/patients', icon: Users, key: 'nav.patients' },
   { to: '/monitor', icon: Activity, key: 'nav.monitor' },
   { to: '/predict', icon: Brain, key: 'nav.predict' },
-  { to: '/population', icon: Globe, key: 'nav.population' },
   { to: '/alerts', icon: Bell, key: 'nav.alerts' },
 ]
 

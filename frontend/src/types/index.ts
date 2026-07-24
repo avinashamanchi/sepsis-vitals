@@ -47,6 +47,10 @@ export interface Prediction {
   clinical_scores: Record<string, number>
   top_risk_factors: Array<{ feature: string; importance: number }>
   recommendation: string
+  model: { name?: string; version?: string }
+  research_only?: boolean
+  validation_status?: string
+  intended_use?: string
 }
 
 export interface ScoreResult {
@@ -99,4 +103,3 @@ export interface DeteriorationAlert extends Alert {
   deterioration_rate: number
   window_hours: number
 }
-

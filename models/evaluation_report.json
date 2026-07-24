@@ -506,7 +506,7 @@
   },
   "data_provenance": {
     "source": "synthetic",
-    "generator": "NHANES-calibrated synthetic (sepsis_vitals.ml.synthetic_data)",
+    "generator": "Heuristic synthetic generator (sepsis_vitals.ml.synthetic_data)",
     "n_patients": 20000,
     "sepsis_prevalence": 0.15,
     "seed": 42,

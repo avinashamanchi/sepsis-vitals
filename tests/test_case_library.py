@@ -1,9 +1,6 @@
 """Tests for CaseLibrary — MIMIC-IV case indexing and lookup."""
 
-import sqlite3
 import pytest
-from pathlib import Path
-from unittest.mock import MagicMock, patch
 import pandas as pd
 import numpy as np
 

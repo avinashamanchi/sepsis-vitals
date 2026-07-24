@@ -1,11 +1,9 @@
 """Tests for the simulator module — case replay and ward simulation."""
 
 import asyncio
-import time
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock
 import pandas as pd
-import numpy as np
 
 
 class TestCaseReplay:

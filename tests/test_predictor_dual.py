@@ -2,10 +2,6 @@
 
 import json
 import numpy as np
-import pandas as pd
-import pytest
-from unittest.mock import MagicMock, patch
-from pathlib import Path
 
 
 class TestDualThresholds:

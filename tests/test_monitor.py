@@ -124,7 +124,7 @@ class TestDeteriorationTracker:
         tracker.add_prediction("P001", now - 7000, 0.3, "low")
         tracker.add_prediction("P001", now, 0.85, "critical")
 
-        result = tracker.evaluate("P001")
+        tracker.evaluate("P001")
         state = tracker.get_alert_state("P001")
         assert state in ("elevated", "normal")  # can't skip to critical
 

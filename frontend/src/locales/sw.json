@@ -94,9 +94,7 @@
     "highRisk": "Hatari kubwa",
     "mediumRisk": "Hatari ya wastani",
     "lowRisk": "Hatari ndogo",
-    "elevated": "Imeinuka",
-    "highMortality": "Vifo vingi",
-    "lowerRisk": "Hatari ndogo"
+    "elevated": "Imeinuka"
   },
   "login": {
     "signIn": "Ingia ili uendelee",
@@ -181,9 +179,7 @@
     "riskProbability": "Uwezekano wa Hatari ya Sepsis",
     "confidenceInterval": "CI 95%: [{{lower}}% - {{upper}}%]",
     "continuousMonitoring": "Ufuatiliaji wa Kudumu",
-    "specificityThreshold99": "Kiwango cha umaalum wa 99%",
     "clinicalAssessment": "Tathmini ya Kimatibabu",
-    "specificityThreshold95": "Kiwango cha umaalum wa 95%",
     "riskFactors": "Sababu za Hatari (SHAP)",
     "emptyState": "Ingiza dalili muhimu ili kuendesha utabiri wa ML",
     "emptyStateHint": "Mfano wa GradientBoosting wenye alama za kimatibabu na maelezo ya SHAP"
