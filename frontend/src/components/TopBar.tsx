@@ -21,7 +21,6 @@ export function TopBar() {
     '/scores': t('nav.scoreLab'),
     '/predict': t('nav.predict'),
     '/analytics': t('nav.analytics'),
-    '/population': t('nav.population'),
     '/alerts': t('nav.alerts'),
     '/admin': t('nav.admin'),
   }

@@ -13,9 +13,9 @@ export default defineConfig({
       manifest: {
         name: 'Sepsis Vitals',
         short_name: 'SepsisVitals',
-        description: 'AI-powered sepsis prediction for low-resource hospitals',
-        theme_color: '#0a0f1c',
-        background_color: '#0a0f1c',
+        description: 'Investigational sepsis early-warning research platform',
+        theme_color: '#04080f',
+        background_color: '#04080f',
         display: 'standalone',
         scope: '/sepsis-vitals/',
         start_url: '/sepsis-vitals/',
@@ -31,20 +31,8 @@ export default defineConfig({
       workbox: {
         skipWaiting: true,
         clientsClaim: true,
+        cleanupOutdatedCaches: true,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-        runtimeCaching: [
-          {
-            urlPattern: /^https:\/\/.*\/api\/.*/i,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'api-cache',
-              expiration: {
-                maxEntries: 50,
-                maxAgeSeconds: 300,
-              },
-            },
-          },
-        ],
       },
     }),
   ],

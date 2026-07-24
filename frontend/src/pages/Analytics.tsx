@@ -37,15 +37,14 @@ const CHART_TOOLTIP = {
 
 export function Analytics() {
   const { t } = useTranslation()
-  const weeklyData = DEMO_WEEKLY
-  const riskDist = DEMO_RISK_DIST
+  const weeklyData = isDemo ? DEMO_WEEKLY : []
+  const riskDist = isDemo ? DEMO_RISK_DIST : []
   const [stats, setStats] = useState({
     totalPredictions: '1,110',
     alertsGenerated: '66',
     alertRate: '6.0%',
-    truePositives: '48',
-    ppv: '72.7%',
-    avgResponse: '4.2m',
+    reviewedFlags: '25',
+    dataSource: 'Synthetic',
   })
 
   useEffect(() => {
@@ -60,7 +59,8 @@ export function Analytics() {
           totalPredictions: total.toLocaleString(),
           alertsGenerated: String(alertCount),
           alertRate: `${rate}%`,
-          avgResponse: data.avg_response_min ? `${data.avg_response_min.toFixed(1)}m` : s.avgResponse,
+          reviewedFlags: '—',
+          dataSource: 'Live counts',
         }))
       })
       .catch((err: unknown) => console.error('Failed to load analytics stats:', err))
@@ -73,23 +73,30 @@ export function Analytics() {
           {t('analytics.title')}
         </h1>
         <p className="text-sm text-text-secondary mt-1">
-          {t('analytics.subtitle')}
-          {isDemo && <span className="ml-2 text-xs text-warning">{t('common.demoMode')}</span>}
+          Evaluation volume and alert burden
+          {isDemo && <span className="ml-2 text-xs text-warning">Synthetic scenario — not observed performance</span>}
         </p>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label={t('analytics.totalPredictions')} value={stats.totalPredictions} sublabel={t('analytics.thisWeek')} color="info" />
-        <StatCard label={t('analytics.alertsGenerated')} value={stats.alertsGenerated} sublabel={t('analytics.alertRate', { n: stats.alertRate.replace('%', '') })} color="warning" />
-        <StatCard label={t('analytics.truePositives')} value={stats.truePositives} sublabel={t('analytics.ppv', { n: stats.ppv.replace('%', '') })} color="accent" />
-        <StatCard label={t('analytics.avgResponse')} value={stats.avgResponse} sublabel={t('analytics.alertToAction')} color="default" />
+        <StatCard label="Model outputs" value={stats.totalPredictions} sublabel="Evaluation window" color="info" />
+        <StatCard label="Review flags" value={stats.alertsGenerated} sublabel={`${stats.alertRate} flag rate`} color="warning" />
+        <StatCard label="Flags reviewed" value={stats.reviewedFlags} sublabel="No outcome label implied" color="accent" />
+        <StatCard label="Data source" value={stats.dataSource} sublabel={isDemo ? 'Interface demo' : 'Operational counts'} color="default" />
       </div>
+
+      {!isDemo && (
+        <div className="rounded-lg border border-info/20 bg-info/6 p-4 text-xs leading-5 text-text-secondary">
+          Outcome metrics remain hidden until a site has a prespecified reference standard and
+          adjudicated labels. Counting flags is not the same as measuring true positives.
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Predictions & Alerts */}
         <div className="bg-surface border border-border rounded-lg">
           <div className="px-4 py-3 border-b border-border">
-            <h2 className="font-heading text-sm font-semibold">{t('analytics.predictionsVsAlerts')}</h2>
+            <h2 className="font-heading text-sm font-semibold">Outputs and review flags</h2>
           </div>
           <div className="p-4 h-[280px]">
             <div role="img" aria-label={t('analytics.predictionsVsAlertsLabel')}>
@@ -110,7 +117,7 @@ export function Analytics() {
         {/* Risk Distribution */}
         <div className="bg-surface border border-border rounded-lg">
           <div className="px-4 py-3 border-b border-border">
-            <h2 className="font-heading text-sm font-semibold">{t('analytics.riskDistribution')}</h2>
+            <h2 className="font-heading text-sm font-semibold">Synthetic output distribution</h2>
           </div>
           <div className="p-4 h-[280px] flex items-center">
             <div className="w-1/2 h-full" role="img" aria-label={t('analytics.riskDistributionLabel')}>
@@ -141,7 +148,7 @@ export function Analytics() {
       {/* Alert Fatigue Trend */}
       <div className="bg-surface border border-border rounded-lg">
         <div className="px-4 py-3 border-b border-border">
-          <h2 className="font-heading text-sm font-semibold">{t('analytics.alertFatigueMonitor')}</h2>
+          <h2 className="font-heading text-sm font-semibold">Review-burden monitor</h2>
         </div>
         <div className="p-4 h-[240px]">
           <div role="img" aria-label={t('analytics.alertFatigueLabel')}>

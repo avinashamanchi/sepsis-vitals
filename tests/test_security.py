@@ -1,7 +1,6 @@
 """
 tests/test_security.py — Tests for the security module.
 """
-import os
 import time
 import pytest
 
@@ -218,7 +217,8 @@ class TestSecretManager:
 
 class TestWebhookVerification:
     def _make_sig(self, payload: bytes, secret: str, ts: int) -> str:
-        import hashlib, hmac as hmac_lib
+        import hashlib
+        import hmac as hmac_lib
         signed = f"{ts}.".encode() + payload
         digest = hmac_lib.new(secret.encode(), signed, hashlib.sha256).hexdigest()
         return f"t={ts},v1={digest}"

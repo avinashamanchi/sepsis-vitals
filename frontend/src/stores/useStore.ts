@@ -49,20 +49,17 @@ interface AppState {
   simulatorEnabled: boolean
   setSimulatorEnabled: (enabled: boolean) => void
 
-  // Outbox
-  outboxPending: number
-  setOutboxPending: (count: number) => void
 }
 
-/** Safe localStorage helpers — never throw (e.g. private browsing, quota exceeded). */
+/** Auth is session-scoped so closing a shared workstation clears access. */
 function safeGet(key: string): string | null {
-  try { return localStorage.getItem(key) } catch { return null }
+  try { return sessionStorage.getItem(key) } catch { return null }
 }
 function safeSet(key: string, value: string): void {
-  try { localStorage.setItem(key, value) } catch { /* quota exceeded or private mode */ }
+  try { sessionStorage.setItem(key, value) } catch { /* storage blocked */ }
 }
 function safeRemove(key: string): void {
-  try { localStorage.removeItem(key) } catch { /* ignore */ }
+  try { sessionStorage.removeItem(key) } catch { /* ignore */ }
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -153,7 +150,8 @@ export const useStore = create<AppState>((set) => ({
     }),
   removeMonitoredPatient: (patientId) =>
     set((s) => {
-      const { [patientId]: _, ...rest } = s.monitoredPatients
+      const rest = { ...s.monitoredPatients }
+      delete rest[patientId]
       return { monitoredPatients: rest }
     }),
 
@@ -174,7 +172,4 @@ export const useStore = create<AppState>((set) => ({
   simulatorEnabled: false,
   setSimulatorEnabled: (enabled) => set({ simulatorEnabled: enabled }),
 
-  // Outbox
-  outboxPending: 0,
-  setOutboxPending: (count) => set({ outboxPending: count }),
 }))

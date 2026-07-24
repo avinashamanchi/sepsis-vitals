@@ -39,6 +39,9 @@ physionet.org/
 *.csv
 *.parquet
 *.feather
+*.db
+*.db-shm
+*.db-wal
 !examples/*.csv
 
 # ── IDE ──

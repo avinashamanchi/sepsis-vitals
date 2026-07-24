@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from typing import Optional, Set
 
-import numpy as np
 import pandas as pd
 
 # ---------------------------------------------------------------------------
@@ -274,7 +273,8 @@ def compute_sofa_scores(df: pd.DataFrame) -> pd.DataFrame:
                 dobutamine_rate=_safe_get(row, "dobutamine_rate"),
             )
         )
-        sofa_cns_vals.append(sofa_cns(_safe_get(row, "gcs")))
+        gcs = _safe_get(row, "gcs")
+        sofa_cns_vals.append(sofa_cns(int(gcs) if gcs is not None else None))
         sofa_renal_vals.append(sofa_renal(_safe_get(row, "creatinine")))
 
     result["sofa_resp"] = sofa_resp_vals
@@ -330,7 +330,6 @@ def find_suspected_infections(
         )
 
     window = pd.Timedelta(hours=window_hours)
-    results = []
 
     # Merge on admission
     merged = antibiotics.merge(

@@ -1,10 +1,9 @@
 import { useState } from 'react'
 import { VitalsForm } from '../components/VitalsForm'
 import { RiskBadge } from '../components/RiskBadge'
-import type { Prediction, RiskLevel } from '../types'
+import type { Prediction } from '../types'
 import { api } from '../lib/api'
-import { Brain, TrendingUp, UserPlus } from 'lucide-react'
-import { probabilityToRisk } from '../lib/risk'
+import { Brain, FlaskConical, TrendingUp, UserPlus } from 'lucide-react'
 import clsx from 'clsx'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
@@ -18,36 +17,6 @@ const COMORBIDITIES = [
   { key: 'copd', labelKey: 'predict.copd' },
   { key: 'heart_failure', labelKey: 'predict.heartFailure' },
 ]
-
-/** Compute clinical scores from vitals */
-function computeScores(vitals: Record<string, number>) {
-  let qsofa = 0
-  if ((vitals.sbp ?? 999) <= 100) qsofa++
-  if ((vitals.resp_rate ?? 0) >= 22) qsofa++
-  if ((vitals.gcs ?? 15) < 15) qsofa++
-
-  let sirs = 0
-  if ((vitals.temperature ?? 37) > 38.0 || (vitals.temperature ?? 37) < 36.0) sirs++
-  if ((vitals.heart_rate ?? 70) > 90) sirs++
-  if ((vitals.resp_rate ?? 16) > 20) sirs++
-  if ((vitals.wbc ?? 8) > 12 || (vitals.wbc ?? 8) < 4) sirs++
-
-  let news2 = 0
-  const rr = vitals.resp_rate ?? 16
-  if (rr <= 8) news2 += 3; else if (rr <= 11) news2 += 1; else if (rr <= 20) news2 += 0; else if (rr <= 24) news2 += 2; else news2 += 3
-  const spo2 = vitals.spo2 ?? 98
-  if (spo2 <= 91) news2 += 3; else if (spo2 <= 93) news2 += 2; else if (spo2 <= 95) news2 += 1
-  const sbp = vitals.sbp ?? 120
-  if (sbp <= 90) news2 += 3; else if (sbp <= 100) news2 += 2; else if (sbp <= 110) news2 += 1; else if (sbp >= 220) news2 += 3
-  const hr = vitals.heart_rate ?? 75
-  if (hr <= 40) news2 += 3; else if (hr <= 50) news2 += 1; else if (hr <= 90) news2 += 0; else if (hr <= 110) news2 += 1; else if (hr <= 130) news2 += 2; else news2 += 3
-  const temp = vitals.temperature ?? 37
-  if (temp <= 35.0) news2 += 3; else if (temp <= 36.0) news2 += 1; else if (temp <= 38.0) news2 += 0; else if (temp <= 39.0) news2 += 1; else news2 += 2
-
-  const shockIndex = vitals.heart_rate && vitals.sbp ? vitals.heart_rate / vitals.sbp : null
-
-  return { qsofa, sirs, news2, shockIndex }
-}
 
 function scoreColor(label: string, value: number): string {
   if (label === 'qSOFA' && value >= 2) return 'text-danger'
@@ -72,7 +41,6 @@ export function Predict() {
   const [result, setResult] = useState<Prediction | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [lastVitals, setLastVitals] = useState<Record<string, number>>({})
 
   // Demographics
   const [age, setAge] = useState<string>('')
@@ -89,7 +57,6 @@ export function Predict() {
     setLoading(true)
     setError('')
     setMonitorStatus('')
-    setLastVitals(vitals)
     try {
       const body: { vitals: Record<string, number>; patient_id: string; age_years?: number; comorbidities?: Record<string, number> } = {
         vitals,
@@ -124,15 +91,7 @@ export function Predict() {
     }
   }
 
-  const scores = result ? computeScores(lastVitals) : null
-
-  // Dual threshold risk levels
-  const continuousRisk: RiskLevel | null = result
-    ? probabilityToRisk(result.risk_probability * 0.85)
-    : null
-  const onDemandRisk: RiskLevel | null = result
-    ? probabilityToRisk(result.risk_probability)
-    : null
+  const scores = result?.clinical_scores
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -142,7 +101,15 @@ export function Predict() {
           {t('predict.title')}
         </h1>
         <p className="text-sm text-text-secondary mt-1">
-          {t('predict.subtitle')}
+          Inspect a development-model output and its input drivers in a controlled research environment.
+        </p>
+      </div>
+
+      <div className="flex items-start gap-3 rounded-lg border border-warning/25 bg-warning/8 p-4 text-xs leading-5 text-text-secondary">
+        <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+        <p>
+          <strong className="text-warning">Synthetic-data model.</strong> The number below is
+          not a clinically validated probability and must not change patient care.
         </p>
       </div>
 
@@ -236,7 +203,7 @@ export function Predict() {
                   <p className="text-5xl font-bold font-heading text-text-primary">
                     {(result.risk_probability * 100).toFixed(1)}%
                   </p>
-                  <p className="text-sm text-text-secondary mt-2">{t('predict.riskProbability')}</p>
+                  <p className="text-sm text-text-secondary mt-2">Development-model output</p>
                   <p className="text-xs text-text-muted mt-1">
                     {t('predict.confidenceInterval', {
                       lower: (result.confidence_interval.lower * 100).toFixed(1),
@@ -245,34 +212,24 @@ export function Predict() {
                   </p>
                 </div>
                 <div className="mt-4 p-3 bg-elevated rounded-lg">
+                  <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-text-muted">
+                    Research interpretation
+                  </p>
                   <p className="text-sm text-text-secondary">{result.recommendation}</p>
                 </div>
+                <p className="mt-3 text-[10px] leading-4 text-text-muted">
+                  {result.validation_status ?? 'Synthetic development baseline; no clinical validation'}
+                </p>
               </div>
-
-              {/* Dual Threshold Display */}
-              {continuousRisk && onDemandRisk && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-surface border border-border rounded-lg p-4">
-                    <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1">{t('predict.continuousMonitoring')}</p>
-                    <p className="text-xs text-text-muted mb-2">{t('predict.specificityThreshold99')}</p>
-                    <RiskBadge level={continuousRisk} size="sm" />
-                  </div>
-                  <div className="bg-surface border border-border rounded-lg p-4">
-                    <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1">{t('predict.clinicalAssessment')}</p>
-                    <p className="text-xs text-text-muted mb-2">{t('predict.specificityThreshold95')}</p>
-                    <RiskBadge level={onDemandRisk} size="sm" />
-                  </div>
-                </div>
-              )}
 
               {/* Clinical Scores */}
               {scores && (
                 <div className="grid grid-cols-4 gap-2">
                   {[
                     { label: t('scores.qsofa'), key: 'qSOFA', value: scores.qsofa, suffix: '/3' },
-                    { label: t('scores.sirs'), key: 'SIRS', value: scores.sirs, suffix: '/4' },
-                    { label: t('scores.news2'), key: 'NEWS2', value: scores.news2, suffix: '' },
-                    { label: t('scores.si'), key: 'SI', value: scores.shockIndex, suffix: '' },
+                    { label: t('scores.sirs'), key: 'SIRS', value: scores.sirs_count, suffix: '/4' },
+                    { label: t('scores.news2'), key: 'NEWS2', value: scores.news2_style, suffix: '' },
+                    { label: t('scores.si'), key: 'SI', value: scores.shock_index, suffix: '' },
                   ].map((s) => (
                     <div key={s.key} className="bg-surface border border-border rounded-lg p-3 text-center">
                       <p className="text-[10px] text-text-muted">{s.label}</p>
@@ -290,7 +247,7 @@ export function Predict() {
                 <div className="bg-surface border border-border rounded-lg p-5">
                   <h2 className="font-heading text-sm font-semibold mb-3 flex items-center gap-2">
                     <TrendingUp className="w-4 h-4 text-info" />
-                    {t('predict.riskFactors')}
+                    Model drivers <span className="font-normal text-text-muted">(not causal)</span>
                   </h2>
                   <div className="h-[200px]">
                     <ResponsiveContainer width="100%" height="100%">

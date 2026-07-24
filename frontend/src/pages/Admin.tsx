@@ -6,38 +6,44 @@ import { useTranslation } from 'react-i18next'
 export function Admin() {
   const { t } = useTranslation()
 
-  const [systemStatus, setSystemStatus] = useState([
-    { label: t('admin.apiServer'), status: t('common.unknown'), ok: false },
-    { label: t('admin.mlModel'), status: t('common.loading'), ok: false },
-    { label: t('admin.database'), status: t('common.loading'), ok: false },
-    { label: t('admin.webSocket'), status: t('common.loading'), ok: false },
-    { label: t('admin.redis'), status: t('common.loading'), ok: false },
-  ])
+  const [systemStatus, setSystemStatus] = useState(() => (
+    isDemo
+      ? [
+          { label: t('admin.apiServer'), status: t('admin.demoMode'), ok: true },
+          { label: t('admin.mlModel'), status: 'Synthetic simulator', ok: true },
+          { label: t('admin.database'), status: t('admin.naDemo'), ok: true },
+          { label: t('admin.webSocket'), status: t('admin.naDemo'), ok: true },
+          { label: t('admin.redis'), status: t('admin.naDemo'), ok: true },
+        ]
+      : [
+          { label: t('admin.apiServer'), status: t('common.unknown'), ok: false },
+          { label: t('admin.mlModel'), status: t('common.loading'), ok: false },
+          { label: t('admin.database'), status: t('common.loading'), ok: false },
+          { label: t('admin.webSocket'), status: t('common.loading'), ok: false },
+          { label: t('admin.redis'), status: t('common.loading'), ok: false },
+        ]
+  ))
 
-  const [dataInfo, setDataInfo] = useState([
-    { label: t('admin.patientState'), value: t('admin.sqliteWal') },
-    { label: t('admin.userStore'), value: t('admin.sqliteWal') },
-    { label: t('admin.model'), value: t('common.loading') },
-    { label: t('admin.trainingData'), value: t('admin.syntheticData') },
-    { label: t('admin.testAuroc'), value: t('common.loading') },
-  ])
+  const [dataInfo, setDataInfo] = useState(() => (
+    isDemo
+      ? [
+          { label: t('admin.patientState'), value: 'Browser-only synthetic state' },
+          { label: t('admin.userStore'), value: t('admin.naDemo') },
+          { label: t('admin.model'), value: 'Synthetic interface simulator' },
+          { label: t('admin.trainingData'), value: t('admin.syntheticData') },
+          { label: 'Synthetic-test AUROC', value: 'Not applicable to UI demo' },
+        ]
+      : [
+          { label: t('admin.patientState'), value: t('admin.sqliteWal') },
+          { label: t('admin.userStore'), value: t('admin.sqliteWal') },
+          { label: t('admin.model'), value: t('common.loading') },
+          { label: t('admin.trainingData'), value: t('admin.syntheticData') },
+          { label: t('admin.testAuroc'), value: t('common.loading') },
+        ]
+  ))
 
   useEffect(() => {
     if (isDemo) {
-      setSystemStatus([
-        { label: t('admin.apiServer'), status: t('admin.demoMode'), ok: true },
-        { label: t('admin.mlModel'), status: 'GradientBoosting v2.0', ok: true },
-        { label: t('admin.database'), status: t('admin.naDemo'), ok: true },
-        { label: t('admin.webSocket'), status: t('admin.naDemo'), ok: true },
-        { label: t('admin.redis'), status: t('admin.naDemo'), ok: true },
-      ])
-      setDataInfo([
-        { label: t('admin.patientState'), value: t('admin.sqliteWal') },
-        { label: t('admin.userStore'), value: t('admin.sqliteWal') },
-        { label: t('admin.model'), value: 'GradientBoosting' },
-        { label: t('admin.trainingData'), value: t('admin.syntheticData') },
-        { label: t('admin.testAuroc'), value: '0.92' },
-      ])
       return
     }
 
@@ -63,7 +69,7 @@ export function Admin() {
           { label: t('admin.userStore'), value: t('admin.sqliteWal') },
           { label: t('admin.model'), value: `${info.model_name} (${info.feature_count} features)` },
           { label: t('admin.calibrated'), value: info.is_calibrated ? t('admin.yesPlatt') : t('admin.no') },
-          { label: t('admin.testAuroc'), value: auroc ? auroc.toFixed(4) : t('common.na') },
+          { label: 'Development-test AUROC', value: auroc ? auroc.toFixed(4) : t('common.na') },
         ])
       })
       .catch(() => {})

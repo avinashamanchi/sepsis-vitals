@@ -3,8 +3,6 @@ tests/test_new_modules.py
 Tests for: auth/jwt, monitoring/metrics, ml/fairness, health_economics/model
 """
 
-import json
-import time
 import numpy as np
 import pandas as pd
 import pytest
@@ -263,7 +261,6 @@ class TestConformalPredictor:
         X_cal = pd.DataFrame({"f": np.ones(200)})
         y_cal = pd.Series(np.random.randint(0, 2, 200))
         X_test = pd.DataFrame({"f": np.ones(100)})
-        y_test = pd.Series(np.random.randint(0, 2, 100))
 
         model = DummyModel()
         cp = ConformalPredictor(alpha=0.1)
@@ -332,7 +329,8 @@ class TestCounterfactual:
 
 class TestHealthEconomics:
     def setup_method(self):
-        import sys, os
+        import sys
+        import os
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
         from health_economics.model import HealthEconomicsModel, EconomicsParams
         self.Model  = HealthEconomicsModel

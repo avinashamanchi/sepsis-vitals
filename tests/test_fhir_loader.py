@@ -1,6 +1,5 @@
 """Tests for FHIR NDJSON streaming loader."""
 from pathlib import Path
-import pandas as pd
 import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures"

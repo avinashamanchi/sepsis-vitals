@@ -28,9 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 import uuid
-from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -84,7 +82,7 @@ class CaseReplay:
     @staticmethod
     def _pivot_timeline(timeline: pd.DataFrame) -> List[Dict[str, Any]]:
         """Convert long-format vitals to list of (timestamp, vitals_dict) pairs."""
-        timepoints = []
+        timepoints: List[Dict[str, Any]] = []
         for charttime, group in timeline.groupby("charttime"):
             vitals = {}
             for _, row in group.iterrows():

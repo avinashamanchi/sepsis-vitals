@@ -52,16 +52,6 @@ class RegisterRequest(BaseModel):
 
     email: EmailStr
     password: str = Field(..., min_length=12, max_length=128)
-    role: str = Field(
-        "nurse",
-        pattern=r"^(nurse|researcher)$",
-        description="User role: nurse or researcher",
-    )
-    org_id: Optional[str] = Field(
-        None,
-        max_length=32,
-        description="Organisation / site identifier",
-    )
 
 
 class LoginRequest(BaseModel):
@@ -137,6 +127,7 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+    user: dict[str, Any]
 
 
 class AccessTokenResponse(BaseModel):
@@ -207,12 +198,23 @@ def auth_register(
     db: Session = Depends(get_db),
 ) -> RegisterResponse:
     """Create a new user account and return JWT tokens."""
+    if (
+        os.getenv("SEPSIS_ENV", "development") == "production"
+        and os.getenv("SEPSIS_ALLOW_SELF_REGISTRATION", "false").lower() != "true"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Registration requires an administrator invitation.",
+        )
+
     try:
         result = register_user(
             email=body.email,
             password=body.password,
-            role=body.role,
-            org_id=body.org_id,
+            # Public input must never choose tenant or privilege. Approved
+            # assignments happen through the administrative provisioning path.
+            role="researcher",
+            org_id=None,
             db_session=db,
         )
     except DuplicateEmailError:
@@ -279,6 +281,7 @@ def auth_login(
         access_token=result["access_token"],
         refresh_token=result["refresh_token"],
         token_type=result["token_type"],
+        user=_user_to_response(result["user"]).model_dump(),
     )
 
 

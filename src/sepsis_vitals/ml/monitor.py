@@ -1,7 +1,7 @@
 """
 sepsis_vitals.ml.monitor
 ~~~~~~~~~~~~~~~~~~~~~~~~
-Autonomous prediction engine: event-driven monitoring, deterioration
+Event-driven research monitoring, deterioration
 tracking, and alert escalation.
 
 Three main components:
@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -272,7 +272,11 @@ class PatientRegistry:
 
     def list_patients(self) -> List[Dict[str, Any]]:
         """List all monitored patients with current state."""
-        return [self.get_patient_info(pid) for pid in self._patients]
+        return [
+            info
+            for pid in self._patients
+            if (info := self.get_patient_info(pid)) is not None
+        ]
 
     def get_patient_info(self, patient_id: str) -> Optional[Dict[str, Any]]:
         """Get current state for a monitored patient."""

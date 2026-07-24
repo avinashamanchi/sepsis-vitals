@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import case, cast, func, Date
 from sqlalchemy.orm import Session
@@ -562,12 +562,13 @@ def get_risk_distribution(
         .all()
     )
 
-    total = sum(r.count for r in rows) or 1
+    counts = [int(getattr(row, "count", 0)) for row in rows]
+    total = sum(counts) or 1
     return [
         {
             "risk_level": row.risk_level,
-            "count": row.count,
-            "percentage": round(row.count / total * 100, 1),
+            "count": count,
+            "percentage": round(count / total * 100, 1),
         }
-        for row in rows
+        for row, count in zip(rows, counts)
     ]

@@ -20,8 +20,7 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -89,7 +88,10 @@ async def _lifespan(application: FastAPI):
 app = FastAPI(
     title="Sepsis Vitals API",
     version=__version__,
-    description="AI-powered vitals-only sepsis prediction for low-resource hospitals",
+    description=(
+        "Investigational sepsis-model research API for retrospective and "
+        "prospective silent-mode evaluation; not for patient care"
+    ),
     docs_url=None if _is_production else "/docs",
     redoc_url=None if _is_production else "/redoc",
     openapi_url=None if _is_production else "/openapi.json",
@@ -313,22 +315,6 @@ class BatchPredictRequest(BaseModel):
     patients: List[PredictRequest] = Field(..., max_length=10)
 
 
-class WhatIfRequest(BaseModel):
-    vitals: VitalsInput
-    modified_vitals: VitalsInput
-    patient_id: str = Field("unknown", max_length=100)
-    age_years: Optional[int] = Field(None, ge=0, le=120)
-
-
-class WhatIfResponse(BaseModel):
-    baseline_risk: float
-    baseline_level: str
-    counterfactual_risk: float
-    counterfactual_level: str
-    risk_delta: float
-    suggestion: Optional[str]
-
-
 class ConfidenceInterval(BaseModel):
     lower: float
     upper: float
@@ -345,6 +331,9 @@ class PredictionResponse(BaseModel):
     top_risk_factors: List[Dict[str, Any]]
     recommendation: str
     model: Dict[str, str]
+    research_only: bool = True
+    validation_status: str = "Synthetic development baseline; no clinical validation"
+    intended_use: str = "Retrospective research and prospective silent-mode evaluation"
 
 
 class HealthResponse(BaseModel):
@@ -480,7 +469,7 @@ def _get_simulation_manager():
 # Metrics tracking
 # ---------------------------------------------------------------------------
 
-_metrics = {
+_metrics: Dict[str, Any] = {
     "requests_total": 0,
     "predictions_total": 0,
     "alerts_total": 0,
@@ -768,12 +757,33 @@ async def health():
 @app.post("/score", response_model=ScoreResponse, dependencies=[Depends(check_rate_limit)])
 async def score_vitals(vitals: VitalsInput, user: Dict = Depends(verify_auth)):
     """Compute clinical sepsis scores (qSOFA, SIRS, NEWS2, Shock Index, UVA)."""
-    vitals_dict = {k: v for k, v in vitals.dict().items() if v is not None}
+    vitals_dict = {k: v for k, v in vitals.model_dump().items() if v is not None}
     if len(vitals_dict) < 2:
         raise HTTPException(status_code=422, detail="Provide at least 2 vital signs.")
     result = compute_scores(vitals_dict)
-    d = result.as_dict()
-    return ScoreResponse(**d)
+    flag_explanations = {
+        "qsofa_rr": "Respiratory rate meets the qSOFA criterion.",
+        "qsofa_gcs": "Glasgow Coma Scale meets the qSOFA criterion.",
+        "qsofa_sbp": "Systolic blood pressure meets the qSOFA criterion.",
+        "sirs_temp": "Temperature meets a SIRS criterion.",
+        "sirs_hr": "Heart rate meets a SIRS criterion.",
+        "sirs_rr": "Respiratory rate meets a SIRS criterion.",
+    }
+    explanations = [
+        flag_explanations[name]
+        for name, fired in result.component_flags.items()
+        if fired and name in flag_explanations
+    ]
+    return ScoreResponse(
+        qsofa=result.qsofa,
+        sirs_count=result.sirs_count,
+        news2_style=result.news2_style,
+        shock_index=result.shock_index,
+        uva=result.uva_style,
+        risk_level=result.risk_level,
+        alert_flag=result.alert_flag,
+        explanations=explanations,
+    )
 
 
 @app.post("/predict", response_model=PredictionResponse, dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
@@ -884,84 +894,6 @@ async def predict_batch(body: BatchPredictRequest, request: Request, user: Dict 
             errors.append({"index": i, "patient_id": patient.patient_id, "error": str(exc)})
 
     return {"predictions": results, "count": len(results), "errors": errors}
-
-
-@app.post("/predict/what-if", response_model=WhatIfResponse, dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
-async def predict_what_if(body: WhatIfRequest, request: Request, user: Dict = Depends(verify_auth)):
-    """Counterfactual what-if analysis: compare baseline vs. modified vitals."""
-    predictor = _get_predictor()
-    if predictor is None:
-        raise HTTPException(status_code=503, detail="Model not loaded. Run 'python -m sepsis_vitals.train' first.")
-
-    current_dict = {k: v for k, v in body.vitals.dict().items() if v is not None}
-    if len(current_dict) < 3:
-        raise HTTPException(status_code=422, detail="Provide at least 3 vital signs for ML prediction.")
-
-    # Baseline prediction on current vitals
-    baseline = predictor.predict(
-        vitals=current_dict,
-        patient_id=sanitise_string(body.patient_id),
-        age_years=body.age_years,
-    )
-    baseline_result = baseline.to_dict()
-
-    # Merge modified vitals onto current (override only non-None fields)
-    modified_overrides = {k: v for k, v in body.modified_vitals.dict().items() if v is not None}
-    merged_dict = {**current_dict, **modified_overrides}
-
-    # Counterfactual prediction on merged vitals
-    counterfactual = predictor.predict(
-        vitals=merged_dict,
-        patient_id=sanitise_string(body.patient_id),
-        age_years=body.age_years,
-    )
-    cf_result = counterfactual.to_dict()
-
-    # Generate text suggestion from counterfactual module
-    from sepsis_vitals.ml.fairness import generate_counterfactual
-    suggestion = generate_counterfactual(current_dict, baseline_result["risk_level"])
-
-    return WhatIfResponse(
-        baseline_risk=baseline_result["risk_probability"],
-        baseline_level=baseline_result["risk_level"],
-        counterfactual_risk=cf_result["risk_probability"],
-        counterfactual_level=cf_result["risk_level"],
-        risk_delta=cf_result["risk_probability"] - baseline_result["risk_probability"],
-        suggestion=suggestion,
-    )
-
-
-@app.get("/patient/{patient_id}/forecast", dependencies=[Depends(check_rate_limit)])
-async def patient_forecast(patient_id: str, request: Request, user: Dict = Depends(verify_auth)):
-    """Deterioration forecast based on the patient's prediction history."""
-    # Org-level authorization: verify patient belongs to user's org
-    org_id = user.get("org_id")
-    if org_id is not None:
-        def _check_org():
-            from sepsis_vitals.db import SessionLocal
-            db = SessionLocal()
-            try:
-                verify_patient_org(patient_id, user, db)
-            finally:
-                db.close()
-        await asyncio.to_thread(_check_org)
-
-    predictor = _get_predictor()
-    if predictor is None:
-        raise HTTPException(status_code=503, detail="Model not loaded.")
-
-    trend = predictor.get_patient_trend(sanitise_string(patient_id))
-    if trend is None:
-        raise HTTPException(status_code=404, detail=f"No data for patient {patient_id}")
-
-    # Build (timestamp, risk_probability) history from trend data
-    history = [(p["timestamp"], p["risk_probability"]) for p in trend.get("predictions", [])]
-    if len(history) < 1:
-        raise HTTPException(status_code=404, detail=f"Insufficient history for patient {patient_id}")
-
-    from sepsis_vitals.ml.forecast import forecast_deterioration
-    forecast = forecast_deterioration(history)
-    return forecast.to_dict()
 
 
 @app.get("/patient/{patient_id}/trend", dependencies=[Depends(check_rate_limit)])
@@ -1178,7 +1110,10 @@ async def model_info(user: Dict = Depends(verify_auth)):
 # AI Clinical Copilot (Anthropic-powered)
 # ---------------------------------------------------------------------------
 
-# Enterprise LLM feature gate — opt-in only, requires signed BAA
+# The copilot is frozen by default until clinical validation and a human-factors
+# review establish that it adds value without unsafe automation bias.
+_copilot_enabled = os.getenv("SEPSIS_ENABLE_COPILOT", "false").lower() == "true"
+# Enterprise LLM feature gate — separate opt-in, requires signed BAA.
 _enterprise_llm_enabled = os.getenv("SEPSIS_ENTERPRISE_LLM", "false").lower() == "true"
 
 
@@ -1197,12 +1132,20 @@ def _deidentify_vitals(vitals: dict) -> dict:
 
 @app.post("/copilot", response_model=CopilotResponse, dependencies=[Depends(check_rate_limit)])
 async def clinical_copilot(body: CopilotRequest, user: Dict = Depends(verify_auth)):
-    """AI clinical decision support.
+    """Research-only observation summary.
 
-    Uses deterministic rule-based analysis by default. LLM-powered analysis
-    is only available when SEPSIS_ENTERPRISE_LLM=true (requires BAA with
-    Anthropic and explicit opt-in).
+    Disabled by default. Enabling it requires an explicit feature flag; enabling
+    external LLM processing additionally requires a signed BAA and separate flag.
     """
+    if not _copilot_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Copilot is frozen for this investigational release pending "
+                "clinical validation and human-factors review."
+            ),
+        )
+
     copilot_key = f"copilot:{user.get('user', user.get('email', 'anon'))}"
     if not _copilot_limiter.allow(copilot_key):
         raise HTTPException(status_code=429, detail="Copilot rate limit exceeded. Max 1 request per 2 seconds.")
@@ -1273,7 +1216,7 @@ ML Model Prediction:
 - Top risk factors: {json.dumps(ml_risk.get('top_risk_factors', [])[:3])}
 """
 
-    prompt = f"""You are a clinical decision support system for sepsis screening. Analyze the following patient data and provide a structured assessment.
+    prompt = f"""You summarize observations for an investigational sepsis-model validation study. Do not diagnose, prescribe, recommend treatment, or claim clinical benefit. Identify only the supplied score criteria, unusual measurements, missing data, and questions for a designated study reviewer.
 
 Patient vitals: {json.dumps(vitals)}
 Age: {age if age else 'Unknown'}
@@ -1284,13 +1227,14 @@ Risk level: {scores.get('risk_level', 'unknown')}
 
 Respond in this exact JSON format:
 {{
-  "analysis": "2-3 sentence clinical assessment",
+  "analysis": "2-3 sentence research observation summary",
   "risk_level": "low|moderate|high|critical",
   "key_concerns": ["concern1", "concern2"],
-  "suggested_actions": ["action1", "action2", "action3"]
+  "suggested_actions": ["data verification step", "study review step"]
 }}
 
-Be concise, clinically precise. Focus on actionable next steps. This is a decision SUPPORT tool - always recommend clinician assessment."""
+Be concise and precise. Suggested actions must be limited to data verification,
+documentation, or review under the study protocol."""
 
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
@@ -1298,7 +1242,10 @@ Be concise, clinically precise. Focus on actionable next steps. This is a decisi
         messages=[{"role": "user", "content": prompt}],
     )
 
-    response_text = message.content[0].text.strip()
+    response_text = getattr(message.content[0], "text", "")
+    if not isinstance(response_text, str) or not response_text.strip():
+        raise RuntimeError("Enterprise LLM returned no text response")
+    response_text = response_text.strip()
     # Extract JSON from response
     if "```json" in response_text:
         response_text = response_text.split("```json")[1].split("```")[0].strip()
@@ -1312,111 +1259,77 @@ Be concise, clinically precise. Focus on actionable next steps. This is a decisi
         risk_level=parsed.get("risk_level", scores.get("risk_level", "unknown")),
         key_concerns=parsed.get("key_concerns", []),
         suggested_actions=parsed.get("suggested_actions", []),
-        disclaimer="AI-generated clinical decision support. Not a substitute for clinical judgment. Always verify with qualified clinician.",
+        disclaimer=(
+            "Investigational research summary. Not for diagnosis or treatment; "
+            "review only under the approved study protocol."
+        ),
     )
 
 
 def _rule_based_copilot(
     vitals: dict, scores: dict, ml_risk: Optional[dict], age: Optional[int],
 ) -> CopilotResponse:
-    """Rule-based fallback when Anthropic API is unavailable."""
-    concerns = []
-    actions = []
+    """Produce a non-treatment research summary when external LLM use is off."""
+    concerns: List[str] = []
     risk_level = scores.get("risk_level", "low")
 
-    # Analyze vital signs
     temp = vitals.get("temperature")
     if temp and (temp > 38.3 or temp < 36.0):
-        concerns.append(f"Abnormal temperature ({temp}°C) — possible infection or hypothermia")
-        actions.append("Obtain blood cultures before antibiotic administration")
+        concerns.append(f"Temperature ({temp}°C) meets an encoded score criterion.")
 
     hr = vitals.get("heart_rate")
     if hr and hr > 100:
-        concerns.append(f"Tachycardia (HR {hr} bpm) — may indicate sepsis, hypovolemia, or pain")
+        concerns.append(f"Heart rate ({hr} bpm) is above the encoded reference range.")
     elif hr and hr < 50:
-        concerns.append(f"Bradycardia (HR {hr} bpm) — assess medication effects and cardiac status")
+        concerns.append(f"Heart rate ({hr} bpm) is below the encoded reference range.")
 
     rr = vitals.get("resp_rate")
     if rr and rr > 22:
-        concerns.append(f"Tachypnea (RR {rr}/min) — qSOFA criterion, assess respiratory status")
-        actions.append("Monitor oxygen saturation continuously")
+        concerns.append(f"Respiratory rate ({rr}/min) meets the qSOFA criterion.")
 
     sbp = vitals.get("sbp")
     if sbp and sbp <= 100:
-        concerns.append(f"Hypotension (SBP {sbp} mmHg) — qSOFA criterion, assess perfusion")
-        actions.append("Consider IV fluid resuscitation (30 mL/kg crystalloid)")
+        concerns.append(f"Systolic blood pressure ({sbp} mmHg) meets the qSOFA criterion.")
 
     spo2 = vitals.get("spo2")
     if spo2 and spo2 < 94:
-        concerns.append(f"Hypoxemia (SpO2 {spo2}%) — assess airway and provide supplemental O2")
-        actions.append("Apply supplemental oxygen, target SpO2 ≥94%")
+        concerns.append(f"SpO2 ({spo2}%) is below the encoded reference range.")
 
     gcs = vitals.get("gcs")
     if gcs and gcs < 15:
-        concerns.append(f"Altered consciousness (GCS {gcs}/15) — qSOFA criterion")
+        concerns.append(f"GCS ({gcs}/15) meets the qSOFA criterion.")
 
-    # Lab value analysis
     lactate = vitals.get("lactate")
-    if lactate is not None:
-        if lactate >= 4.0:
-            concerns.append(f"CRITICAL lactate ({lactate} mmol/L) — tissue hypoperfusion, septic shock criterion")
-            risk_level = "critical"
-        elif lactate >= 2.0:
-            concerns.append(f"Elevated lactate ({lactate} mmol/L) — possible tissue hypoperfusion")
-
-    wbc = vitals.get("wbc")
-    if wbc is not None:
-        if wbc > 12.0:
-            concerns.append(f"Leukocytosis (WBC {wbc} x10^9/L) — possible infection")
-        elif wbc < 4.0:
-            concerns.append(f"Leukopenia (WBC {wbc} x10^9/L) — immunosuppression or severe infection")
-
-    pct = vitals.get("procalcitonin")
-    if pct is not None and pct > 0.5:
-        concerns.append(f"Elevated procalcitonin ({pct} ng/mL) — bacterial infection likely")
-        actions.append("Consider antibiotic initiation based on procalcitonin guidance")
+    if lactate is not None and lactate >= 2.0:
+        concerns.append(f"Lactate ({lactate} mmol/L) meets an encoded risk criterion.")
 
     qsofa = scores.get("qsofa", 0)
     sirs = scores.get("sirs_count", 0)
-
-    # ML risk integration
     ml_prob = ml_risk["risk_probability"] if ml_risk else None
-    if ml_prob and ml_prob > 0.5:
-        concerns.append(f"ML model predicts {ml_prob:.0%} sepsis probability")
-
-    # Risk-based actions
-    if risk_level == "critical" or qsofa >= 2:
-        risk_level = "critical"
-        actions.insert(0, "IMMEDIATE clinical assessment — activate sepsis protocol")
-        actions.append("Obtain serum lactate level" if lactate is None else "Repeat lactate in 2-4 hours")
-        actions.append("Administer broad-spectrum antibiotics within 1 hour")
-        actions.append("Initiate Surviving Sepsis Campaign hour-1 bundle")
-    elif risk_level == "high" or qsofa >= 1:
-        actions.insert(0, "Urgent clinical review within 30 minutes")
-        actions.append("Check serum lactate and complete blood count" if lactate is None else "Monitor lactate trend")
-    elif risk_level == "moderate" or sirs >= 2:
-        actions.append("Reassess vitals in 1-2 hours")
-        actions.append("Consider infection workup if clinical suspicion")
-    else:
-        actions.append("Continue routine monitoring per protocol")
+    if ml_prob is not None:
+        concerns.append(
+            f"The unvalidated development model produced a {ml_prob:.0%} output."
+        )
 
     if not concerns:
-        concerns.append("Vital signs within normal limits")
+        concerns.append("No encoded score criteria fired in the supplied observations.")
 
-    # Build analysis text
-    ml_text = f" ML model predicts {ml_prob:.0%} risk." if ml_prob else ""
     analysis = (
-        f"Patient presents with qSOFA {qsofa}/3, SIRS {sirs}/3 criteria met.{ml_text} "
-        f"Risk classification: {risk_level.upper()}. "
-        f"{len(concerns)} clinical concern(s) identified."
+        f"Research summary: qSOFA {qsofa}/3 and SIRS {sirs}/3. "
+        f"The encoded risk category is {risk_level}; this is not a diagnosis."
     )
 
     return CopilotResponse(
         analysis=analysis,
         risk_level=risk_level,
         key_concerns=concerns[:5],
-        suggested_actions=actions[:6],
-        disclaimer="Rule-based clinical decision support (AI copilot offline). Not a substitute for clinical judgment.",
+        suggested_actions=[
+            "Verify observation values, timestamps, units, and data source.",
+            "Record reviewer feedback under the approved validation protocol.",
+        ],
+        disclaimer=(
+            "Investigational research summary. Not for diagnosis or treatment."
+        ),
     )
 
 
@@ -1429,27 +1342,43 @@ async def websocket_alerts(websocket: WebSocket):
     """Real-time sepsis alert stream via WebSocket.
 
     Clients receive JSON messages when any patient triggers a high/critical alert.
-    Requires a valid API key via ``?token=<key>`` query parameter when auth is enabled.
+    Authentication uses the ``bearer.<JWT>`` WebSocket subprotocol so credentials
+    never appear in URLs or access logs.
     """
     # Authenticate WebSocket handshake via JWT
     ws_org_id = None  # org_id for filtering broadcasts
+    selected_subprotocol = None
     if _auth_enabled:
-        token = websocket.query_params.get("token")
+        offered = [
+            value.strip()
+            for value in websocket.headers.get("sec-websocket-protocol", "").split(",")
+            if value.strip()
+        ]
+        token_protocol = next(
+            (value for value in offered if value.startswith("bearer.")),
+            None,
+        )
+        token = token_protocol.removeprefix("bearer.") if token_protocol else None
         if not token:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
         try:
-            from sepsis_vitals.auth.tokens import decode_token, TokenError
+            from sepsis_vitals.auth.tokens import decode_token
             payload = decode_token(token)
             if payload.get("type") != "access":
                 await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                 return
             ws_org_id = payload.get("org_id")
+            selected_subprotocol = "sepsis-vitals" if "sepsis-vitals" in offered else None
         except Exception:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
 
-    await ws_manager.connect(websocket, org_id=ws_org_id)
+    await ws_manager.connect(
+        websocket,
+        org_id=ws_org_id,
+        subprotocol=selected_subprotocol,
+    )
     try:
         while True:
             # Keep connection alive, receive any client messages
@@ -1548,24 +1477,27 @@ async def prometheus_metrics(user: Dict = Depends(verify_auth)):
 def _init_database():
     """Initialize database tables on startup.
 
-    Imports billing models so they register with Base.metadata, then
-    creates all tables. Safe to call multiple times.
+    Registers only the models enabled for this deployment, then creates the
+    required tables. Safe to call multiple times.
     """
-    try:
-        # Import billing models so their tables are registered with Base.metadata
-        import sepsis_vitals.billing.models  # noqa: F401
-    except ImportError:
-        logger.info("Billing models not available — skipping")
-    except Exception as exc:
-        logger.error("Failed to import billing models: %s", exc)
+    if os.getenv("SEPSIS_ENABLE_BILLING", "false").lower() == "true":
+        try:
+            # Billing is outside the investigational product's critical path.
+            import sepsis_vitals.billing.models  # noqa: F401
+        except ImportError:
+            logger.info("Billing models not available — skipping")
+        except Exception as exc:
+            logger.error("Failed to import billing models: %s", exc)
 
-    try:
-        # Import bundle models so their tables are registered with Base.metadata
-        import sepsis_vitals.bundles.models  # noqa: F401
-    except ImportError:
-        logger.info("Bundle models not available — skipping")
-    except Exception as exc:
-        logger.error("Failed to import bundle models: %s", exc)
+    if os.getenv("SEPSIS_ENABLE_TREATMENT_BUNDLES", "false").lower() == "true":
+        try:
+            # Register treatment workflow tables only for explicitly approved
+            # deployments; this feature is frozen for investigational use.
+            import sepsis_vitals.bundles.models  # noqa: F401
+        except ImportError:
+            logger.info("Bundle models not available — skipping")
+        except Exception as exc:
+            logger.error("Failed to import bundle models: %s", exc)
 
     from sepsis_vitals.db import init_db
     init_db()
@@ -1577,11 +1509,15 @@ def _include_routers():
     routers = [
         ("sepsis_vitals.auth.router", "auth", [Depends(check_auth_rate_limit)]),
         ("sepsis_vitals.patients.router", "patients", [Depends(check_rate_limit)]),
-        ("sepsis_vitals.billing.router", "billing", []),  # billing has its own limiters
         ("sepsis_vitals.alerts.router", "alerts", [Depends(check_rate_limit)]),
         ("sepsis_vitals.fhir.router", "fhir", [Depends(check_rate_limit)]),
-        ("sepsis_vitals.bundles.router", "bundles", [Depends(check_rate_limit)]),
     ]
+    if os.getenv("SEPSIS_ENABLE_BILLING", "false").lower() == "true":
+        routers.append(("sepsis_vitals.billing.router", "billing", []))
+    if os.getenv("SEPSIS_ENABLE_TREATMENT_BUNDLES", "false").lower() == "true":
+        routers.append(
+            ("sepsis_vitals.bundles.router", "bundles", [Depends(check_rate_limit)])
+        )
     for module_path, tag, deps in routers:
         try:
             import importlib

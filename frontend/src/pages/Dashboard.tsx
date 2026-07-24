@@ -39,7 +39,7 @@ export function Dashboard() {
     patientCount: patients.length || 12,
     predictionsToday: 147,
     modelAuroc: '0.92',
-    modelName: 'GradientBoosting',
+    modelName: 'Synthetic baseline',
   })
 
   useEffect(() => {
@@ -99,7 +99,7 @@ export function Dashboard() {
           color="info"
         />
         <StatCard
-          label={t('dashboard.modelAuroc')}
+          label="Synthetic-test AUROC"
           value={stats.modelAuroc}
           sublabel={stats.modelName}
           color="accent"

@@ -4,10 +4,7 @@ tests/test_new_systems.py — Tests for billing, auth, patients, alerts, FHIR, a
 
 import json
 import os
-import time
-from datetime import datetime, timezone
 
-import numpy as np
 import pytest
 
 
@@ -56,6 +53,27 @@ except ImportError:
 
 @pytest.mark.skipif(not HAS_PYJWT, reason="PyJWT not installed")
 class TestAuthTokens:
+    @pytest.fixture(autouse=True)
+    def configure_test_signing_key(self, monkeypatch):
+        """Give each token test isolated key-loader state."""
+        from sepsis_vitals.auth import tokens
+
+        monkeypatch.setenv(
+            "SEPSIS_JWT_SECRET",
+            "test-auth-token-secret-with-at-least-32-chars",
+        )
+        tokens._SECRET_KEY = None
+        tokens._RSA_PRIVATE_KEY = None
+        tokens._RSA_PUBLIC_KEY = None
+        tokens._KEYS_LOADED = False
+        tokens._ALGORITHM = "HS256"
+        yield
+        tokens._SECRET_KEY = None
+        tokens._RSA_PRIVATE_KEY = None
+        tokens._RSA_PUBLIC_KEY = None
+        tokens._KEYS_LOADED = False
+        tokens._ALGORITHM = "HS256"
+
     def test_create_and_decode_access_token(self):
         from sepsis_vitals.auth.tokens import create_access_token, decode_token
         token = create_access_token("user1", "test@test.com", "nurse", "org1")
@@ -95,28 +113,63 @@ try:
 except ImportError:
     HAS_FASTAPI = False
 
+try:
+    import email_validator as _email_validator  # noqa: F401
+    HAS_EMAIL_VALIDATOR = True
+except ImportError:
+    HAS_EMAIL_VALIDATOR = False
+
 
 @pytest.mark.skipif(not HAS_SQLALCHEMY, reason="sqlalchemy not installed")
 class TestAuthServiceValidation:
     def test_password_validation_too_short(self):
-        from sepsis_vitals.auth.service import _validate_password_strength
-        with pytest.raises(ValueError):
+        from sepsis_vitals.auth.service import (
+            WeakPasswordError,
+            _validate_password_strength,
+        )
+        with pytest.raises(WeakPasswordError):
             _validate_password_strength("Ab1")
 
     def test_password_validation_no_uppercase(self):
-        from sepsis_vitals.auth.service import _validate_password_strength
-        with pytest.raises(ValueError):
-            _validate_password_strength("abcdefg1")
+        from sepsis_vitals.auth.service import (
+            WeakPasswordError,
+            _validate_password_strength,
+        )
+        with pytest.raises(WeakPasswordError):
+            _validate_password_strength("lowercasepass1!")
 
     def test_password_validation_no_digit(self):
-        from sepsis_vitals.auth.service import _validate_password_strength
-        with pytest.raises(ValueError):
-            _validate_password_strength("Abcdefgh")
+        from sepsis_vitals.auth.service import (
+            WeakPasswordError,
+            _validate_password_strength,
+        )
+        with pytest.raises(WeakPasswordError):
+            _validate_password_strength("SecurePassword!")
 
     def test_password_validation_valid(self):
         from sepsis_vitals.auth.service import _validate_password_strength
         # Should not raise
-        _validate_password_strength("SecurePass1")
+        _validate_password_strength("SecurePass1!")
+
+
+@pytest.mark.skipif(
+    not (HAS_FASTAPI and HAS_EMAIL_VALIDATOR),
+    reason="FastAPI email validation dependencies not installed",
+)
+class TestRegistrationSafety:
+    def test_public_registration_cannot_choose_role_or_organization(self):
+        from sepsis_vitals.auth.router import RegisterRequest
+
+        assert set(RegisterRequest.model_fields) == {"email", "password"}
+
+    def test_production_registration_has_explicit_guard(self):
+        import inspect
+        from sepsis_vitals.auth.router import auth_register
+
+        source = inspect.getsource(auth_register)
+        assert "SEPSIS_ALLOW_SELF_REGISTRATION" in source
+        assert 'role="researcher"' in source
+        assert "org_id=None" in source
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -439,7 +492,11 @@ class TestAPISecurityHardening:
 
     def test_security_header_values(self):
         """Verify the security header constants are correct."""
-        # These are the header values we set in the middleware
+        import inspect
+
+        from sepsis_vitals.api import security_headers
+
+        source = inspect.getsource(security_headers)
         expected_headers = {
             "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
             "X-Content-Type-Options": "nosniff",
@@ -447,6 +504,9 @@ class TestAPISecurityHardening:
             "Referrer-Policy": "strict-origin-when-cross-origin",
             "X-XSS-Protection": "1; mode=block",
         }
+        for name, value in expected_headers.items():
+            assert name in source
+            assert value in source
         # Verify the CSP header contains critical directives
         csp = (
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
@@ -459,8 +519,7 @@ class TestAPISecurityHardening:
 
     def test_include_routers_logs_errors(self):
         """_include_routers should log import failures instead of silently passing."""
-        import logging
-        from sepsis_vitals.api import _include_routers, logger
+        from sepsis_vitals.api import logger
 
         # The logger should exist and be named correctly
         assert logger.name == "sepsis_vitals.api"
@@ -472,13 +531,14 @@ class TestAPISecurityHardening:
         source = inspect.getsource(websocket_alerts)
         # The function should reference _auth_enabled and token verification
         assert "_auth_enabled" in source
-        assert "query_params" in source
+        assert "sec-websocket-protocol" in source
+        assert "query_params" not in source
         assert "WS_1008_POLICY_VIOLATION" in source
 
-    def test_api_keys_dict_exists(self):
-        """API_KEYS dict should be initialized."""
-        from sepsis_vitals.api import API_KEYS
-        assert isinstance(API_KEYS, dict)
+    def test_static_api_keys_are_absent(self):
+        """Authentication must not fall back to an in-memory key dictionary."""
+        import sepsis_vitals.api as api
+        assert not hasattr(api, "API_KEYS")
 
     def test_rate_limiters_configured(self):
         """Rate limiters should have appropriate rates."""
@@ -497,7 +557,6 @@ class TestAPISecurityHardening:
 
     def test_llm_disabled_by_default(self):
         """LLM copilot should be disabled by default (requires enterprise flag)."""
-        from sepsis_vitals.api import _enterprise_llm_enabled
         # Unless SEPSIS_ENTERPRISE_LLM=true is set, LLM should be off
         saved = os.environ.pop("SEPSIS_ENTERPRISE_LLM", None)
         try:
@@ -759,6 +818,7 @@ class TestJWTAuth:
 
         # Should be locked out even with correct password
         result = store.authenticate("user@test.com", "correct")
+        assert result is None
         # After 5 failures, lockout kicks in (exponential backoff)
         # The lockout duration grows, so after 5 attempts it should be locked
         store.close()
@@ -1114,7 +1174,7 @@ class TestJWTAuthWiring:
         assert "decode_token" in source
         assert "API_KEYS" not in source
 
-    @pytest.mark.skipif(not HAS_FASTAPI, reason="PyJWT not installed")
+    @pytest.mark.skipif(not HAS_PYJWT, reason="PyJWT not installed")
     def test_token_creation_and_decode_roundtrip(self):
         """JWT tokens should be creatable and decodable."""
         saved = os.environ.get("SEPSIS_JWT_SECRET")
@@ -1123,6 +1183,10 @@ class TestJWTAuthWiring:
             # Force reload of secret
             from sepsis_vitals.auth import tokens
             tokens._SECRET_KEY = None
+            tokens._RSA_PRIVATE_KEY = None
+            tokens._RSA_PUBLIC_KEY = None
+            tokens._KEYS_LOADED = False
+            tokens._ALGORITHM = "HS256"
 
             token = tokens.create_access_token(
                 user_id="user-123",
@@ -1137,6 +1201,10 @@ class TestJWTAuthWiring:
             assert payload["type"] == "access"
         finally:
             tokens._SECRET_KEY = None
+            tokens._RSA_PRIVATE_KEY = None
+            tokens._RSA_PUBLIC_KEY = None
+            tokens._KEYS_LOADED = False
+            tokens._ALGORITHM = "HS256"
             if saved is not None:
                 os.environ["SEPSIS_JWT_SECRET"] = saved
             else:
@@ -1332,7 +1400,10 @@ class TestPredictionAuditTrail:
         assert any("patient" in name for name in index_names)
         assert any("risk" in name for name in index_names)
 
-    @pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
+    @pytest.mark.skipif(
+        not (HAS_FASTAPI and HAS_EMAIL_VALIDATOR),
+        reason="FastAPI email validation dependencies not installed",
+    )
     def test_predict_endpoint_calls_persist(self):
         """predict endpoint source must call _persist_prediction."""
         import inspect
@@ -1509,7 +1580,6 @@ class TestBreakGlassEmergencyAccess:
         from sepsis_vitals.auth.service import (
             BreakGlassError,
             break_glass_login,
-            _BREAK_GLASS_TOKEN_HASH,
         )
         import sepsis_vitals.auth.service as bg_mod
         saved = os.environ.pop("BREAK_GLASS_TOKEN_HASH", None)
@@ -1589,6 +1659,10 @@ class TestBreakGlassEmergencyAccess:
         # Reset JWT secret cache
         from sepsis_vitals.auth import tokens
         tokens._SECRET_KEY = None
+        tokens._RSA_PRIVATE_KEY = None
+        tokens._RSA_PUBLIC_KEY = None
+        tokens._KEYS_LOADED = False
+        tokens._ALGORITHM = "HS256"
 
         try:
             result = break_glass_login(
@@ -1610,6 +1684,10 @@ class TestBreakGlassEmergencyAccess:
         finally:
             bg_mod._BREAK_GLASS_TOKEN_HASH = None
             tokens._SECRET_KEY = None
+            tokens._RSA_PRIVATE_KEY = None
+            tokens._RSA_PUBLIC_KEY = None
+            tokens._KEYS_LOADED = False
+            tokens._ALGORITHM = "HS256"
             if saved_hash is not None:
                 os.environ["BREAK_GLASS_TOKEN_HASH"] = saved_hash
             else:
@@ -1619,7 +1697,10 @@ class TestBreakGlassEmergencyAccess:
             else:
                 os.environ.pop("SEPSIS_JWT_SECRET", None)
 
-    @pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
+    @pytest.mark.skipif(
+        not (HAS_FASTAPI and HAS_EMAIL_VALIDATOR),
+        reason="FastAPI email validation dependencies not installed",
+    )
     def test_break_glass_endpoint_exists_in_router(self):
         """Router must have a /auth/break-glass POST endpoint."""
         from sepsis_vitals.auth.router import router

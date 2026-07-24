@@ -1,7 +1,7 @@
 """
 sepsis_vitals.ml.predictor
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
-Autonomous sepsis prediction engine.
+Investigational sepsis prediction engine.
 
 Loads a trained model and provides real-time sepsis risk predictions
 with SHAP explanations, confidence intervals, and clinical score integration.
@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import joblib
 import numpy as np
@@ -167,7 +167,7 @@ def classify_risk_dual(
 
 
 class SepsisPredictor:
-    """Autonomous sepsis prediction engine.
+    """Investigational sepsis prediction engine.
 
     Loads a trained model and provides predictions with:
     - ML risk probability
@@ -179,14 +179,17 @@ class SepsisPredictor:
 
     def __init__(self, model_dir: str = "models"):
         self.model_dir = Path(model_dir)
-        self.model = None
-        self.scaler = None
-        self.metadata = None
-        self.feature_names = None
-        self._state_store = None
+        # These objects are deserialized from joblib/JSON and intentionally
+        # remain implementation-agnostic across supported sklearn estimators.
+        self.model: Any = None
+        self.scaler: Any = None
+        self.metadata: Dict[str, Any] = {}
+        self.feature_names: List[str] = []
+        self._state_store: Any = None
+        self._imputation_medians: Dict[str, float] = {}
         self._loaded = False
-        self.dual_thresholds = None
-        self.conformal_predictor = None
+        self.dual_thresholds: Optional[Dict[str, Dict[str, float]]] = None
+        self.conformal_predictor: Any = None
 
     def load(self) -> None:
         """Load model, scaler, metadata, and imputation medians from disk."""
@@ -574,29 +577,29 @@ class SepsisPredictor:
         scores: Any,
         factors: List[Dict[str, Any]],
     ) -> str:
-        """Generate clinical recommendation based on risk assessment."""
+        """Generate a research interpretation without treatment instructions."""
+        context = f"Development-model output: {risk_prob:.0%}; qSOFA: {scores.qsofa}/3."
         if risk_level == "critical":
             return (
-                "CRITICAL SEPSIS RISK. Immediate clinical assessment required. "
-                "Consider sepsis bundle initiation: blood cultures, lactate level, "
-                "broad-spectrum antibiotics within 1 hour, IV fluid resuscitation. "
-                f"ML risk: {risk_prob:.0%}, qSOFA: {scores.qsofa}/3."
+                "High-priority research signal. Flag this case for blinded study review; "
+                "do not use this output to guide diagnosis or treatment. "
+                f"{context}"
             )
         elif risk_level == "high":
             return (
-                "HIGH SEPSIS RISK. Urgent clinical review recommended. "
-                "Obtain blood cultures, check lactate, assess for infection source. "
-                "Monitor vitals every 30 minutes. "
-                f"ML risk: {risk_prob:.0%}, qSOFA: {scores.qsofa}/3."
+                "Elevated research signal. Include this case in the study review queue "
+                "and compare it with the prespecified reference standard. "
+                f"{context}"
             )
         elif risk_level == "moderate":
             return (
-                "MODERATE SEPSIS RISK. Close monitoring recommended. "
-                "Reassess vitals in 1-2 hours. Consider infection workup if clinical suspicion. "
-                f"ML risk: {risk_prob:.0%}, qSOFA: {scores.qsofa}/3."
+                "Intermediate research signal. Record the result for cohort-level "
+                "calibration and alert-burden analysis. "
+                f"{context}"
             )
         else:
             return (
-                "LOW SEPSIS RISK. Continue routine monitoring. "
-                f"ML risk: {risk_prob:.0%}, qSOFA: {scores.qsofa}/3."
+                "Lower research signal. A low output does not rule out sepsis and must "
+                "not alter the existing standard of care. "
+                f"{context}"
             )

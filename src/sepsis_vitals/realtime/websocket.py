@@ -22,8 +22,17 @@ class ConnectionManager:
         # List of (websocket, org_id) tuples
         self._connections: list[tuple[Any, str | None]] = []
 
-    async def connect(self, websocket: Any, *, org_id: str | None = None) -> None:
-        await websocket.accept()
+    async def connect(
+        self,
+        websocket: Any,
+        *,
+        org_id: str | None = None,
+        subprotocol: str | None = None,
+    ) -> None:
+        if subprotocol:
+            await websocket.accept(subprotocol=subprotocol)
+        else:
+            await websocket.accept()
         self._connections.append((websocket, org_id))
 
     def disconnect(self, websocket: Any) -> None:

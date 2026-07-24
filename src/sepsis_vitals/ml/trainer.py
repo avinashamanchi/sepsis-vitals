@@ -18,10 +18,9 @@ Models:
 from __future__ import annotations
 
 import json
-import os
 import time
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -35,7 +34,6 @@ from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
     brier_score_loss,
-    classification_report,
     confusion_matrix,
     f1_score,
     precision_recall_curve,
@@ -443,7 +441,10 @@ def train_single_model(
         version="1.0.0",
         description=f"{name} model trained on synthetic clinical data for sepsis identification",
         metrics=metrics,
-        training_data=f"Synthetic dataset calibrated to NHANES population distributions",
+        training_data=(
+            "Procedurally generated synthetic data with hand-authored "
+            "demographic and vital-sign assumptions"
+        ),
         fairness_notes="Trained with demographic features; fairness audit recommended",
     )
 
@@ -534,9 +535,9 @@ def lopocv_evaluate(
             model_params = {"C": 0.1, "max_iter": 2000, "random_state": 42, "solver": "lbfgs"}
 
     patient_ids = df["patient_id"].unique()
-    all_y_true = []
-    all_y_prob = []
-    patient_predictions = {}
+    all_y_true_values: List[int] = []
+    all_y_prob_values: List[float] = []
+    patient_predictions: Dict[str, Dict[str, List[Any]]] = {}
 
     for pid in patient_ids:
         test_mask = df["patient_id"] == pid
@@ -569,18 +570,18 @@ def lopocv_evaluate(
         model.fit(X_train, y_train)
         y_prob = model.predict_proba(X_test)[:, 1]
 
-        all_y_true.extend(y_test.tolist())
-        all_y_prob.extend(y_prob.tolist())
+        all_y_true_values.extend(y_test.tolist())
+        all_y_prob_values.extend(y_prob.tolist())
         patient_predictions[str(pid)] = {
             "y_true": y_test.tolist(),
             "y_prob": y_prob.tolist(),
         }
 
     # Compute aggregate metrics
-    all_y_true = np.array(all_y_true)
-    all_y_prob = np.array(all_y_prob)
+    all_y_true = np.asarray(all_y_true_values, dtype=int)
+    all_y_prob = np.asarray(all_y_prob_values, dtype=float)
 
-    results = {
+    results: Dict[str, Any] = {
         "n_patients": len(patient_ids),
         "n_evaluated": len(patient_predictions),
         "patient_predictions": patient_predictions,
@@ -595,7 +596,7 @@ def lopocv_evaluate(
         fpr, tpr, thresholds = roc_curve(all_y_true, all_y_prob)
         for target_spec in [0.95, 0.99]:
             target_fpr = 1 - target_spec
-            idx = np.searchsorted(fpr, target_fpr)
+            idx = int(np.searchsorted(fpr, target_fpr))
             sens = float(tpr[idx]) if idx < len(tpr) else float(tpr[-1])
             thresh = float(thresholds[idx]) if idx < len(thresholds) else 0.5
             results[f"sensitivity_at_{int(target_spec*100)}spec"] = sens
@@ -626,7 +627,7 @@ def compute_dual_thresholds(
     for name, target_spec in [("continuous", 0.99), ("on_demand", 0.95)]:
         target_fpr = 1.0 - target_spec
         # Find the threshold that gives us <= target_fpr
-        idx = np.searchsorted(fpr, target_fpr)
+        idx = int(np.searchsorted(fpr, target_fpr))
         if idx >= len(thresholds):
             idx = len(thresholds) - 1
 
@@ -655,7 +656,17 @@ def calibrate_model(
     Also fits a ConformalPredictor on the calibration set so that
     inference can produce statistically valid prediction intervals.
     """
-    calibrated = CalibratedClassifierCV(result.model, cv="prefit", method="sigmoid")
+    try:
+        # scikit-learn >=1.6 replaced cv="prefit" with FrozenEstimator.
+        from sklearn.frozen import FrozenEstimator
+    except ImportError:  # pragma: no cover - compatibility with sklearn 1.3-1.5
+        calibrated = CalibratedClassifierCV(
+            result.model, cv="prefit", method="sigmoid"
+        )
+    else:
+        calibrated = CalibratedClassifierCV(
+            FrozenEstimator(result.model), method="sigmoid"
+        )
     calibrated.fit(X_val, y_val)
 
     result.model = calibrated
@@ -665,7 +676,7 @@ def calibrate_model(
     # We use the calibrated model so nonconformity scores reflect
     # the post-Platt-scaling probabilities.
     cp = ConformalPredictor(alpha=conformal_alpha)
-    cp.calibrate(calibrated, X_val, pd.Series(y_val))
+    cp.calibrate(calibrated, pd.DataFrame(X_val), pd.Series(y_val))
     result.conformal_predictor = cp
 
     return result
@@ -773,9 +784,9 @@ def save_model(
 
     print(f"\n  Model saved to {output_path}/")
     print(f"    - sepsis_model.joblib ({model_file.stat().st_size / 1024:.0f} KB)")
-    print(f"    - model_metadata.json")
+    print("    - model_metadata.json")
     if result.scaler is not None:
-        print(f"    - scaler.joblib")
+        print("    - scaler.joblib")
     if conformal_quantile is not None:
         print(f"    - conformal_predictor.joblib (quantile={conformal_quantile:.4f})")
 
@@ -931,7 +942,7 @@ def _generate_text_report(
     lines.append(f"\n  Calibration ECE:    {cal['ece']:.4f} ({cal['quality']})")
     lines.append(f"  Brier Score:        {cal['brier_score']:.4f}")
 
-    lines.append(f"\n  Confusion Matrix:")
+    lines.append("\n  Confusion Matrix:")
     lines.append(f"    TP: {test['test_true_positives']:>6}  FP: {test['test_false_positives']:>6}")
     lines.append(f"    FN: {test['test_false_negatives']:>6}  TN: {test['test_true_negatives']:>6}")
 

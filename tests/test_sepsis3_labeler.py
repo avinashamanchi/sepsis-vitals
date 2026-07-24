@@ -6,7 +6,6 @@ detection, sepsis onset derivation, and observation labeling.
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from sepsis_vitals.ml.sepsis3_labeler import (
     compute_sofa_scores,

@@ -1,6 +1,7 @@
-import { lazy, Suspense, useEffect, useCallback, useState } from 'react'
+import { lazy, Suspense, useEffect, useCallback } from 'react'
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { FlaskConical } from 'lucide-react'
 import { LANGUAGES } from './i18n'
 import { EulaGate } from './components/EulaGate'
 import { Sidebar } from './components/Sidebar'
@@ -12,10 +13,10 @@ import { KeyboardShortcuts } from './components/KeyboardShortcuts'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useStore } from './stores/useStore'
 import { isDemo, setOnUnauthorized, api } from './lib/api'
-import { onAuthChange } from './lib/auth'
 
 const Landing = lazy(() => import('./pages/Landing').then((m) => ({ default: m.Landing })))
-const Pricing = lazy(() => import('./pages/Pricing').then((m) => ({ default: m.Pricing })))
+const Evidence = lazy(() => import('./pages/Evidence').then((m) => ({ default: m.Evidence })))
+const Pilot = lazy(() => import('./pages/Pilot').then((m) => ({ default: m.Pilot })))
 const Dashboard = lazy(() => import('./pages/Dashboard').then((m) => ({ default: m.Dashboard })))
 const Patients = lazy(() => import('./pages/Patients').then((m) => ({ default: m.Patients })))
 const PatientDetail = lazy(() => import('./pages/PatientDetail').then((m) => ({ default: m.PatientDetail })))
@@ -26,9 +27,8 @@ const Alerts = lazy(() => import('./pages/Alerts').then((m) => ({ default: m.Ale
 const Admin = lazy(() => import('./pages/Admin').then((m) => ({ default: m.Admin })))
 const Login = lazy(() => import('./pages/Login').then((m) => ({ default: m.Login })))
 const Monitor = lazy(() => import('./pages/Monitor').then((m) => ({ default: m.Monitor })))
-const Population = lazy(() => import('./pages/Population').then((m) => ({ default: m.Population })))
 
-const SESSION_TIMEOUT_MS = 15 * 60 * 1000 // 15 minutes HIPAA
+const SESSION_TIMEOUT_MS = 15 * 60 * 1000 // shared-workstation safety timeout
 
 function PageLoading() {
   return (
@@ -109,26 +109,7 @@ function RootRedirect() {
 
 export default function App() {
   const { t, i18n } = useTranslation()
-  const setAuth = useStore((s) => s.setAuth)
-  const [authReady, setAuthReady] = useState(false)
   useWebSocket()
-
-  // Firebase auth state listener — restore session on load
-  useEffect(() => {
-    const unsubscribe = onAuthChange(async (user) => {
-      if (user) {
-        const token = await user.getIdToken()
-        setAuth(token, {
-          email: user.email ?? '',
-          role: 'user',
-          displayName: user.displayName ?? undefined,
-          photoURL: user.photoURL ?? undefined,
-        })
-      }
-      setAuthReady(true)
-    })
-    return unsubscribe
-  }, [setAuth])
 
   useEffect(() => {
     const lang = LANGUAGES.find((l) => l.code === i18n.language)
@@ -144,27 +125,20 @@ export default function App() {
       .catch(() => useStore.getState().setSimulatorEnabled(false))
   }, [])
 
-  if (!authReady) {
-    return (
-      <div className="min-h-screen bg-void flex items-center justify-center">
-        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-      </div>
-    )
-  }
-
   return (
-    <EulaGate>
-      <Suspense fallback={<PageLoading />}>
-        <Routes>
-          {/* Public routes — no sidebar/topbar */}
-          <Route path="/" element={<RootRedirect />} />
-          <Route path="/pricing" element={<Pricing />} />
-          <Route path="/login" element={<Login />} />
+    <Suspense fallback={<PageLoading />}>
+      <Routes>
+        {/* Public routes stay public. Legal acceptance belongs at the app boundary. */}
+        <Route path="/" element={<RootRedirect />} />
+        <Route path="/evidence" element={<Evidence />} />
+        <Route path="/pilot" element={<Pilot />} />
+        <Route path="/pricing" element={<Navigate to="/pilot" replace />} />
+        <Route path="/login" element={<Login />} />
 
-          {/* Authenticated routes — sidebar/topbar layout */}
-          <Route
-            path="/*"
-            element={
+        <Route
+          path="/*"
+          element={
+            <EulaGate>
               <AuthGuard>
                 <div className="min-h-screen bg-background text-text-primary font-mono">
                   <a
@@ -177,6 +151,16 @@ export default function App() {
                   <Sidebar />
                   <div className="lg:ml-[220px] min-h-screen flex flex-col">
                     <TopBar />
+                    <div
+                      role="note"
+                      className="flex items-start gap-2 border-b border-warning/20 bg-warning/8 px-4 py-2.5 text-[11px] leading-relaxed text-warning lg:px-6"
+                    >
+                      <FlaskConical className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      <span>
+                        <strong>Research environment.</strong> The model is trained on synthetic data
+                        and has not been clinically validated. Do not use outputs for diagnosis or treatment.
+                      </span>
+                    </div>
                     <main id="main-content" className="flex-1 p-4 lg:p-6 pb-20 lg:pb-6">
                       <Suspense fallback={<PageLoading />}>
                         <Routes>
@@ -184,12 +168,12 @@ export default function App() {
                           <Route path="/patients" element={<Patients />} />
                           <Route path="/patients/:id" element={<PatientDetail />} />
                           <Route path="/monitor" element={<Monitor />} />
-                          <Route path="/population" element={<Population />} />
                           <Route path="/scores" element={<ScoreLab />} />
                           <Route path="/predict" element={<Predict />} />
                           <Route path="/analytics" element={<Analytics />} />
                           <Route path="/alerts" element={<Alerts />} />
                           <Route path="/admin" element={<Admin />} />
+                          <Route path="*" element={<Navigate to="/dashboard" replace />} />
                         </Routes>
                       </Suspense>
                     </main>
@@ -199,10 +183,10 @@ export default function App() {
                   <SimulatorPanel />
                 </div>
               </AuthGuard>
-            }
-          />
-        </Routes>
-      </Suspense>
-    </EulaGate>
+            </EulaGate>
+          }
+        />
+      </Routes>
+    </Suspense>
   )
 }

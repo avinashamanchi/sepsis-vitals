@@ -94,9 +94,7 @@
     "highRisk": "Risque élevé",
     "mediumRisk": "Risque modéré",
     "lowRisk": "Risque faible",
-    "elevated": "Élevé",
-    "highMortality": "Mortalité élevée",
-    "lowerRisk": "Risque réduit"
+    "elevated": "Élevé"
   },
   "login": {
     "signIn": "Connectez-vous pour continuer",
@@ -181,9 +179,7 @@
     "riskProbability": "Probabilité de risque de sepsis",
     "confidenceInterval": "IC 95 % : [{{lower}}% - {{upper}}%]",
     "continuousMonitoring": "Surveillance continue",
-    "specificityThreshold99": "Seuil de spécificité à 99 %",
     "clinicalAssessment": "Évaluation clinique",
-    "specificityThreshold95": "Seuil de spécificité à 95 %",
     "riskFactors": "Facteurs de risque (SHAP)",
     "emptyState": "Entrez les constantes vitales pour lancer la prédiction ML",
     "emptyStateHint": "Modèle GradientBoosting avec scores cliniques et explications SHAP"

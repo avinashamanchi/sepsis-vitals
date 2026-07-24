@@ -7,7 +7,6 @@ Tests are skipped if the demo data is not available locally.
 
 from pathlib import Path
 
-import pandas as pd
 import pytest
 
 MIMIC_DEMO_PATH = Path("physionet.org/files/mimic-iv-demo/2.2")

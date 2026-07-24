@@ -1,3 +1,3 @@
-"""Sepsis Vitals — vitals + lab-augmented sepsis prediction for district hospitals."""
+"""Sepsis Vitals — investigational sepsis early-warning research platform."""
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"

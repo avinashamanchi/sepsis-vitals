@@ -545,6 +545,7 @@ class FieldEncryptor:
 
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+        assert self._key is not None
         nonce = os.urandom(12)
         aesgcm = AESGCM(self._key)
         ct = aesgcm.encrypt(nonce, plaintext.encode("utf-8"), None)
@@ -569,6 +570,7 @@ class FieldEncryptor:
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
         try:
+            assert self._key is not None
             raw = base64.b64decode(token[4:])
             nonce = raw[:12]
             ciphertext = raw[12:]

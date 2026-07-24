@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { Shield, AlertTriangle, Scale, FileCheck } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-const EULA_VERSION = '1.0.0'
+const EULA_VERSION = '1.1.0'
 const STORAGE_KEY = 'sv_eula_accepted'
 
 function hasAcceptedEula(): boolean {

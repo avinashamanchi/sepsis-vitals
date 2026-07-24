@@ -16,7 +16,6 @@ The *permanent* clinical audit trail lives in Postgres:
 Redis = fast math.  Postgres = legal truth.
 """
 
-import asyncio
 import json
 import logging
 import os
@@ -70,8 +69,13 @@ class RedisPatientStateStore:
     KEY_PREFIX = "sv"
 
     def __init__(self, redis_url: Optional[str] = None):
-        self._redis_url = redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0")
-        self._redis = None
+        self._redis_url: str = (
+            redis_url
+            or os.getenv("REDIS_URL")
+            or "redis://localhost:6379/0"
+        )
+        # redis.asyncio is an optional dependency with a dynamic client type.
+        self._redis: Any = None
         self._connected = False
 
     async def connect(self) -> bool:

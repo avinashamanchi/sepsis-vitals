@@ -26,7 +26,7 @@ from typing import Any, Deque, Dict, Optional
 
 import numpy as np
 
-from sepsis_vitals.monitoring.metrics import check_distribution_drift, compute_psi
+from sepsis_vitals.monitoring.metrics import check_distribution_drift
 
 logger = logging.getLogger(__name__)
 

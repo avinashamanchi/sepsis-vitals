@@ -94,9 +94,7 @@
     "highRisk": "خطر مرتفع",
     "mediumRisk": "خطر متوسط",
     "lowRisk": "خطر منخفض",
-    "elevated": "مرتفع",
-    "highMortality": "معدل وفيات مرتفع",
-    "lowerRisk": "خطر أقل"
+    "elevated": "مرتفع"
   },
   "login": {
     "signIn": "تسجيل الدخول للمتابعة",
@@ -181,9 +179,7 @@
     "riskProbability": "احتمالية خطر الإنتان",
     "confidenceInterval": "95% CI: [{{lower}}% - {{upper}}%]",
     "continuousMonitoring": "المراقبة المستمرة",
-    "specificityThreshold99": "عتبة النوعية 99%",
     "clinicalAssessment": "التقييم السريري",
-    "specificityThreshold95": "عتبة النوعية 95%",
     "riskFactors": "عوامل الخطر (SHAP)",
     "emptyState": "أدخل العلامات الحيوية لتشغيل تنبؤ التعلم الآلي",
     "emptyStateHint": "نموذج GradientBoosting مع الدرجات السريرية وتفسيرات SHAP"
