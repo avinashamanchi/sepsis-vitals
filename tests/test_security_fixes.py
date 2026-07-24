@@ -147,7 +147,7 @@ class TestWebSocketOrgScoping:
         mgr._connections = [(ws_authed, "org-a"), (ws_demo, None)]
 
         with patch.object(mgr, "_patient_org_id", return_value=None):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 mgr.broadcast({"patient_id": "P999", "type": "alert"})
             )
 
@@ -163,7 +163,7 @@ class TestWebSocketOrgScoping:
         mgr._connections = [(ws, "org-a")]
 
         with patch.object(mgr, "_patient_org_id", return_value="org-a"):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 mgr.broadcast({"patient_id": "P1", "type": "alert"})
             )
 
@@ -178,7 +178,7 @@ class TestWebSocketOrgScoping:
         mgr._connections = [(ws, "org-b")]
 
         with patch.object(mgr, "_patient_org_id", return_value="org-a"):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 mgr.broadcast({"patient_id": "P1", "type": "alert"})
             )
 

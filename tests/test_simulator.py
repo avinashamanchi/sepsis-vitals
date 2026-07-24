@@ -65,7 +65,7 @@ class TestCaseReplay:
         )
 
         # Run one step
-        asyncio.get_event_loop().run_until_complete(replay.step())
+        asyncio.run(replay.step())
 
         # Should have called ingest_single with the first observation
         mock_ingester.ingest_single.assert_called_once()
@@ -85,10 +85,10 @@ class TestCaseReplay:
 
         assert replay.position == 0
 
-        asyncio.get_event_loop().run_until_complete(replay.step())
+        asyncio.run(replay.step())
         assert replay.position == 1
 
-        asyncio.get_event_loop().run_until_complete(replay.step())
+        asyncio.run(replay.step())
         assert replay.position == 2
 
     def test_replay_completes(self, sample_timeline, sample_case_meta, mock_ingester):
@@ -103,7 +103,7 @@ class TestCaseReplay:
 
         # Step through all observations
         for _ in range(6):
-            asyncio.get_event_loop().run_until_complete(replay.step())
+            asyncio.run(replay.step())
 
         assert replay.is_complete
         assert replay.position == 6
@@ -123,7 +123,7 @@ class TestCaseReplay:
         assert delay == 0.0
 
         # After first step, delay should be: 1 hour / 720 = 5 seconds
-        asyncio.get_event_loop().run_until_complete(replay.step())
+        asyncio.run(replay.step())
         delay = replay.next_delay()
         assert abs(delay - 5.0) < 0.1
 
@@ -165,7 +165,7 @@ class TestCaseReplay:
         # Should have 2 timepoints (pivoted)
         assert replay.total_observations == 2
 
-        asyncio.get_event_loop().run_until_complete(replay.step())
+        asyncio.run(replay.step())
         call_args = mock_ingester.ingest_single.call_args[0]
         vitals = call_args[1]
         assert "heart_rate" in vitals
@@ -227,7 +227,7 @@ class TestWardSimulator:
             seed=42,
         )
 
-        asyncio.get_event_loop().run_until_complete(ward.step())
+        asyncio.run(ward.step())
 
         # Should have called ingest_single for each patient with an observation at this timepoint
         assert mock_ingester.ingest_single.call_count >= 1
@@ -284,7 +284,7 @@ class TestWardSimulator:
         for _ in range(20):  # more than enough steps
             if ward.is_complete:
                 break
-            asyncio.get_event_loop().run_until_complete(ward.step())
+            asyncio.run(ward.step())
 
         assert ward.is_complete
 
@@ -405,7 +405,7 @@ class TestSimulatorIntegration:
         for _ in range(ward.total_steps + 5):
             if ward.is_complete:
                 break
-            asyncio.get_event_loop().run_until_complete(ward.step())
+            asyncio.run(ward.step())
 
         # Verify: all patients registered
         for pid in ward.patient_ids:
@@ -453,7 +453,7 @@ class TestSimulatorIntegration:
         replay = CaseReplay(meta, timeline, ingester, speed=720)
 
         for _ in range(4):
-            asyncio.get_event_loop().run_until_complete(replay.step())
+            asyncio.run(replay.step())
 
         assert replay.is_complete
         assert registry.is_registered("mimic-1001")
