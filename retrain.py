@@ -3,7 +3,7 @@
 retrain.py — Unified retraining pipeline for sepsis identification model.
 
 Supports two data sources:
-  1. Synthetic (NHANES-calibrated) — for development and baseline metrics
+  1. Hand-authored heuristic synthetic data — for development and baseline metrics
   2. MIMIC-IV (real ICU data)      — for clinical validation and pitch deck
 
 Usage:
@@ -21,13 +21,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import sys
 import time
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -62,7 +60,7 @@ def load_synthetic_data(
 
     provenance = {
         "source": "synthetic",
-        "generator": "NHANES-calibrated synthetic (sepsis_vitals.ml.synthetic_data)",
+        "generator": "Hand-authored heuristic synthetic generator (sepsis_vitals.ml.synthetic_data)",
         "n_patients": n_patients,
         "sepsis_prevalence": prevalence,
         "seed": seed,
@@ -131,6 +129,7 @@ def run_pipeline(
     output_dir: str = "models",
     cv_folds: int = 5,
     skip_shap: bool = False,
+    feature_set: str = "full",
 ) -> Dict[str, Any]:
     """Execute the full training pipeline."""
     from sepsis_vitals.ml.trainer import (
@@ -145,6 +144,11 @@ def run_pipeline(
 
     total_start = time.time()
     source = provenance["source"]
+    run_provenance = {
+        **provenance,
+        "feature_set": feature_set,
+        "lab_features_available": feature_set == "full",
+    }
 
     print("=" * 70)
     print("  SEPSIS VITALS — MODEL RETRAINING PIPELINE v" + PIPELINE_VERSION)
@@ -156,6 +160,7 @@ def run_pipeline(
     else:
         print(f"  Patients:           {provenance.get('n_patients', 'N/A'):,}")
     print(f"  Model version:      {MODEL_VERSION}")
+    print(f"  Feature set:        {feature_set}")
     print(f"  Output:             {output_dir}")
 
     # ── Step 1: Data summary ────────────────────────────────────────────
@@ -172,9 +177,9 @@ def run_pipeline(
     # ── Step 2: Feature engineering ─────────────────────────────────────
     _banner("STEP 2: Feature engineering")
 
-    train_features, feature_cols = prepare_features(train_df)
-    val_features, _ = prepare_features(val_df)
-    test_features, _ = prepare_features(test_df)
+    train_features, feature_cols = prepare_features(train_df, feature_set=feature_set)
+    val_features, _ = prepare_features(val_df, feature_set=feature_set)
+    test_features, _ = prepare_features(test_df, feature_set=feature_set)
 
     print(f"\n  Features: {len(feature_cols)}")
     print(f"  Sample:   {', '.join(feature_cols[:8])}...")
@@ -226,7 +231,7 @@ def run_pipeline(
 
     X_val_scaled = best.scaler.transform(X_val) if best.scaler else X_val
     best = calibrate_model(best, X_val_scaled, y_val)
-    print(f"  Calibrated: Yes (Platt scaling)")
+    print("  Calibrated: Yes (Platt scaling)")
 
     # ── Step 5: SHAP explanations ───────────────────────────────────────
     shap_importance = {}
@@ -240,7 +245,7 @@ def run_pipeline(
                 feature_names=feature_cols,
                 max_samples=min(1000, len(X_test)),
             )
-            print(f"\n  Top 5 SHAP features:")
+            print("\n  Top 5 SHAP features:")
             for i, (feat, imp) in enumerate(list(shap_importance.items())[:5]):
                 print(f"    {i+1}. {feat}: {imp:.4f}")
         except Exception as e:
@@ -270,7 +275,9 @@ def run_pipeline(
         report = json.load(f)
 
     # Inject provenance and version into report
-    report["data_provenance"] = provenance
+    report["data_provenance"] = run_provenance
+    report["feature_set"] = feature_set
+    report["feature_names"] = feature_cols
     report["model_version"] = MODEL_VERSION
     report["pipeline_version"] = PIPELINE_VERSION
 
@@ -298,7 +305,8 @@ def run_pipeline(
 
     # Inject version and provenance
     metadata["version"] = MODEL_VERSION
-    metadata["data_provenance"] = provenance
+    metadata["data_provenance"] = run_provenance
+    metadata["feature_set"] = feature_set
     metadata["retrained_at"] = datetime.now(timezone.utc).isoformat()
     metadata["pipeline_version"] = PIPELINE_VERSION
 
@@ -328,7 +336,8 @@ def run_pipeline(
     else:
         card["training_data"] = (
             f"Synthetic dataset ({provenance.get('n_patients', 'N/A'):,} patients) "
-            f"calibrated to NHANES population distributions. "
+            f"generated from hand-authored distributions partially informed by public "
+            f"clinical reference ranges. "
             f"NOT trained on real patient data. "
             f"Clinical validation on MIMIC-IV or institutional EHR data is REQUIRED."
         )
@@ -359,6 +368,7 @@ def run_pipeline(
     print("  RETRAINING COMPLETE")
     print("=" * 70)
     print(f"\n  Data Source:      {source}")
+    print(f"  Feature Set:      {feature_set}")
     print(f"  Model Version:    {MODEL_VERSION}")
     print(f"  Best Model:       {best.name}")
     print(f"  Test AUROC:       {test_metrics.get('test_auroc', 0):.4f}")
@@ -369,13 +379,14 @@ def run_pipeline(
     print(f"  Calibration ECE:  {report.get('calibration', {}).get('ece', 0):.4f}")
     print(f"  Total Time:       {total_time:.1f}s")
     print(f"  Output:           {output_dir}/")
-    print(f"\n" + "=" * 70)
+    print("\n" + "=" * 70)
 
     return {
         "best_model": best.name,
         "test_metrics": test_metrics,
         "report": report,
-        "provenance": provenance,
+        "provenance": run_provenance,
+        "feature_set": feature_set,
         "feature_cols": feature_cols,
         "shap_importance": shap_importance,
         "total_time": total_time,
@@ -422,6 +433,10 @@ def main():
         "--skip-shap", action="store_true",
         help="Skip SHAP computation (faster)"
     )
+    parser.add_argument(
+        "--feature-set", choices=["full", "no_labs"], default="full",
+        help="Feature set: 'full' or 'no_labs' ablation (default: full)"
+    )
 
     opts = parser.parse_args()
 
@@ -448,6 +463,7 @@ def main():
         output_dir=opts.output,
         cv_folds=opts.cv_folds,
         skip_shap=opts.skip_shap,
+        feature_set=opts.feature_set,
     )
 
     return result

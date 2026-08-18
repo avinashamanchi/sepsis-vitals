@@ -66,6 +66,22 @@ To exercise the static synthetic demo locally, set `VITE_DEMO_MODE=true` in
 The metrics under `models/` describe synthetic test data. They must never be
 presented as clinical performance.
 
+### No-labs ablation
+
+The matched development experiment in
+[`reports/no_labs_ablation.md`](reports/no_labs_ablation.md) retrains the same
+candidate models with every raw, derived, and missingness-based lab feature
+removed. On the identical 3,000-patient synthetic held-out split, AUROC was
+0.8584 without labs versus 0.9158 with the full feature set (change −0.0574).
+This is evidence about the behavior of the synthetic development pipeline—not
+evidence of performance in a hospital or patient population.
+
+Reproduce it with:
+
+```bash
+python scripts/run_no_labs_ablation.py --patients 20000 --cv-folds 5
+```
+
 ## Security posture
 
 The code includes authentication, authorization, audit, encryption, rate-limit,

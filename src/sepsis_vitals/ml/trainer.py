@@ -114,12 +114,22 @@ def _compute_additional_scores(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def prepare_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
+def prepare_features(
+    df: pd.DataFrame,
+    feature_set: str = "full",
+) -> Tuple[pd.DataFrame, List[str]]:
     """Run full feature engineering pipeline and return (features_df, feature_columns).
 
     This is the canonical feature preparation function used for both training
-    and inference.
+    and inference. ``feature_set="no_labs"`` removes raw lab values, their
+    temporal derivatives, and lab-missingness indicators so an ablation cannot
+    retain indirect information about lab availability.
     """
+    if feature_set not in {"full", "no_labs"}:
+        raise ValueError(
+            f"Unknown feature set {feature_set!r}; expected 'full' or 'no_labs'"
+        )
+
     # Build feature set (adds deltas, rolling stats, missingness, qsofa)
     features = build_feature_set(
         df,
@@ -150,11 +160,12 @@ def prepare_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
             features[col] = features[col].astype(int)
             feature_cols.append(col)
 
-    for col in LAB_FEATURES + LAB_DERIVED:
-        if col in features.columns:
-            if features[col].dtype == bool:
-                features[col] = features[col].astype(int)
-            feature_cols.append(col)
+    if feature_set == "full":
+        for col in LAB_FEATURES + LAB_DERIVED:
+            if col in features.columns:
+                if features[col].dtype == bool:
+                    features[col] = features[col].astype(int)
+                feature_cols.append(col)
 
     for col in SCORE_FEATURES:
         if col in features.columns:
