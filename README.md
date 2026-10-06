@@ -66,6 +66,25 @@ To exercise the static synthetic demo locally, set `VITE_DEMO_MODE=true` in
 The metrics under `models/` describe synthetic test data. They must never be
 presented as clinical performance.
 
+### What the synthetic evidence can and cannot show
+
+[`reports/synthetic_pipeline_audit.md`](reports/synthetic_pipeline_audit.md)
+quantifies the limits of the development pipeline:
+
+- **The generator ties the label to age.** Demographics alone reach AUROC ≈
+  0.72. Septic rows are not more physiologically abnormal on average than
+  non-septic rows.
+- **The headline row-level AUROC (≈ 0.90) measures recognising rows after
+  labelled onset.** Discrimination of *future* sepsis from pre-onset rows is
+  ≈ 0.70.
+- **The live API scores single observations without trends.** That lowers
+  AUROC (≈ 0.82) and roughly halves mean predicted risk relative to
+  evaluation (train/serve skew).
+
+Reproduce with `python scripts/audit_synthetic_pipeline.py`. The proposed
+intended use, numeric launch gates and analysis plan are in
+[`compliance/intended_use_and_validation_plan.md`](compliance/intended_use_and_validation_plan.md).
+
 ### No-labs ablation
 
 The matched development experiment in
@@ -74,7 +93,10 @@ candidate models with every raw, derived, and missingness-based lab feature
 removed. On the identical 3,000-patient synthetic held-out split, AUROC was
 0.8584 without labs versus 0.9158 with the full feature set (change −0.0574).
 This is evidence about the behavior of the synthetic development pipeline—not
-evidence of performance in a hospital or patient population.
+evidence of performance in a hospital or patient population. Much of the
+no-labs arm's discrimination comes from demographics that the generator links
+to the label, so the ablation says little about vital signs alone (see the
+audit above).
 
 Reproduce it with:
 
@@ -136,4 +158,14 @@ terraform/             Infrastructure scaffold; not a certified environment
 ```
 
 See [STARTUP_REVIEW.md](STARTUP_REVIEW.md) for the product teardown, the
-keep/cut decisions, and the launch gates.
+keep/cut decisions, and the launch gates, and
+[PROJECT_REVIEW.md](PROJECT_REVIEW.md) for the 2026-10 independent review:
+security, clinical-logic and ML-validity findings, the fixes made, and the
+prioritized plan.
+
+### Tenant scoping
+
+Every patient, FHIR, alert, monitor and WebSocket path is scoped to the
+caller's site. Only `system_admin` is unscoped. A user without a site
+assignment sees no patient data until an administrator assigns one with
+`PUT /auth/users/{id}/site`.
