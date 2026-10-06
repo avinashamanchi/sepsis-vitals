@@ -215,5 +215,9 @@
       "achieved_specificity": 0.9444,
       "sensitivity": 0.7794
     }
-  }
+  },
+  "known_issues": [
+    "Trained before the 2026-10 MIMIC item-mapping fix: the 'wbc' feature held Platelet Count (itemid 51265) and 'procalcitonin' held C-Reactive Protein (itemid 50889). Retrain before any use.",
+    "With fewer than 200 patients, train.py evaluates on the training data; the train_* and val_* metrics are identical in-sample (apparent) performance, and the dual thresholds were chosen on the same rows. Use the LOPOCV results instead."
+  ]
 }

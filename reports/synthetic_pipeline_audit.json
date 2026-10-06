@@ -1,0 +1,68 @@
+{
+  "experiment": "synthetic_pipeline_audit",
+  "generated_at": "2026-10-06T18:11:17.021858+00:00",
+  "claim_scope": "synthetic development evidence only",
+  "cohort": {
+    "n_patients": 6000,
+    "seed": 7,
+    "test_rows": 13497
+  },
+  "generator": {
+    "fraction_negative_time_gaps": 0.319,
+    "row_mean_by_label": {
+      "0": {
+        "heart_rate": 82.66,
+        "resp_rate": 18.58,
+        "sbp": 127.97,
+        "temperature": 36.75,
+        "spo2": 95.68,
+        "lactate": 1.43,
+        "procalcitonin": 0.2
+      },
+      "1": {
+        "heart_rate": 80.54,
+        "resp_rate": 19.07,
+        "sbp": 137.91,
+        "temperature": 36.68,
+        "spo2": 95.42,
+        "lactate": 1.42,
+        "procalcitonin": 0.99
+      }
+    },
+    "mean_age_ever_septic": 67.2,
+    "mean_age_never_septic": 48.1,
+    "patient_level_auroc_age_alone": 0.752
+  },
+  "feature_groups": {
+    "demographics_and_comorbidities": {
+      "n_features": 6,
+      "test_row_auroc": 0.723
+    },
+    "vitals_and_scores_only": {
+      "n_features": 36,
+      "test_row_auroc": 0.785
+    },
+    "no_labs": {
+      "n_features": 45,
+      "test_row_auroc": 0.84
+    },
+    "full": {
+      "n_features": 58,
+      "test_row_auroc": 0.914
+    }
+  },
+  "committed_model": {
+    "row_auroc_training_style_features": 0.904,
+    "row_auroc_95ci_patient_bootstrap": [
+      0.894,
+      0.914
+    ],
+    "row_auroc_inference_style_features": 0.824,
+    "mean_predicted_risk_training_style": 0.179,
+    "mean_predicted_risk_inference_style": 0.092,
+    "observed_positive_row_rate": 0.197,
+    "pre_onset_vs_never_septic_auroc": 0.7,
+    "n_pre_onset_rows": 1780,
+    "patient_level_auroc_max_risk": 0.87
+  }
+}

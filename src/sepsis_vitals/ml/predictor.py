@@ -347,7 +347,13 @@ class SepsisPredictor:
         for vital in ["temperature", "heart_rate", "resp_rate", "sbp", "dbp", "spo2", "gcs", "map"]:
             features[vital] = vitals.get(vital, np.nan)
 
-        # Delta features (NaN for single observation — matches training first-obs)
+        # KNOWN TRAIN/SERVE SKEW: every request is scored as if it were a
+        # patient's first observation (no deltas, rolling std, or observation
+        # gap). Training rows mostly have history, and first observations are
+        # almost always pre-onset, so live risk is systematically lower than
+        # in evaluation. See reports/synthetic_pipeline_audit.md. Fix by
+        # building features from stored history with the training pipeline.
+        # Delta features (NaN for single observation)
         for vital in ["temperature", "heart_rate", "resp_rate", "sbp", "spo2", "gcs"]:
             features[f"{vital}_delta"] = np.nan
 
