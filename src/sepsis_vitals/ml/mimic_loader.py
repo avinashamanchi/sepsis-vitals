@@ -61,21 +61,23 @@ CHART_VITALS: dict[int, str] = {
     220051: "dbp",   # Arterial DBP
     # SpO2
     220277: "spo2",
-    # GCS components -> we sum them
-    223901: "gcs_eye",
-    223900: "gcs_verbal",
-    220739: "gcs_motor",
+    # GCS components -> summed only when all three are charted together
+    220739: "gcs_eye",     # "GCS - Eye Opening"
+    223900: "gcs_verbal",  # "GCS - Verbal Response"
+    223901: "gcs_motor",   # "GCS - Motor Response"
     # MAP
     220052: "map",   # Arterial MAP
     220181: "map",   # Non-invasive MAP
 }
 
 LAB_ITEMS: dict[int, str] = {
-    50813: "lactate",        # Lactate (blood gas)
-    51265: "wbc",            # White blood cells
-    # Procalcitonin -- MIMIC-IV does not consistently include PCT;
-    # when present it uses the following itemid.
-    50889: "procalcitonin",
+    50813: "lactate",  # "Lactate" (Blood Gas)
+    52442: "lactate",  # "Lactate" (Blood Gas)
+    51301: "wbc",      # "White Blood Cells" (Hematology), K/uL
+    51300: "wbc",      # "WBC Count" (Hematology), K/uL
+    # MIMIC-IV has no procalcitonin item; procalcitonin stays missing.
+    # Do not substitute 50889 ("C-Reactive Protein", mg/L) or 51265
+    # ("Platelet Count") -- both were previously mis-mapped here.
 }
 
 # Fahrenheit itemids that need conversion
@@ -205,13 +207,16 @@ class MIMICLoader:
         gcs_mask = df["vital_name"].isin({"gcs_eye", "gcs_verbal", "gcs_motor"})
         if gcs_mask.any():
             gcs = df[gcs_mask].copy()
+            components = gcs.pivot_table(
+                index=["stay_id", "charttime"],
+                columns="vital_name",
+                values="valuenum",
+                aggfunc="first",
+            ).reindex(columns=["gcs_eye", "gcs_verbal", "gcs_motor"])
+            # A partial sum (e.g. verbal not charted in intubated patients) would
+            # read as a falsely low total GCS, so require all three components.
             gcs_total = (
-                gcs.pivot_table(
-                    index=["stay_id", "charttime"],
-                    columns="vital_name",
-                    values="valuenum",
-                    aggfunc="first",
-                )
+                components.dropna()
                 .sum(axis=1)
                 .reset_index(name="valuenum")
             )

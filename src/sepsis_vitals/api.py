@@ -246,21 +246,17 @@ async def verify_auth(request: Request) -> Dict[str, Any]:
 def verify_patient_org(patient_id: str, user: Dict[str, Any], db) -> None:
     """Verify that the patient belongs to the requesting user's org.
 
-    Compares the patient's ``site_id`` against the user's ``org_id``.
-    Raises HTTP 404 when the patient exists but belongs to another org
-    (avoids leaking existence information).  Skips the check when
-    ``org_id`` is None (demo mode / auth disabled).
+    Delegates to :mod:`sepsis_vitals.auth.scope`: only ``system_admin``
+    (including the anonymous dev identity when auth is disabled) is
+    unscoped. Every other user must have a site assignment that matches the
+    patient's ``site_id``; otherwise HTTP 404 is raised so existence at
+    another site is not disclosed.
     """
-    org_id = user.get("org_id")
-    if org_id is None:
-        return  # demo mode / auth disabled — allow all
+    from sepsis_vitals.auth.scope import is_unscoped, load_patient_for_user
 
-    from sepsis_vitals.db import Patient
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
-    if patient is None:
-        raise HTTPException(status_code=404, detail="Patient not found")
-    if patient.site_id is None or patient.site_id != org_id:
-        raise HTTPException(status_code=404, detail="Patient not found")
+    if is_unscoped(user):
+        return  # system_admin, incl. the auth-disabled dev identity
+    load_patient_for_user(patient_id, user, db)
 
 
 def require_role_dep(*roles: str):
@@ -294,6 +290,20 @@ class VitalsInput(BaseModel):
     lactate: Optional[float] = Field(None, ge=0, le=30, description="Serum lactate mmol/L")
     wbc: Optional[float] = Field(None, ge=0, le=100, description="White blood cell count x10^9/L")
     procalcitonin: Optional[float] = Field(None, ge=0, le=200, description="Procalcitonin ng/mL")
+    on_supplemental_o2: Optional[bool] = Field(
+        None, description="Receiving supplemental oxygen (NEWS2 adds 2 points)"
+    )
+    spo2_scale2: Optional[bool] = Field(
+        None, description="Use NEWS2 SpO2 Scale 2 (prescribed 88-92% target only)"
+    )
+
+
+_NEWS2_FLAGS = ("on_supplemental_o2", "spo2_scale2")
+
+
+def _count_measurements(vitals: Dict[str, Any]) -> int:
+    """Number of measured values, excluding NEWS2 context flags."""
+    return sum(1 for k in vitals if k not in _NEWS2_FLAGS)
 
 
 class ComorbidityInput(BaseModel):
@@ -758,7 +768,7 @@ async def health():
 async def score_vitals(vitals: VitalsInput, user: Dict = Depends(verify_auth)):
     """Compute clinical sepsis scores (qSOFA, SIRS, NEWS2, Shock Index, UVA)."""
     vitals_dict = {k: v for k, v in vitals.model_dump().items() if v is not None}
-    if len(vitals_dict) < 2:
+    if _count_measurements(vitals_dict) < 2:
         raise HTTPException(status_code=422, detail="Provide at least 2 vital signs.")
     result = compute_scores(vitals_dict)
     flag_explanations = {
@@ -794,10 +804,11 @@ async def predict_sepsis(body: PredictRequest, request: Request, user: Dict = De
         raise HTTPException(status_code=503, detail="Model not loaded. Run 'python -m sepsis_vitals.train' first.")
 
     vitals_dict = {k: v for k, v in body.vitals.dict().items() if v is not None}
-    if len(vitals_dict) < 3:
+    if _count_measurements(vitals_dict) < 3:
         raise HTTPException(status_code=422, detail="Provide at least 3 vital signs for ML prediction.")
 
     comorbidities = body.comorbidities.dict() if body.comorbidities else None
+    await _ensure_not_foreign_patient_async(sanitise_string(body.patient_id), user)
 
     start = time.monotonic()
     prediction = predictor.predict(
@@ -866,6 +877,9 @@ async def predict_batch(body: BatchPredictRequest, request: Request, user: Dict 
     errors = []
     model_version = predictor.metadata.get("version") if predictor.metadata else None
 
+    for patient in body.patients:
+        await _ensure_not_foreign_patient_async(sanitise_string(patient.patient_id), user)
+
     for i, patient in enumerate(body.patients):
         try:
             vitals_dict = {k: v for k, v in patient.vitals.dict().items() if v is not None}
@@ -896,20 +910,36 @@ async def predict_batch(body: BatchPredictRequest, request: Request, user: Dict 
     return {"predictions": results, "count": len(results), "errors": errors}
 
 
+async def _ensure_not_foreign_patient_async(patient_id: str, user: Dict[str, Any]) -> None:
+    """Block predictions written against another site's registered patient."""
+    def _check():
+        from sepsis_vitals.auth.scope import ensure_not_foreign_patient
+        from sepsis_vitals.db import SessionLocal
+        db = SessionLocal()
+        try:
+            ensure_not_foreign_patient(patient_id, user, db)
+        finally:
+            db.close()
+    await asyncio.to_thread(_check)
+
+
+async def _verify_patient_org_async(patient_id: str, user: Dict[str, Any]) -> None:
+    """Run :func:`verify_patient_org` in a worker thread with its own session."""
+    def _check_org():
+        from sepsis_vitals.db import SessionLocal
+        db = SessionLocal()
+        try:
+            verify_patient_org(patient_id, user, db)
+        finally:
+            db.close()
+    await asyncio.to_thread(_check_org)
+
+
 @app.get("/patient/{patient_id}/trend", dependencies=[Depends(check_rate_limit)])
 async def patient_trend(patient_id: str, request: Request, user: Dict = Depends(verify_auth)):
     """Get risk trend for a monitored patient."""
-    # Org-level authorization: verify patient belongs to user's org
-    org_id = user.get("org_id")
-    if org_id is not None:
-        def _check_org():
-            from sepsis_vitals.db import SessionLocal
-            db = SessionLocal()
-            try:
-                verify_patient_org(patient_id, user, db)
-            finally:
-                db.close()
-        await asyncio.to_thread(_check_org)
+    # Org-level authorization: verify patient belongs to user's org (fail closed)
+    await _verify_patient_org_async(patient_id, user)
 
     predictor = _get_predictor()
     if predictor is None:
@@ -930,6 +960,7 @@ async def patient_trend(patient_id: str, request: Request, user: Dict = Depends(
 async def monitor_register(body: MonitorRegisterRequest, user: Dict = Depends(verify_auth)):
     """Register a patient for continuous monitoring."""
     patient_id = sanitise_string(body.patient_id)
+    await _verify_patient_org_async(patient_id, user)
 
     registry, tracker, ingester = _get_monitor_components()
     registry.register(
@@ -944,17 +975,8 @@ async def monitor_register(body: MonitorRegisterRequest, user: Dict = Depends(ve
 @app.delete("/monitor/{patient_id}", dependencies=[Depends(check_rate_limit)])
 async def monitor_unregister(patient_id: str, user: Dict = Depends(verify_auth)):
     """Remove a patient from continuous monitoring."""
-    # Org-level authorization: verify patient belongs to user's org
-    org_id = user.get("org_id")
-    if org_id is not None:
-        def _check_org():
-            from sepsis_vitals.db import SessionLocal
-            db = SessionLocal()
-            try:
-                verify_patient_org(patient_id, user, db)
-            finally:
-                db.close()
-        await asyncio.to_thread(_check_org)
+    # Org-level authorization: verify patient belongs to user's org (fail closed)
+    await _verify_patient_org_async(patient_id, user)
 
     registry, tracker, ingester = _get_monitor_components()
     registry.unregister(sanitise_string(patient_id))
@@ -968,6 +990,19 @@ async def monitor_status(user: Dict = Depends(verify_auth)):
     """List all monitored patients with current risk and trend."""
     registry, tracker, ingester = _get_monitor_components()
     patients = registry.list_patients()
+
+    from sepsis_vitals.auth.scope import require_site
+    site = require_site(user)
+    if site is not None:
+        def _site_patient_ids() -> set:
+            from sepsis_vitals.db import Patient, SessionLocal
+            db = SessionLocal()
+            try:
+                return {row[0] for row in db.query(Patient.id).filter(Patient.site_id == site)}
+            finally:
+                db.close()
+        allowed = await asyncio.to_thread(_site_patient_ids)
+        patients = [p for p in patients if p["patient_id"] in allowed]
 
     # Enrich with deterioration data
     for p in patients:
@@ -1369,6 +1404,10 @@ async def websocket_alerts(websocket: WebSocket):
                 await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                 return
             ws_org_id = payload.get("org_id")
+            if ws_org_id is None and payload.get("role") != "system_admin":
+                # Fail closed: an org-less connection would receive every site's alerts.
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
             selected_subprotocol = "sepsis-vitals" if "sepsis-vitals" in offered else None
         except Exception:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)

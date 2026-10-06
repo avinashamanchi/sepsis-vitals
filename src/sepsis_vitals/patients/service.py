@@ -452,10 +452,10 @@ def escalate_alert(
 
 
 def get_site_dashboard_stats(
-    site_id: str,
+    site_id: str | None,
     db: Session,
 ) -> dict[str, Any]:
-    """Return aggregate statistics for a site dashboard.
+    """Return aggregate statistics for a site dashboard (all sites when None).
 
     Keys returned:
 
@@ -463,15 +463,16 @@ def get_site_dashboard_stats(
     * ``active_alerts`` -- number of unacknowledged alerts.
     * ``recent_predictions`` -- number of scores computed in the last 24 h.
     """
+    site_filter = [Patient.site_id == site_id] if site_id is not None else []
     patient_count: int = (
         db.query(func.count(Patient.id))
-        .filter(Patient.site_id == site_id)
+        .filter(*site_filter)
         .scalar()
         or 0
     )
 
     patient_ids_subq = (
-        db.query(Patient.id).filter(Patient.site_id == site_id).subquery()
+        db.query(Patient.id).filter(*site_filter).subquery()
     )
 
     active_alerts: int = (
@@ -514,21 +515,39 @@ def get_site_dashboard_stats(
 # ---------------------------------------------------------------------------
 
 
+def _scope_predictions(query: Any, site_id: str | None) -> Any:
+    """Restrict a PredictionRecord query to patients registered at *site_id*.
+
+    ``PredictionRecord.patient_id`` is not a foreign key, so predictions for
+    unregistered patient IDs are only visible to unscoped (admin) callers.
+    """
+    if site_id is None:
+        return query
+    return query.join(Patient, Patient.id == PredictionRecord.patient_id).filter(
+        Patient.site_id == site_id
+    )
+
+
 def get_weekly_trends(
     db: Session,
     days: int = 7,
+    site_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return daily prediction and alert counts for the last *days* days."""
+    """Return daily prediction and alert counts for the last *days* days.
+
+    When *site_id* is given, only predictions for that site's patients count.
+    """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
+    query = db.query(
+        cast(PredictionRecord.created_at, Date).label("day"),
+        func.count(PredictionRecord.id).label("predictions"),
+        func.sum(
+            case((PredictionRecord.alert_fired == True, 1), else_=0)  # noqa: E712
+        ).label("alerts"),
+    )
     rows = (
-        db.query(
-            cast(PredictionRecord.created_at, Date).label("day"),
-            func.count(PredictionRecord.id).label("predictions"),
-            func.sum(
-                case((PredictionRecord.alert_fired == True, 1), else_=0)  # noqa: E712
-            ).label("alerts"),
-        )
+        _scope_predictions(query, site_id)
         .filter(PredictionRecord.created_at >= cutoff)
         .group_by(cast(PredictionRecord.created_at, Date))
         .order_by(cast(PredictionRecord.created_at, Date))
@@ -548,15 +567,20 @@ def get_weekly_trends(
 def get_risk_distribution(
     db: Session,
     hours_back: int = 24,
+    site_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return a breakdown of risk levels from recent predictions."""
+    """Return a breakdown of risk levels from recent predictions.
+
+    When *site_id* is given, only predictions for that site's patients count.
+    """
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours_back)
 
+    query = db.query(
+        PredictionRecord.risk_level,
+        func.count(PredictionRecord.id).label("count"),
+    )
     rows = (
-        db.query(
-            PredictionRecord.risk_level,
-            func.count(PredictionRecord.id).label("count"),
-        )
+        _scope_predictions(query, site_id)
         .filter(PredictionRecord.created_at >= cutoff)
         .group_by(PredictionRecord.risk_level)
         .all()

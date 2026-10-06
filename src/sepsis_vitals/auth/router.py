@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
-from sepsis_vitals.auth.middleware import get_current_user
+from sepsis_vitals.auth.middleware import get_current_user, require_role
 from sepsis_vitals.auth.service import (
     AccountLockedError,
     AuthServiceError,
@@ -114,10 +114,22 @@ class BreakGlassResponse(BaseModel):
 
 
 class ProfileUpdateRequest(BaseModel):
-    """Payload for updating the current user's profile."""
+    """Payload for updating the current user's profile.
+
+    ``site_id`` is accepted only from ``system_admin`` users. Tenant
+    assignment for everyone else goes through ``PUT /auth/users/{id}/site``.
+    """
 
     site_id: Optional[str] = Field(
-        None, max_length=32, description="Organisation / site identifier"
+        None, max_length=32, description="Organisation / site identifier (admins only)"
+    )
+
+
+class SiteAssignmentRequest(BaseModel):
+    """Payload for an administrator assigning a user to a site."""
+
+    site_id: Optional[str] = Field(
+        ..., max_length=32, description="Site identifier, or null to remove access"
     )
 
 
@@ -524,9 +536,42 @@ def auth_update_me(
         )
 
     if body.site_id is not None:
+        # Users must not choose their own tenant: that would let anyone read
+        # another hospital's patients by switching site_id.
+        if user.role != "system_admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Site assignment is managed by an administrator",
+            )
         user.site_id = body.site_id
 
     db.commit()
     db.refresh(user)
 
     return _user_to_response(user)
+
+
+@router.put(
+    "/users/{user_id}/site",
+    response_model=UserResponse,
+    summary="Assign a user to a site (system_admin only)",
+)
+def auth_assign_site(
+    user_id: str,
+    body: SiteAssignmentRequest,
+    admin: dict[str, Any] = Depends(require_role("system_admin")),
+    db: Session = Depends(get_db),
+) -> UserResponse:
+    """Set or clear the site a user is scoped to. Every change is logged."""
+    target = db.query(User).filter(User.id == user_id).first()
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    previous = target.site_id
+    target.site_id = body.site_id
+    db.commit()
+    db.refresh(target)
+    logger.warning(
+        "AUDIT site_assignment admin=%s user=%s from=%s to=%s",
+        admin.get("id"), target.id, previous, target.site_id,
+    )
+    return _user_to_response(target)

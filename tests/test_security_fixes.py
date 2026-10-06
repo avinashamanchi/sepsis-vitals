@@ -33,11 +33,21 @@ class TestVerifyPatientOrg:
         from sepsis_vitals.api import verify_patient_org
         verify_patient_org(patient_id, user, db)
 
-    def test_demo_user_allowed(self):
-        """Users with org_id=None (demo) can access any patient."""
+    def test_system_admin_without_org_allowed(self):
+        """system_admin (incl. the auth-disabled dev identity) is unscoped."""
         db = MagicMock()
-        self._call("P1", {"org_id": None}, db)
-        db.query.assert_not_called()
+        db.query.return_value.filter.return_value.first.return_value = self._make_patient("org-b")
+        self._call("P1", {"role": "system_admin", "org_id": None}, db)
+
+    def test_scoped_user_without_org_rejected(self):
+        """Fail closed: a non-admin with no site assignment sees nothing."""
+        from fastapi import HTTPException
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = self._make_patient("org-a")
+        for role in ("nurse", "researcher", None):
+            with pytest.raises(HTTPException) as exc_info:
+                self._call("P1", {"role": role, "org_id": None}, db)
+            assert exc_info.value.status_code == 403
 
     def test_matching_org_allowed(self):
         db = MagicMock()
@@ -226,39 +236,38 @@ class TestFieldEncryptorProductionGuard:
 # ---------------------------------------------------------------------------
 
 class TestNEWS2Scale2:
-    """NEWS2 scoring must support Scale 2 for supplemental O2 patients."""
+    """NEWS2 oxygen handling per the RCP 2017 chart.
+
+    Supplemental oxygen adds 2 points and does not by itself select Scale 2;
+    Scale 2 is reserved for patients with a prescribed 88-92% target.
+    """
+
+    def _n2(self, **v):
+        from sepsis_vitals.scores import news2_style
+        return news2_style(v)
 
     def test_scale1_default(self):
-        from sepsis_vitals.scores import news2_style
-        # SpO2 94% under Scale 1 = score 1
-        score = news2_style({"spo2": 94})
-        assert score == 1
+        assert self._n2(spo2=94) == 1
+        assert self._n2(spo2=96) == 0
 
-    def test_scale2_target_range(self):
-        from sepsis_vitals.scores import news2_style
-        # SpO2 90% under Scale 2 = score 0 (in target 88-92)
-        score = news2_style({"spo2": 90, "on_supplemental_o2": True})
-        assert score == 0
+    def test_supplemental_oxygen_adds_two_points(self):
+        assert self._n2(spo2=97, on_supplemental_o2=True) == 2
 
-    def test_scale2_high_spo2_penalized(self):
-        from sepsis_vitals.scores import news2_style
-        # SpO2 97% under Scale 2 = score 3 (too high for hypercapnic patient)
-        score = news2_style({"spo2": 97, "on_supplemental_o2": True})
-        assert score == 3
+    def test_hypoxic_patient_on_oxygen_is_not_underscored(self):
+        # Regression: previously "on oxygen" switched to Scale 2 and scored 0.
+        assert self._n2(spo2=90, on_supplemental_o2=True) == 3 + 2
 
-    def test_scale2_low_spo2(self):
-        from sepsis_vitals.scores import news2_style
-        # SpO2 82% under Scale 2 = score 3
-        score = news2_style({"spo2": 82, "on_supplemental_o2": True})
-        assert score == 3
+    def test_scale2_target_range_scores_zero(self):
+        assert self._n2(spo2=90, spo2_scale2=True, on_supplemental_o2=True) == 0 + 2
 
-    def test_scale1_spo2_96_scores_0(self):
-        from sepsis_vitals.scores import news2_style
-        score = news2_style({"spo2": 96})
-        assert score == 0
+    def test_scale2_high_saturation_scored_only_on_oxygen(self):
+        assert self._n2(spo2=97, spo2_scale2=True, on_supplemental_o2=True) == 3 + 2
+        assert self._n2(spo2=95, spo2_scale2=True, on_supplemental_o2=True) == 2 + 2
+        assert self._n2(spo2=93, spo2_scale2=True, on_supplemental_o2=True) == 1 + 2
+        assert self._n2(spo2=97, spo2_scale2=True) == 0  # on air
 
-    def test_scale2_spo2_95_scores_2(self):
-        from sepsis_vitals.scores import news2_style
-        # Scale 2: 93-96 = score 2
-        score = news2_style({"spo2": 95, "on_supplemental_o2": True})
-        assert score == 2
+    def test_scale2_low_bands(self):
+        assert self._n2(spo2=83, spo2_scale2=True) == 3
+        assert self._n2(spo2=85, spo2_scale2=True) == 2
+        assert self._n2(spo2=87, spo2_scale2=True) == 1
+        assert self._n2(spo2=88, spo2_scale2=True) == 0

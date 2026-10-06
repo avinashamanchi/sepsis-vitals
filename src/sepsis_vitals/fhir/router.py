@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from sepsis_vitals.api import verify_auth
+from sepsis_vitals.auth.scope import is_unscoped, require_site
 from sepsis_vitals.db import Patient, Score, VitalReading, get_db
 from sepsis_vitals.fhir.loinc import INTERNAL_TO_ENTRY
 from sepsis_vitals.security import compute_blind_index
@@ -145,7 +146,7 @@ async def create_patient(
     except ValueError as exc:
         return _error(400, "structure", str(exc))
 
-    internal = fhir_patient.to_internal()
+    internal = fhir_patient.to_internal(site_id=_ingest_site(current_user))
 
     # Upsert by external_id
     existing = (
@@ -153,6 +154,8 @@ async def create_patient(
         .filter(Patient.external_id_hash == compute_blind_index(internal["external_id"]))
         .first()
     )
+    if existing is not None and not _can_access(existing, current_user):
+        return _error(409, "conflict", "Patient could not be created.")
 
     if existing is not None:
         existing.age_years = internal.get("age_years")
@@ -204,7 +207,7 @@ async def create_observation(
         )
 
     # Resolve patient
-    patient = _resolve_patient(obs.patient_reference, db)
+    patient = _resolve_patient(obs.patient_reference, db, current_user)
     if patient is None:
         return _error(
             404,
@@ -279,12 +282,15 @@ async def create_bundle(
     patient_id_map: dict[str, str] = {}  # FHIR resource id -> internal db id
 
     for fp in bundle.patients:
-        internal = fp.to_internal()
+        internal = fp.to_internal(site_id=_ingest_site(current_user))
         existing = (
             db.query(Patient)
             .filter(Patient.external_id_hash == compute_blind_index(internal["external_id"]))
             .first()
         )
+        if existing is not None and not _can_access(existing, current_user):
+            db.rollback()
+            return _error(409, "conflict", "Bundle references a patient that could not be created.")
         if existing is not None:
             existing.age_years = internal.get("age_years")
             existing.sex = internal.get("sex", "U")
@@ -310,7 +316,7 @@ async def create_bundle(
         if obs.patient_reference:
             patient_db_id = patient_id_map.get(obs.patient_reference)
             if patient_db_id is None:
-                patient = _resolve_patient(obs.patient_reference, db)
+                patient = _resolve_patient(obs.patient_reference, db, current_user)
                 if patient is not None:
                     patient_db_id = patient.id
 
@@ -363,7 +369,7 @@ async def get_patient(
     current_user: Dict[str, Any] = Depends(verify_auth),
 ) -> JSONResponse:
     """Return a patient as a FHIR Patient resource."""
-    patient = _find_patient(patient_id, db)
+    patient = _find_patient(patient_id, db, current_user)
     if patient is None:
         return _error(404, "not-found", f"Patient '{patient_id}' not found.")
 
@@ -384,7 +390,7 @@ async def get_observations(
     current_user: Dict[str, Any] = Depends(verify_auth),
 ) -> JSONResponse:
     """Return the patient's vital-sign readings as a FHIR searchset Bundle."""
-    patient = _find_patient(patient_id, db)
+    patient = _find_patient(patient_id, db, current_user)
     if patient is None:
         return _error(404, "not-found", f"Patient '{patient_id}' not found.")
 
@@ -431,7 +437,7 @@ async def get_risk_assessment(
     current_user: Dict[str, Any] = Depends(verify_auth),
 ) -> JSONResponse:
     """Return the latest sepsis risk as a FHIR RiskAssessment resource."""
-    patient = _find_patient(patient_id, db)
+    patient = _find_patient(patient_id, db, current_user)
     if patient is None:
         return _error(404, "not-found", f"Patient '{patient_id}' not found.")
 
@@ -538,12 +544,14 @@ async def process_vitals(
     patient_db_id: str | None = None
     if bundle.patients:
         fp = bundle.patients[0]
-        internal = fp.to_internal()
+        internal = fp.to_internal(site_id=_ingest_site(current_user))
         existing = (
             db.query(Patient)
             .filter(Patient.external_id_hash == compute_blind_index(internal["external_id"]))
             .first()
         )
+        if existing is not None and not _can_access(existing, current_user):
+            return _error(409, "conflict", "Patient could not be created.")
         if existing is not None:
             patient_db_id = existing.id
         else:
@@ -591,8 +599,27 @@ async def process_vitals(
 # ---------------------------------------------------------------------------
 
 
-def _find_patient(patient_id: str, db: Session) -> Patient | None:
-    """Look up a patient by internal id or external_id."""
+def _ingest_site(user: Dict[str, Any]) -> str:
+    """Site that newly ingested patients are assigned to.
+
+    Scoped users always ingest into their own site; administrators keep the
+    legacy ``"fhir"`` staging site.
+    """
+    return require_site(user) or "fhir"
+
+
+def _can_access(patient: Patient, user: Dict[str, Any]) -> bool:
+    """True when *user* may read or modify *patient* (same site or admin)."""
+    if is_unscoped(user):
+        return True
+    return patient.site_id == require_site(user)
+
+
+def _find_patient(patient_id: str, db: Session, user: Dict[str, Any]) -> Patient | None:
+    """Look up a patient by internal id or external_id within the user's site.
+
+    Patients at another site are reported as not found.
+    """
     patient = db.query(Patient).filter(Patient.id == patient_id).first()
     if patient is None:
         patient = (
@@ -600,16 +627,18 @@ def _find_patient(patient_id: str, db: Session) -> Patient | None:
             .filter(Patient.external_id_hash == compute_blind_index(patient_id))
             .first()
         )
+    if patient is not None and not _can_access(patient, user):
+        return None
     return patient
 
 
-def _resolve_patient(ref: str | None, db: Session) -> Patient | None:
-    """Resolve a FHIR subject reference to a ``Patient`` row."""
+def _resolve_patient(ref: str | None, db: Session, user: Dict[str, Any]) -> Patient | None:
+    """Resolve a FHIR subject reference to a ``Patient`` row the user may access."""
     if ref is None:
         return None
     # Strip "Patient/" prefix if present
     pid = ref.split("/")[-1] if "/" in ref else ref
-    return _find_patient(pid, db)
+    return _find_patient(pid, db, user)
 
 
 def _patient_to_dict(patient: Patient) -> dict[str, Any]:

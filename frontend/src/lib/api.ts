@@ -187,13 +187,15 @@ export const api = {
       feature_importance: Record<string, number>
     }>('/model/info'),
 
-  dashboardStats: (siteId: string = 'default') =>
+  // The backend scopes stats to the signed-in user's site; only
+  // administrators may pass an explicit site.
+  dashboardStats: (siteId?: string) =>
     request<{
       patient_count: number
       active_alerts: number
       predictions_today: number
       avg_response_min: number | null
-    }>(`/patients/dashboard/stats?site_id=${siteId}`),
+    }>(`/patients/dashboard/stats${siteId ? `?site_id=${encodeURIComponent(siteId)}` : ''}`),
 
   systemHealth: () =>
     request<{
