@@ -14,9 +14,10 @@ if config.config_file_name is not None:
 # Override sqlalchemy.url from environment variable if set
 database_url = os.environ.get("DATABASE_URL")
 if database_url:
-    # Alembic needs synchronous driver
-    sync_url = database_url.replace("+asyncpg", "")
-    config.set_main_option("sqlalchemy.url", sync_url)
+    # Same synchronous driver as the application (psycopg v3)
+    from sepsis_vitals.db import sync_database_url
+
+    config.set_main_option("sqlalchemy.url", sync_database_url(database_url))
 
 try:
     from sepsis_vitals.db import Base

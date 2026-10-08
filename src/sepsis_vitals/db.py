@@ -26,6 +26,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
     create_engine,
 )
 from sqlalchemy.dialects.postgresql import INET, JSONB, UUID as PG_UUID
@@ -72,11 +73,20 @@ class EncryptedString(sa_types.TypeDecorator):
 # Database URL configuration
 # ---------------------------------------------------------------------------
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./sepsis_vitals.db")
+def sync_database_url(url: str) -> str:
+    """Normalise a database URL to the synchronous psycopg (v3) driver.
 
-# Convert postgres+asyncpg to regular postgresql for sync usage
-if DATABASE_URL.startswith("postgresql+asyncpg"):
-    DATABASE_URL = DATABASE_URL.replace("postgresql+asyncpg", "postgresql")
+    Accepts ``postgres://``, ``postgresql://`` and legacy
+    ``postgresql+asyncpg://`` URLs; the app and Alembic both use synchronous
+    SQLAlchemy, and psycopg is the driver installed by the ``api`` extra.
+    """
+    for prefix in ("postgresql+asyncpg://", "postgresql+psycopg2://", "postgresql://", "postgres://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+
+DATABASE_URL = sync_database_url(os.getenv("DATABASE_URL", "sqlite:///./sepsis_vitals.db"))
 
 _is_sqlite = DATABASE_URL.startswith("sqlite")
 
@@ -198,8 +208,9 @@ class Patient(Base):
     external_id: Mapped[str] = mapped_column(
         EncryptedString, nullable=False
     )
+    # Identity is (site_id, external_id_hash): MRNs are only unique per site.
     external_id_hash: Mapped[str] = mapped_column(
-        String(64), unique=True, nullable=False, default=""
+        String(64), nullable=False, default=""
     )
     site_id: Mapped[str] = mapped_column(String(32), nullable=False)
     age_years: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
@@ -221,6 +232,8 @@ class Patient(Base):
 
     __table_args__ = (
         CheckConstraint("sex IN ('M', 'F', 'U')", name="ck_patients_sex"),
+        UniqueConstraint("site_id", "external_id_hash", name="uq_patients_site_mrn"),
+        Index("idx_patients_mrn_hash", "external_id_hash"),
     )
 
     def __repr__(self) -> str:

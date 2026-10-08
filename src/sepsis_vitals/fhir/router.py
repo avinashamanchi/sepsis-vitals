@@ -151,7 +151,10 @@ async def create_patient(
     # Upsert by external_id
     existing = (
         db.query(Patient)
-        .filter(Patient.external_id_hash == compute_blind_index(internal["external_id"]))
+        .filter(
+            Patient.site_id == internal["site_id"],
+            Patient.external_id_hash == compute_blind_index(internal["external_id"]),
+        )
         .first()
     )
     if existing is not None and not _can_access(existing, current_user):
@@ -285,7 +288,10 @@ async def create_bundle(
         internal = fp.to_internal(site_id=_ingest_site(current_user))
         existing = (
             db.query(Patient)
-            .filter(Patient.external_id_hash == compute_blind_index(internal["external_id"]))
+            .filter(
+                Patient.site_id == internal["site_id"],
+                Patient.external_id_hash == compute_blind_index(internal["external_id"]),
+            )
             .first()
         )
         if existing is not None and not _can_access(existing, current_user):
@@ -547,7 +553,10 @@ async def process_vitals(
         internal = fp.to_internal(site_id=_ingest_site(current_user))
         existing = (
             db.query(Patient)
-            .filter(Patient.external_id_hash == compute_blind_index(internal["external_id"]))
+            .filter(
+                Patient.site_id == internal["site_id"],
+                Patient.external_id_hash == compute_blind_index(internal["external_id"]),
+            )
             .first()
         )
         if existing is not None and not _can_access(existing, current_user):
@@ -622,11 +631,14 @@ def _find_patient(patient_id: str, db: Session, user: Dict[str, Any]) -> Patient
     """
     patient = db.query(Patient).filter(Patient.id == patient_id).first()
     if patient is None:
-        patient = (
-            db.query(Patient)
-            .filter(Patient.external_id_hash == compute_blind_index(patient_id))
-            .first()
+        # MRNs are unique per site: scoped users only match their own site.
+        query = db.query(Patient).filter(
+            Patient.external_id_hash == compute_blind_index(patient_id)
         )
+        site = require_site(user)
+        if site is not None:
+            query = query.filter(Patient.site_id == site)
+        patient = query.first()
     if patient is not None and not _can_access(patient, user):
         return None
     return patient

@@ -28,8 +28,10 @@ api = [
     "PyJWT>=2.8",
     "bcrypt>=4.1",
     "pyotp>=2.9",
-    "sqlalchemy[asyncio]>=2.0",
-    "asyncpg>=0.29",
+    "sqlalchemy>=2.0",
+    # Synchronous Postgres driver used by SQLAlchemy and Alembic
+    # (URLs are normalised to postgresql+psycopg:// in sepsis_vitals.db).
+    "psycopg[binary]>=3.1",
     "alembic>=1.13",
     "redis>=5.0",
     "prometheus-client>=0.20",
