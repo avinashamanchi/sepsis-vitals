@@ -13,7 +13,7 @@ COPY src/ src/
 
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir build && \
-    pip install --no-cache-dir ".[api]" && \
+    pip install --no-cache-dir ".[api,ml]" && \
     pip wheel --no-deps --wheel-dir /wheels .
 
 
@@ -31,7 +31,7 @@ WORKDIR /app
 
 # Runtime system deps only
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 curl \
+    libpq5 libgomp1 curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder
@@ -42,9 +42,10 @@ COPY --from=builder /wheels /wheels
 COPY src/ src/
 COPY alembic/ alembic/
 COPY alembic.ini ./
+COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/sepsis-entrypoint
 
-# Install the package wheel
-RUN pip install --no-cache-dir --no-index --find-links=/wheels sepsis_vitals || true
+# Install the package wheel (fail the build if it does not install)
+RUN pip install --no-cache-dir --no-index --find-links=/wheels sepsis_vitals
 
 RUN chown -R sepsis:sepsis /app
 USER sepsis
@@ -60,6 +61,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     SEPSIS_ENV=production
 
+ENTRYPOINT ["/usr/local/bin/sepsis-entrypoint"]
 CMD ["uvicorn", "sepsis_vitals.api:app", \
      "--host", "0.0.0.0", \
      "--port", "8080", \

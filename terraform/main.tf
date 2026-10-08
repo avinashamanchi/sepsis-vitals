@@ -202,6 +202,11 @@ resource "aws_ecs_task_definition" "api" {
     environment = [
       { name = "SEPSIS_ENV",   value = var.environment },
       { name = "LOG_LEVEL",    value = "INFO" },
+      # The ALB sits inside the VPC; trust its X-Forwarded-For only.
+      { name = "TRUSTED_PROXIES", value = var.vpc_cidr },
+      # Several replicas start concurrently: run `alembic upgrade head` as a
+      # one-off task before deploying instead of on every container start.
+      { name = "SEPSIS_RUN_MIGRATIONS", value = "false" },
     ]
     secrets = [
       { name = "DATABASE_URL",          valueFrom = "${aws_secretsmanager_secret.db_url.arn}" },
