@@ -7,8 +7,10 @@ The headline synthetic AUROC is easy to over-read. These checks quantify:
 * whether the committed model separates *future* sepsis (pre-onset rows) from
   never-septic patients, i.e. early warning rather than detection of the
   current state;
-* train/serve skew: the API scores single observations with no deltas,
-  rolling statistics, or observation gap, unlike the training features.
+* the cost of scoring without history: single observations have no
+  deltas, rolling statistics, or observation gap. The API did this for every
+  request until 2026-10; it now passes recorded history, but unregistered
+  patient IDs are still scored as first observations.
 
 Everything here is synthetic development evidence, never clinical evidence.
 """
@@ -83,7 +85,7 @@ def feature_group_aurocs(train: pd.DataFrame, test: pd.DataFrame, cols: List[str
 
 
 def inference_style(features: pd.DataFrame, feature_names: List[str]) -> pd.DataFrame:
-    """Rebuild features the way ``SepsisPredictor._build_feature_vector`` does."""
+    """Rebuild features as if each row were scored with no patient history."""
     X = features[feature_names].astype(float).copy()
     for c in feature_names:
         if c.endswith("_delta") or c.endswith("_roll_std"):

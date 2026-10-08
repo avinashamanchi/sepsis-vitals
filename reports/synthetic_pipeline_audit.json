@@ -1,6 +1,6 @@
 {
   "experiment": "synthetic_pipeline_audit",
-  "generated_at": "2026-10-06T18:11:17.021858+00:00",
+  "generated_at": "2026-10-06T22:58:31.495459+00:00",
   "claim_scope": "synthetic development evidence only",
   "cohort": {
     "n_patients": 6000,
@@ -8,7 +8,7 @@
     "test_rows": 13497
   },
   "generator": {
-    "fraction_negative_time_gaps": 0.319,
+    "fraction_negative_time_gaps": 0.0,
     "row_mean_by_label": {
       "0": {
         "heart_rate": 82.66,
@@ -40,29 +40,29 @@
     },
     "vitals_and_scores_only": {
       "n_features": 36,
-      "test_row_auroc": 0.785
+      "test_row_auroc": 0.778
     },
     "no_labs": {
       "n_features": 45,
-      "test_row_auroc": 0.84
+      "test_row_auroc": 0.833
     },
     "full": {
       "n_features": 58,
-      "test_row_auroc": 0.914
+      "test_row_auroc": 0.913
     }
   },
   "committed_model": {
-    "row_auroc_training_style_features": 0.904,
+    "row_auroc_training_style_features": 0.902,
     "row_auroc_95ci_patient_bootstrap": [
-      0.894,
-      0.914
+      0.89,
+      0.912
     ],
     "row_auroc_inference_style_features": 0.824,
-    "mean_predicted_risk_training_style": 0.179,
+    "mean_predicted_risk_training_style": 0.161,
     "mean_predicted_risk_inference_style": 0.092,
     "observed_positive_row_rate": 0.197,
-    "pre_onset_vs_never_septic_auroc": 0.7,
-    "n_pre_onset_rows": 1780,
-    "patient_level_auroc_max_risk": 0.87
+    "pre_onset_vs_never_septic_auroc": 0.725,
+    "n_pre_onset_rows": 1965,
+    "patient_level_auroc_max_risk": 0.865
   }
 }

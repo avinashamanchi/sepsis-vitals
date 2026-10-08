@@ -581,10 +581,16 @@ def generate_patient_trajectory(
                 old = comorbidity_adj.get(vital, (0.0, 0.0))
                 comorbidity_adj[vital] = (old[0] + mean_adj, old[1] + std_adj)
 
+    elapsed_hours = 0.0
     for i in range(n_observations):
-        # Time progression: observations every 2-6 hours with jitter
-        hours_offset = i * rng.uniform(2.0, 6.0)
-        timestamp = base_time + pd.Timedelta(hours=hours_offset)
+        # Time progression: 2-6 h between observations, accumulated so that
+        # timestamps increase monotonically. (Previously i * uniform(2, 6)
+        # drew a new scale per row and ~30% of gaps ran backwards.) One draw
+        # per row keeps the random stream, and every other value, unchanged.
+        step_hours = rng.uniform(2.0, 6.0)
+        if i > 0:
+            elapsed_hours += step_hours
+        timestamp = base_time + pd.Timedelta(hours=elapsed_hours)
 
         progress = i / max(n_observations - 1, 1)
 

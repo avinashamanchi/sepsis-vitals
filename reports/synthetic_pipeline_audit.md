@@ -7,7 +7,7 @@ Cohort: 6,000 generated patients, seed 7, 13,497 held-out rows.
 
 ## 1. Generator artefacts
 
-- 32% of consecutive observations go *backwards* in time (`hours_offset = i * rng.uniform(2, 6)` draws a new interval scale per row).
+- 0% of consecutive observations go backwards in time (was 32% before the 2026-10 fix to the timestamp accumulation).
 - Rows labelled septic are not more abnormal on average: heart rate 80.54 vs 82.66, SBP 137.91 vs 127.97, lactate 1.42 vs 1.43 (septic vs non-septic rows).
 - Septic patients are older (mean age 67.2 vs 48.1); age alone gives patient-level AUROC 0.752.
 
@@ -18,20 +18,20 @@ Same learner (HistGradientBoosting), same patient-level split, different feature
 | Feature group | Features | Held-out row AUROC |
 | --- | ---: | ---: |
 | demographics and comorbidities | 6 | 0.723 |
-| vitals and scores only | 36 | 0.785 |
-| no labs | 45 | 0.840 |
-| full | 58 | 0.914 |
+| vitals and scores only | 36 | 0.778 |
+| no labs | 45 | 0.833 |
+| full | 58 | 0.913 |
 
 ## 3. Committed model (`models/sepsis_model.joblib`)
 
 | Check | Value |
 | --- | ---: |
-| Row AUROC, training-style features (95% CI, patient bootstrap) | 0.904 (0.894-0.914) |
-| Row AUROC, features as built by the live API | 0.824 |
-| Mean predicted risk, training-style vs live-API features | 0.179 vs 0.092 |
+| Row AUROC, training-style features (95% CI, patient bootstrap) | 0.902 (0.890-0.912) |
+| Row AUROC, each row scored without history | 0.824 |
+| Mean predicted risk, with history vs without history | 0.161 vs 0.092 |
 | Observed positive row rate | 0.197 |
-| Pre-onset rows of future-septic patients vs never-septic rows (early warning) | 0.700 |
-| Patient-level AUROC (max risk over stay) | 0.870 |
+| Pre-onset rows of future-septic patients vs never-septic rows (early warning) | 0.725 |
+| Patient-level AUROC (max risk over stay) | 0.865 |
 
 ## Interpretation
 
@@ -39,8 +39,9 @@ Same learner (HistGradientBoosting), same patient-level split, different feature
   ability (pre-onset rows) is much weaker and is the quantity a sepsis early-warning claim needs.
 - A large share of discrimination is available from demographics, which the generator ties to
   the label by construction. The no-labs ablation inherits this.
-- The live API scores single observations without trends or observation gaps, so it
-  under-predicts risk relative to how the model was trained (train/serve skew).
+- Scoring without history under-predicts risk relative to training. The API now passes
+  recorded history for registered patients (tests/test_inference_parity.py); unregistered
+  IDs are still scored as first observations.
 - None of these numbers should be quoted as product performance.
 
 Reproduce: `python scripts/audit_synthetic_pipeline.py`

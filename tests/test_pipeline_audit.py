@@ -46,3 +46,13 @@ def test_run_audit_on_tiny_cohort_without_model():
         "demographics_and_comorbidities", "vitals_and_scores_only", "no_labs", "full",
     }
     assert "committed_model" not in report
+
+
+def test_synthetic_timestamps_are_strictly_increasing():
+    """Regression: i * uniform(2, 6) made ~30% of consecutive gaps negative."""
+    from sepsis_vitals.ml.synthetic_data import generate_dataset
+
+    df = generate_dataset(n_patients=200, seed=11)
+    gaps = df.groupby("patient_id")["timestamp"].diff().dt.total_seconds().dropna()
+    assert (gaps > 0).all()
+    assert gaps.between(2 * 3600, 6 * 3600).all()

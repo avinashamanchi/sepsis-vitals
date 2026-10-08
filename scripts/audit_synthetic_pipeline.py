@@ -29,8 +29,8 @@ def _markdown(r: dict) -> str:
         "",
         "## 1. Generator artefacts",
         "",
-        f"- {g['fraction_negative_time_gaps']:.0%} of consecutive observations go *backwards* in time "
-        "(`hours_offset = i * rng.uniform(2, 6)` draws a new interval scale per row).",
+        f"- {g['fraction_negative_time_gaps']:.0%} of consecutive observations go backwards in time "
+        "(was 32% before the 2026-10 fix to the timestamp accumulation).",
         f"- Rows labelled septic are not more abnormal on average: heart rate {lab1['heart_rate']} vs "
         f"{lab0['heart_rate']}, SBP {lab1['sbp']} vs {lab0['sbp']}, lactate {lab1['lactate']} vs "
         f"{lab0['lactate']} (septic vs non-septic rows).",
@@ -58,8 +58,8 @@ def _markdown(r: dict) -> str:
             "| --- | ---: |",
             f"| Row AUROC, training-style features (95% CI, patient bootstrap) | "
             f"{m['row_auroc_training_style_features']:.3f} ({lo:.3f}-{hi:.3f}) |",
-            f"| Row AUROC, features as built by the live API | {m['row_auroc_inference_style_features']:.3f} |",
-            f"| Mean predicted risk, training-style vs live-API features | "
+            f"| Row AUROC, each row scored without history | {m['row_auroc_inference_style_features']:.3f} |",
+            f"| Mean predicted risk, with history vs without history | "
             f"{m['mean_predicted_risk_training_style']:.3f} vs {m['mean_predicted_risk_inference_style']:.3f} |",
             f"| Observed positive row rate | {m['observed_positive_row_rate']:.3f} |",
             f"| Pre-onset rows of future-septic patients vs never-septic rows (early warning) | "
@@ -74,8 +74,9 @@ def _markdown(r: dict) -> str:
         "  ability (pre-onset rows) is much weaker and is the quantity a sepsis early-warning claim needs.",
         "- A large share of discrimination is available from demographics, which the generator ties to",
         "  the label by construction. The no-labs ablation inherits this.",
-        "- The live API scores single observations without trends or observation gaps, so it",
-        "  under-predicts risk relative to how the model was trained (train/serve skew).",
+        "- Scoring without history under-predicts risk relative to training. The API now passes",
+        "  recorded history for registered patients (tests/test_inference_parity.py); unregistered",
+        "  IDs are still scored as first observations.",
         "- None of these numbers should be quoted as product performance.",
         "",
         "Reproduce: `python scripts/audit_synthetic_pipeline.py`",
