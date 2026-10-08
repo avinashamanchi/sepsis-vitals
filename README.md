@@ -34,9 +34,15 @@ cp .env.example .env
 pytest -q
 ```
 
-Start the API:
+Tests run against a throwaway SQLite database (`tests/conftest.py`); they never
+touch your local `sepsis_vitals.db`.
+
+Create or upgrade the database schema, then start the API. Alembic owns the
+schema; run migrations with the same `SEPSIS_PII_KEY` the API uses, because
+migration 003 backfills blind indexes from encrypted values.
 
 ```bash
+alembic upgrade head
 uvicorn sepsis_vitals.api:app --reload --port 8080
 ```
 
@@ -48,9 +54,23 @@ npm ci
 npm run dev
 ```
 
-The frontend development server proxies API and WebSocket traffic to port 8080.
-To exercise the static synthetic demo locally, set `VITE_DEMO_MODE=true` in
-`frontend/.env`.
+The frontend calls the API under `/api`. The Vite dev server (and the nginx
+container) strips that prefix and forwards to port 8080; WebSocket traffic on
+`/ws` is proxied the same way. To exercise the static synthetic demo locally,
+set `VITE_DEMO_MODE=true` in `frontend/.env`.
+
+Password-reset emails need `SMTP_HOST` (plus credentials) and `SEPSIS_APP_URL`,
+the public URL of the web app; see [.env.example](.env.example). Without SMTP
+the request succeeds but no email is sent.
+
+### Docker Compose
+
+`docker/docker-compose.yml` starts Postgres, Redis, the API, the dashboard
+(nginx on port 8000) and monitoring. The API container runs
+`alembic upgrade head` before starting (`SEPSIS_RUN_MIGRATIONS`); infrastructure
+ports are bound to `127.0.0.1` only. Model artifacts are not baked into the
+image (`.dockerignore` excludes `models/*.joblib`), so `/predict` returns 503
+until a model directory is provided.
 
 ## Validation status
 
@@ -76,10 +96,13 @@ quantifies the limits of the development pipeline:
   non-septic rows.
 - **The headline row-level AUROC (≈ 0.90) measures recognising rows after
   labelled onset.** Discrimination of *future* sepsis from pre-onset rows is
-  ≈ 0.70.
-- **The live API scores single observations without trends.** That lowers
-  AUROC (≈ 0.82) and roughly halves mean predicted risk relative to
-  evaluation (train/serve skew).
+  ≈ 0.72.
+- **Scoring without history costs accuracy.** A single observation has no
+  trends or observation gap, which lowers AUROC to ≈ 0.82 and roughly halves
+  mean predicted risk. Since 2026-10 the API builds features with the training
+  pipeline and passes recorded history for registered patients
+  (`tests/test_inference_parity.py`). Unregistered patient IDs are still scored
+  as first observations.
 
 Reproduce with `python scripts/audit_synthetic_pipeline.py`. The proposed
 intended use, numeric launch gates and analysis plan are in
