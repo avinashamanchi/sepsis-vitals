@@ -18,6 +18,7 @@ import ipaddress
 import json
 import logging
 import os
+from pathlib import Path
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -341,7 +342,11 @@ class PredictionResponse(BaseModel):
     top_risk_factors: List[Dict[str, Any]]
     recommendation: str
     model: Dict[str, str]
+    rule_risk_level: str
+    model_risk_level: str
+    provenance: Dict[str, Any]
     research_only: bool = True
+    clinical_use: str = "not-permitted"
     validation_status: str = "Synthetic development baseline; no clinical validation"
     intended_use: str = "Retrospective research and prospective silent-mode evaluation"
 
@@ -410,17 +415,47 @@ class SimulatorReplayRequest(BaseModel):
 _predictor = None
 
 
+_model_status: Dict[str, Any] = {"state": "absent", "reason": "not loaded yet"}
+
+
 def _get_predictor():
-    global _predictor
+    """Return the loaded predictor, or None (state recorded in _model_status).
+
+    Absent, tampered, or incompatible artifacts never raise out of request
+    handlers: /predict answers 503 and /model/status explains why.
+    """
+    global _predictor, _model_status
     if _predictor is None:
+        from sepsis_vitals.ml.artifacts import ModelArtifactError
         from sepsis_vitals.ml.predictor import SepsisPredictor
-        _predictor = SepsisPredictor()
+        candidate = SepsisPredictor()
         try:
-            _predictor.load()
+            candidate.load()
         except FileNotFoundError:
-            _predictor = None
+            _model_status = {"state": "absent", "reason": "No model artifact is installed"}
             return None
+        except ModelArtifactError as exc:
+            _model_status = {"state": exc.state, "reason": exc.reason}
+            logger.error("Model artifacts rejected (%s): %s", exc.state, exc.reason)
+            return None
+        except Exception as exc:  # corrupt pickle, unreadable metadata, ...
+            _model_status = {"state": "invalid", "reason": f"Model failed to load: {type(exc).__name__}"}
+            logger.error("Model failed to load", exc_info=True)
+            return None
+        _predictor = candidate
+        _model_status = candidate.artifact_status.as_dict()
     return _predictor
+
+
+def _model_unavailable() -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail={
+            "message": "Predictions are unavailable: no usable model is installed.",
+            "model_state": _model_status.get("state"),
+            "reason": _model_status.get("reason"),
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -527,7 +562,12 @@ def _persist_prediction(
                 risk_level=result["risk_level"],
                 alert_fired=result.get("alert", False),
                 input_vitals=json.dumps(input_vitals),
-                output_scores=json.dumps(result.get("clinical_scores", {})),
+                output_scores=json.dumps({
+                    "clinical_scores": result.get("clinical_scores", {}),
+                    "rule_risk_level": result.get("rule_risk_level"),
+                    "model_risk_level": result.get("model_risk_level"),
+                    "provenance": result.get("provenance", {}),
+                }),
                 top_risk_factors=json.dumps(result.get("top_risk_factors", [])),
                 confidence_lower=ci.get("lower"),
                 confidence_upper=ci.get("upper"),
@@ -801,7 +841,7 @@ async def predict_sepsis(body: PredictRequest, request: Request, user: Dict = De
     """ML-powered sepsis risk prediction with SHAP explanations."""
     predictor = _get_predictor()
     if predictor is None:
-        raise HTTPException(status_code=503, detail="Model not loaded. Run 'python -m sepsis_vitals.train' first.")
+        raise _model_unavailable()
 
     vitals_dict = {k: v for k, v in body.vitals.model_dump().items() if v is not None}
     if _count_measurements(vitals_dict) < 3:
@@ -822,6 +862,7 @@ async def predict_sepsis(body: PredictRequest, request: Request, user: Dict = De
     elapsed_ms = (time.monotonic() - start) * 1000
 
     result = prediction.to_dict()
+    result["validation_status"] = result["provenance"].get("validation_status") or "unvalidated"
     _track_prediction(elapsed_ms, result.get("alert", False))
 
     # ── Drift monitoring — record vitals into rolling PSI buffer ──────
@@ -873,7 +914,7 @@ async def predict_batch(body: BatchPredictRequest, request: Request, user: Dict 
 
     predictor = _get_predictor()
     if predictor is None:
-        raise HTTPException(status_code=503, detail="Model not loaded.")
+        raise _model_unavailable()
 
     results = []
     errors = []
@@ -894,6 +935,7 @@ async def predict_batch(body: BatchPredictRequest, request: Request, user: Dict 
                 history=await _recorded_history_async(sanitise_string(patient.patient_id)),
             )
             result = prediction.to_dict()
+            result["validation_status"] = result["provenance"].get("validation_status") or "unvalidated"
             results.append(result)
 
             # Persist each prediction for audit trail (HIPAA compliance)
@@ -976,7 +1018,7 @@ async def patient_trend(patient_id: str, request: Request, user: Dict = Depends(
 
     predictor = _get_predictor()
     if predictor is None:
-        raise HTTPException(status_code=503, detail="Model not loaded.")
+        raise _model_unavailable()
 
     trend = predictor.get_patient_trend(sanitise_string(patient_id))
     if trend is None:
@@ -1154,14 +1196,73 @@ async def simulator_cases(user: Dict = Depends(verify_auth)):
     return {"cases": cases, "count": len(cases)}
 
 
+@app.get("/ready")
+async def readiness():
+    """API readiness: database reachable and (when managed) migrations at head.
+
+    Separate from liveness (/health) and prediction readiness (/model/status):
+    the API can serve scores and patient data without a model.
+    """
+    def _check() -> Dict[str, Any]:
+        from sqlalchemy import text as sql_text
+
+        from sepsis_vitals.db import engine
+        checks: Dict[str, Any] = {}
+        with engine.connect() as conn:
+            conn.execute(sql_text("SELECT 1"))
+            checks["database"] = "ok"
+            try:
+                current = conn.execute(sql_text("SELECT version_num FROM alembic_version")).scalar()
+            except Exception:
+                current = None
+        if current is None:
+            checks["migrations"] = "unmanaged"
+        else:
+            from alembic.config import Config
+            from alembic.script import ScriptDirectory
+            root = Path(__file__).resolve().parents[2]
+            cfg = Config(str(root / "alembic.ini"))
+            cfg.set_main_option("script_location", str(root / "alembic"))
+            head = ScriptDirectory.from_config(cfg).get_current_head()
+            checks["migrations"] = "at-head" if current == head else "behind"
+        return checks
+
+    try:
+        checks = await asyncio.to_thread(_check)
+    except Exception as exc:
+        logger.warning("Readiness check failed: %s", type(exc).__name__)
+        return JSONResponse(status_code=503, content={"ready": False, "database": "unreachable"})
+    ready = checks["migrations"] == "at-head" or (
+        checks["migrations"] == "unmanaged" and not _is_production
+    )
+    return JSONResponse(status_code=200 if ready else 503, content={"ready": ready, **checks})
+
+
+@app.get("/model/status")
+async def model_status():
+    """Prediction readiness, validation status and provenance of the model.
+
+    ``prediction_ready`` means a verified model is loaded. It never means
+    clinically ready: ``clinically_ready`` stays false for every validation
+    status this build knows about.
+    """
+    _get_predictor()
+    status = dict(_model_status)
+    status.setdefault("prediction_ready", False)
+    status.setdefault("clinically_ready", False)
+    status.setdefault("clinical_use", "not-permitted")
+    return status
+
+
 @app.get("/model/info", dependencies=[Depends(check_rate_limit)])
 async def model_info(user: Dict = Depends(verify_auth)):
     """Model metadata, performance metrics, and top features."""
     predictor = _get_predictor()
     if predictor is None:
-        raise HTTPException(status_code=503, detail="Model not loaded.")
+        raise _model_unavailable()
 
     return {
+        "artifact_status": predictor.artifact_status.as_dict(),
         "model_name": predictor.metadata["model_name"],
         "version": predictor.metadata["version"],
         "is_calibrated": predictor.metadata.get("is_calibrated", False),

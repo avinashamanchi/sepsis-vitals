@@ -47,7 +47,9 @@ COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/sepsis-entrypoint
 # Install the package wheel (fail the build if it does not install)
 RUN pip install --no-cache-dir --no-index --find-links=/wheels sepsis_vitals
 
-RUN chown -R sepsis:sepsis /app
+# Model artifacts are mounted read-only at /models (never baked into the
+# image); mutable patient state lives in /app/state (mount an encrypted volume).
+RUN mkdir -p /app/state /models && chown -R sepsis:sepsis /app && chmod 0700 /app/state
 USER sepsis
 
 # Health check — FastAPI /health endpoint
@@ -59,7 +61,9 @@ EXPOSE 8080
 # Security: read-only filesystem where possible
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    SEPSIS_ENV=production
+    SEPSIS_ENV=production \
+    SEPSIS_MODEL_DIR=/models \
+    SEPSIS_STATE_DIR=/app/state
 
 ENTRYPOINT ["/usr/local/bin/sepsis-entrypoint"]
 CMD ["uvicorn", "sepsis_vitals.api:app", \

@@ -359,6 +359,15 @@ def run_pipeline(
 
     print(f"  Metadata updated: {metadata_file}")
 
+    # Manifest last, once every artifact is final (the API refuses models without one).
+    from sepsis_vitals.ml.artifacts import write_manifest
+    source = metadata.get("data_provenance", {}).get("source", "unknown")
+    write_manifest(
+        Path(output_dir),
+        "synthetic-development" if source == "synthetic" else "unvalidated",
+    )
+    print(f"  Manifest written: {Path(output_dir) / 'manifest.json'}")
+
     # ── Summary ─────────────────────────────────────────────────────────
     total_time = time.time() - total_start
 

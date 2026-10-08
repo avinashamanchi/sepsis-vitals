@@ -19,6 +19,7 @@ networks:
 
 # ── Named volumes ─────────────────────────────────────────────────────────────
 volumes:
+  api_state:
   postgres_data:
   redis_data:
   prometheus_data:
@@ -98,6 +99,12 @@ services:
       # nginx (dashboard) forwards X-Forwarded-For from inside this network
       TRUSTED_PROXIES:      172.28.0.0/16
       SEPSIS_RUN_MIGRATIONS: "true"
+    volumes:
+      # The committed model is a SYNTHETIC development artifact
+      # (validation_status: synthetic-development; clinical use not permitted).
+      # Replace this mount with a verified artifact directory when one exists.
+      - ../models:/models:ro
+      - api_state:/app/state
     ports:
       - "127.0.0.1:8080:8080"   # reach the API through the dashboard proxy on :8000
       # MLLP: bind to a hospital-network interface only after enabling MLLP_TLS_*

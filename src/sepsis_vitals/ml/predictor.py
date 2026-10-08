@@ -10,6 +10,7 @@ with SHAP explanations, confidence intervals, and clinical score integration.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -37,6 +38,9 @@ class SepsisPrediction:
     recommendation: str
     model_name: str
     model_version: str
+    rule_risk_level: str = "unknown"
+    model_risk_level: str = "unknown"
+    provenance: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -56,6 +60,11 @@ class SepsisPrediction:
                 "name": self.model_name,
                 "version": self.model_version,
             },
+            # risk_level is the higher of the two; both are reported so that
+            # disagreement between the rules and the model is visible.
+            "rule_risk_level": self.rule_risk_level,
+            "model_risk_level": self.model_risk_level,
+            "provenance": self.provenance,
         }
 
 
@@ -137,6 +146,9 @@ class PatientMonitor:
         }
 
 
+_RISK_ORDER = ["low", "moderate", "high", "critical"]
+
+
 def classify_risk_dual(
     risk_prob: float,
     thresholds: Dict[str, Dict[str, float]],
@@ -177,8 +189,13 @@ class SepsisPredictor:
     - Deterioration detection (persisted to SQLite, survives restarts)
     """
 
-    def __init__(self, model_dir: str = "models"):
-        self.model_dir = Path(model_dir)
+    def __init__(self, model_dir: Optional[str] = None, state_dir: Optional[str] = None):
+        # SEPSIS_MODEL_DIR may point at a read-only mount; mutable patient
+        # state goes to SEPSIS_STATE_DIR (defaults to the model directory for
+        # backward compatibility with local development).
+        self.model_dir = Path(model_dir or os.getenv("SEPSIS_MODEL_DIR") or "models")
+        self.state_dir = Path(state_dir or os.getenv("SEPSIS_STATE_DIR") or str(self.model_dir))
+        self.artifact_status: Any = None
         # These objects are deserialized from joblib/JSON and intentionally
         # remain implementation-agnostic across supported sklearn estimators.
         self.model: Any = None
@@ -192,7 +209,19 @@ class SepsisPredictor:
         self.conformal_predictor: Any = None
 
     def load(self) -> None:
-        """Load model, scaler, metadata, and imputation medians from disk."""
+        """Verify and load model, scaler, metadata, and imputation medians.
+
+        Artifacts are checked against ``manifest.json`` (checksums, feature
+        schema, scikit-learn version) *before* anything is unpickled; see
+        :mod:`sepsis_vitals.ml.artifacts`. Raises ``FileNotFoundError`` when no
+        model is present and ``ModelArtifactError`` when it is unusable.
+        """
+        from sepsis_vitals.ml.artifacts import (
+            allow_unverified_from_env,
+            check_feature_compatibility,
+            verify_artifacts,
+        )
+
         model_path = self.model_dir / "sepsis_model.joblib"
         metadata_path = self.model_dir / "model_metadata.json"
         medians_path = self.model_dir / "imputation_medians.json"
@@ -203,13 +232,17 @@ class SepsisPredictor:
                 "Run 'python -m sepsis_vitals.train' first."
             )
 
-        self.model = joblib.load(model_path)
+        status = verify_artifacts(self.model_dir, allow_unverified=allow_unverified_from_env())
+        # Only reached once the file matches its recorded checksum.
+        self.model = joblib.load(model_path)  # nosec B301
 
         with open(metadata_path) as f:
             self.metadata = json.load(f)
 
         self.feature_names = self.metadata["feature_names"]
         self.dual_thresholds = self.metadata.get("dual_thresholds")
+        check_feature_compatibility(self.feature_names)
+        self.artifact_status = status
 
         # Load imputation medians for NaN handling
         self._imputation_medians = {}
@@ -229,7 +262,8 @@ class SepsisPredictor:
 
         # Initialize persistent state store (SQLite-backed)
         from sepsis_vitals.ml.state_store import PatientStateStore
-        db_path = str(self.model_dir / "patient_state.db")
+        from sepsis_vitals.ml.state_store import default_store_path
+        db_path = str(default_store_path(str(self.state_dir)))
         self._state_store = PatientStateStore(db_path=db_path)
 
         self._loaded = True
@@ -296,11 +330,17 @@ class SepsisPredictor:
             feature_vector, risk_prob
         )
 
-        # Risk level classification
-        risk_level = self._classify_risk(risk_prob, scores)
+        # Risk level: the model may raise the rule-based level, never lower it.
+        rule_level = scores.risk_level
+        model_level = self._model_risk_level(risk_prob)
+        risk_level = max(rule_level, model_level, key=_RISK_ORDER.index)
 
-        # Alert determination
-        alert = risk_level in ("high", "critical") or risk_prob > 0.6
+        # Alert determination: a rule-based alert can never be suppressed.
+        alert = (
+            bool(scores.alert_flag)
+            or risk_level in ("high", "critical")
+            or risk_prob > 0.6
+        )
 
         # Top risk factors
         top_factors = self._explain_prediction(feature_vector, vitals, scores)
@@ -323,6 +363,9 @@ class SepsisPredictor:
             recommendation=recommendation,
             model_name=self.metadata["model_name"],
             model_version=self.metadata["version"],
+            rule_risk_level=rule_level,
+            model_risk_level=model_level,
+            provenance=self.artifact_status.provenance() if self.artifact_status else {},
         )
 
         # Track in persistent state store (survives restarts)
@@ -464,26 +507,34 @@ class SepsisPredictor:
         ci_upper = min(1.0, risk_prob + width)
         return ci_lower, ci_upper
 
-    def _classify_risk(self, prob: float, scores: Any) -> str:
-        """Classify risk using dual operating points if available."""
+    def _model_risk_level(self, prob: float) -> str:
+        """Risk band from the model probability alone.
+
+        Uses the artifact's dual operating points when present, otherwise the
+        project's fixed bands. Neither set of cut-offs has clinical approval;
+        callers combine this with the rule-based level and never let it lower
+        that level.
+        """
         if self.dual_thresholds:
             return classify_risk_dual(prob, self.dual_thresholds, mode="continuous")
-
-        # Fallback: existing fixed thresholds
-        if prob >= 0.75 or scores.risk_level == "critical":
+        if prob >= 0.75:
             return "critical"
-        elif prob >= 0.50 or scores.risk_level == "high":
+        if prob >= 0.50:
             return "high"
-        elif prob >= 0.25 or scores.risk_level == "moderate":
+        if prob >= 0.25:
             return "moderate"
-        else:
-            return "low"
+        return "low"
+
+    def _classify_risk(self, prob: float, scores: Any) -> str:
+        """Combined level: the higher of the rule-based and model levels."""
+        return max(scores.risk_level, self._model_risk_level(prob), key=_RISK_ORDER.index)
 
     def model_info(self) -> Dict[str, Any]:
         """Return model information for the /model/info API endpoint."""
         if not self._loaded:
             self.load()
         info = {
+            "artifact_status": self.artifact_status.as_dict() if self.artifact_status else None,
             "model_name": self.metadata.get("model_name", "unknown"),
             "version": self.metadata.get("version", "unknown"),
             "feature_count": len(self.feature_names),
