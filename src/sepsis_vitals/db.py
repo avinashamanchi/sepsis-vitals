@@ -92,7 +92,50 @@ _is_sqlite = DATABASE_URL.startswith("sqlite")
 
 # Choose column types that work for both PostgreSQL and SQLite.
 # SQLite has no native UUID, INET, or JSONB, so we fall back to String/Text.
-UUIDType = String(36) if _is_sqlite else PG_UUID(as_uuid=True)
+NIL_UUID = "00000000-0000-0000-0000-000000000000"
+
+
+class GUID(sa_types.TypeDecorator):
+    """UUID column that always reads and binds canonical *strings*.
+
+    PostgreSQL stores a native UUID; SQLite stores CHAR(36). The application
+    treats every identifier as ``str`` (JWT ``sub``, Pydantic models, dict
+    keys); ``PG_UUID(as_uuid=True)`` returned ``uuid.UUID`` objects on
+    Postgres, which broke token creation at login. Values that are not UUIDs
+    (an MRN, a free-form patient label, a stray path segment) bind to the nil
+    UUID, so lookups find nothing instead of raising a database error.
+    """
+
+    impl = String(36)
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(PG_UUID(as_uuid=False))
+        return dialect.type_descriptor(String(36))
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        try:
+            return str(uuid.UUID(str(value)))
+        except ValueError:
+            return NIL_UUID
+
+    def process_result_value(self, value, dialect):
+        return None if value is None else str(value)
+
+
+def is_uuid(value: object) -> bool:
+    """True when *value* is a well-formed UUID (string or UUID object)."""
+    try:
+        uuid.UUID(str(value))
+    except ValueError:
+        return False
+    return True
+
+
+UUIDType = GUID()
 InetType = String(45) if _is_sqlite else INET
 JsonType = Text if _is_sqlite else JSONB
 

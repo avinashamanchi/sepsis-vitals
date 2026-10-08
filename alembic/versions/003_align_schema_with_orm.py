@@ -49,14 +49,39 @@ def _backfill_blind_index(table: str, source: str, target: str) -> None:
     rows = bind.execute(sa.text(f"SELECT id, {source} FROM {table}")).fetchall()  # nosec B608
     if not rows:
         return
-    from sepsis_vitals.security import FieldEncryptor, compute_blind_index
+    from sepsis_vitals.security import FieldEncryptionError, FieldEncryptor, compute_blind_index
 
     encryptor = FieldEncryptor.get()
+    failures = 0
     for row_id, value in rows:
-        plaintext = encryptor.decrypt(value) if value is not None else ""
+        try:
+            plaintext = encryptor.decrypt(value) if value is not None else ""
+        except FieldEncryptionError:
+            failures += 1
+            continue
         bind.execute(
             sa.text(f"UPDATE {table} SET {target} = :h WHERE id = :id"),  # nosec B608
             {"h": compute_blind_index(plaintext), "id": row_id},
+        )
+    if failures:
+        # Abort (the transaction rolls back); never print the values.
+        raise RuntimeError(
+            f"{failures} of {len(rows)} {table}.{source} values could not be decrypted. "
+            "Run the migration with the same SEPSIS_PII_KEY as the application."
+        )
+
+
+def _require_unique(columns: str, table: str, what: str) -> None:
+    """Fail with a clear message (no values) before a unique index would."""
+    if context.is_offline_mode():
+        return
+    duplicates = op.get_bind().execute(
+        sa.text(f"SELECT COUNT(*) FROM (SELECT 1 FROM {table} GROUP BY {columns} HAVING COUNT(*) > 1) d")  # nosec B608
+    ).scalar()
+    if duplicates:
+        raise RuntimeError(
+            f"{duplicates} duplicate {what} groups in {table}; merge or remove the duplicate "
+            "records before upgrading (values are not shown)."
         )
 
 
@@ -73,6 +98,8 @@ def upgrade() -> None:
     _backfill_blind_index("patients", "external_id", "external_id_hash")
     op.alter_column("users", "email_hash", existing_type=sa.String(64), nullable=False)
     op.alter_column("patients", "external_id_hash", existing_type=sa.String(64), nullable=False)
+    _require_unique("email_hash", "users", "account email")
+    _require_unique("site_id, external_id_hash", "patients", "per-site MRN")
     op.create_index("uq_users_email_hash", "users", ["email_hash"], unique=True)
     op.create_unique_constraint(
         "uq_patients_site_mrn", "patients", ["site_id", "external_id_hash"]

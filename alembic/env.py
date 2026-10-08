@@ -4,7 +4,10 @@ import os
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, text
+
+# Arbitrary constant identifying the sepsis-vitals migration lock.
+_MIGRATION_LOCK_KEY = 72_904_311
 
 config = context.config
 
@@ -42,9 +45,21 @@ def run_migrations_online():
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
-        with context.begin_transaction():
-            context.run_migrations()
+        is_postgres = connection.dialect.name == "postgresql"
+        if is_postgres:
+            # Serialise concurrent upgrades (several API containers starting at
+            # once): the session-level lock is held until released below, and
+            # later runners find the schema already at head.
+            connection.execute(text("SELECT pg_advisory_lock(:key)"), {"key": _MIGRATION_LOCK_KEY})
+            connection.commit()
+        try:
+            context.configure(connection=connection, target_metadata=target_metadata)
+            with context.begin_transaction():
+                context.run_migrations()
+        finally:
+            if is_postgres:
+                connection.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _MIGRATION_LOCK_KEY})
+                connection.commit()
 
 
 if context.is_offline_mode():

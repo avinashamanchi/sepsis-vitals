@@ -102,7 +102,9 @@ def test_backfill_computes_blind_index_from_decrypted_values(monkeypatch):
 
     monkeypatch.setenv("SEPSIS_PII_KEY", base64.b64encode(os.urandom(32)).decode())
     monkeypatch.setattr(FieldEncryptor, "_instance", None, raising=False)
+    monkeypatch.setattr(FieldEncryptor, "_key", None, raising=False)  # class-level cache
     encryptor = FieldEncryptor.get()
+    assert encryptor.encrypt("x").startswith("enc:"), "encryption must be active for this test"
 
     spec = importlib.util.spec_from_file_location(
         "mig003", ROOT / "alembic" / "versions" / "003_align_schema_with_orm.py"
@@ -142,3 +144,86 @@ def test_database_urls_use_installed_sync_driver(url, expected):
     from sepsis_vitals.db import sync_database_url
 
     assert sync_database_url(url) == expected
+
+
+def test_guid_columns_bind_and_return_strings():
+    """Regression: PG_UUID(as_uuid=True) returned uuid.UUID objects on Postgres,
+    which broke JWT creation at login; non-UUID lookups raised DataError."""
+    import uuid as _uuid
+
+    from sepsis_vitals.db import GUID, NIL_UUID, is_uuid
+
+    col = GUID()
+    value = _uuid.uuid4()
+    assert col.process_bind_param(value, None) == str(value)
+    assert col.process_bind_param(str(value).upper(), None) == str(value)
+    assert col.process_bind_param("MRN-0012345", None) == NIL_UUID  # matches nothing
+    assert col.process_bind_param(None, None) is None
+    assert col.process_result_value(value, None) == str(value)
+    assert is_uuid(str(value)) and not is_uuid("alerts")
+
+
+def _load_mig003(monkeypatch):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "mig003_edge", ROOT / "alembic" / "versions" / "003_align_schema_with_orm.py"
+    )
+    mig = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mig)
+
+    class _Online:
+        @staticmethod
+        def is_offline_mode() -> bool:
+            return False
+
+    monkeypatch.setattr(mig, "context", _Online)
+    return mig
+
+
+def test_backfill_aborts_without_revealing_values_when_key_is_wrong(monkeypatch):
+    import base64
+    import os
+
+    import sqlalchemy as sa
+    from alembic.operations import Operations
+    from alembic.runtime.migration import MigrationContext
+
+    from sepsis_vitals.security import FieldEncryptor
+
+    monkeypatch.setenv("SEPSIS_PII_KEY", base64.b64encode(os.urandom(32)).decode())
+    monkeypatch.setattr(FieldEncryptor, "_instance", None, raising=False)
+    monkeypatch.setattr(FieldEncryptor, "_key", None, raising=False)  # class-level cache
+    ciphertext = FieldEncryptor.get().encrypt("secret.person@example.org")
+    # a different key at migration time
+    monkeypatch.setenv("SEPSIS_PII_KEY", base64.b64encode(os.urandom(32)).decode())
+    monkeypatch.setattr(FieldEncryptor, "_instance", None, raising=False)
+    monkeypatch.setattr(FieldEncryptor, "_key", None, raising=False)  # class-level cache
+    mig = _load_mig003(monkeypatch)
+
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as conn:
+        conn.execute(sa.text("CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, email_hash TEXT)"))
+        conn.execute(sa.text("INSERT INTO users (id, email) VALUES ('u1', :e)"), {"e": ciphertext})
+        with Operations.context(MigrationContext.configure(conn)):
+            with pytest.raises(RuntimeError) as err:
+                mig._backfill_blind_index("users", "email", "email_hash")
+    assert "SEPSIS_PII_KEY" in str(err.value)
+    assert "secret.person" not in str(err.value)
+
+
+def test_duplicate_blind_indexes_fail_clearly(monkeypatch):
+    import sqlalchemy as sa
+    from alembic.operations import Operations
+    from alembic.runtime.migration import MigrationContext
+
+    mig = _load_mig003(monkeypatch)
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as conn:
+        conn.execute(sa.text("CREATE TABLE patients (id TEXT, site_id TEXT, external_id_hash TEXT)"))
+        conn.execute(sa.text(
+            "INSERT INTO patients VALUES ('p1','A','h1'), ('p2','A','h1'), ('p3','B','h1')"
+        ))
+        with Operations.context(MigrationContext.configure(conn)):
+            with pytest.raises(RuntimeError, match="1 duplicate per-site MRN"):
+                mig._require_unique("site_id, external_id_hash", "patients", "per-site MRN")

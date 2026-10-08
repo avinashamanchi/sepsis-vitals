@@ -215,7 +215,7 @@ def create_access_token(
 
     now = int(time.time())
     payload: dict[str, Any] = {
-        "sub": user_id,
+        "sub": str(user_id),
         "email": email,
         "role": role,
         "org_id": org_id,
@@ -256,7 +256,7 @@ def create_refresh_token(
 
     now = int(time.time())
     payload: dict[str, Any] = {
-        "sub": user_id,
+        "sub": str(user_id),
         "type": "refresh",
         "jti": uuid.uuid4().hex,
         "fid": family_id or uuid.uuid4().hex,

@@ -14,7 +14,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import case, cast, func, Date
+from sqlalchemy import Date, String, case, cast, func
 from sqlalchemy.orm import Session
 
 from sepsis_vitals.db import Alert, Patient, PredictionRecord, Score, VitalReading
@@ -578,7 +578,8 @@ def _scope_predictions(query: Any, site_id: str | None) -> Any:
     """
     if site_id is None:
         return query
-    return query.join(Patient, Patient.id == PredictionRecord.patient_id).filter(
+    # patient_id is free text on predictions but UUID on patients: compare as text.
+    return query.join(Patient, cast(Patient.id, String) == PredictionRecord.patient_id).filter(
         Patient.site_id == site_id
     )
 
