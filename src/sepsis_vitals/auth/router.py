@@ -19,12 +19,10 @@ from sepsis_vitals.auth.middleware import get_current_user, require_role
 from sepsis_vitals.auth.service import (
     AccountLockedError,
     AuthServiceError,
-    BreakGlassError,
     DuplicateEmailError,
     InvalidCredentialsError,
     InvalidTokenError,
     WeakPasswordError,
-    break_glass_login,
     login_user,
     refresh_access_token,
     register_user,
@@ -445,41 +443,27 @@ def auth_verify_email(
 
 @router.post(
     "/break-glass",
-    response_model=BreakGlassResponse,
-    summary="Emergency access — HIPAA § 164.312(a)(2)(ii)",
+    summary="Emergency access (disabled pending an approved policy)",
+    status_code=status.HTTP_403_FORBIDDEN,
 )
-def auth_break_glass(
-    body: BreakGlassRequest,
-    request: Request,
-) -> BreakGlassResponse:
-    """Activate break-glass emergency access.
+def auth_break_glass(body: BreakGlassRequest, request: Request) -> None:
+    """Reject every emergency-access request.
 
-    This endpoint grants 1-hour read-only access for clinical emergencies
-    when normal authentication is unavailable. All usage is heavily audited
-    and triggers immediate compliance alerts.
-
-    The emergency token is a pre-shared secret kept in a sealed envelope
-    in the ward. Its SHA-256 hash is stored in BREAK_GLASS_TOKEN_HASH.
+    The previous implementation issued a token for a user that does not
+    exist and with no site, so every endpoint rejected it: the feature looked
+    available but could not work. Emergency access needs an approved policy
+    (who may invoke it, for which site, with what scope, duration, review and
+    notification) before it is rebuilt; see PROJECT_REVIEW.md (N18). The
+    attempt is still logged for security monitoring, without the token.
     """
     ip = request.client.host if request.client else "unknown"
-    try:
-        result = break_glass_login(
-            emergency_token=body.emergency_token,
-            reason=body.reason,
-            ip_address=ip,
-        )
-    except BreakGlassError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(exc),
-        )
-
-    return BreakGlassResponse(
-        access_token=result["access_token"],
-        token_type=result["token_type"],
-        expires_minutes=result["expires_minutes"],
-        role=result["role"],
-        warning=result["warning"],
+    logger.warning("BREAK-GLASS attempt rejected (feature disabled) | ip=%s", ip)
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=(
+            "Emergency access is disabled: no approved emergency-access policy is "
+            "configured. Contact your system administrator."
+        ),
     )
 
 

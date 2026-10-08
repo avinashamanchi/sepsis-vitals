@@ -153,7 +153,8 @@ jobs:
           node-version: "20"
       - run: npm ci
       - run: npm audit --json > ../audit-before.json || true
-      - run: npm audit fix
+      - name: Non-forced audit fixes (exits non-zero while the vitest advisories remain)
+        run: npm audit fix || echo "Remaining advisories require the vitest major upgrade below"
       - run: npm install --save-dev vitest@^4.1.11
       - run: npm audit --json > ../audit-after.json || true
       - run: npm ls vitest tinypool react-router react-router-dom postcss nanoid fast-uri source-map-js > ../versions.txt 2>&1 || true

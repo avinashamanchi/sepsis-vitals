@@ -1589,8 +1589,20 @@ def _init_database():
     logger.info("Database tables initialized")
 
 
+_routers_included = False
+
+
 def _include_routers():
-    """Include sub-routers with graceful handling if optional deps are missing."""
+    """Include sub-routers with graceful handling if optional deps are missing.
+
+    Idempotent: the lifespan runs on every startup of the same app object
+    (e.g. several TestClients in one process), and include_router would
+    otherwise append duplicate routes each time.
+    """
+    global _routers_included
+    if _routers_included:
+        return
+    _routers_included = True
     routers = [
         ("sepsis_vitals.auth.router", "auth", [Depends(check_auth_rate_limit)]),
         ("sepsis_vitals.patients.router", "patients", [Depends(check_rate_limit)]),

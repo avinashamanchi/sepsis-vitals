@@ -114,6 +114,23 @@ async def _require_auth(request: Request) -> Dict[str, str]:
     return user
 
 
+async def _require_billing_admin(
+    user: Dict[str, str] = Depends(_require_auth),
+) -> Dict[str, str]:
+    """Billing is organisation administration: system_admin only.
+
+    Users carry a site assignment but no link to a billing Organization, so
+    there is no ownership rule that would let a site user act on one
+    organisation without being able to act on all of them.
+    """
+    if user.get("role") != "system_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Billing is restricted to administrators.",
+        )
+    return user
+
+
 # ---------------------------------------------------------------------------
 # Pydantic request / response schemas
 # ---------------------------------------------------------------------------
@@ -223,7 +240,7 @@ def _get_org(db: Session, org_id: str) -> Organization:
     if org is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Organization {org_id} not found.",
+            detail="Organization not found.",
         )
     return org
 
@@ -257,7 +274,7 @@ async def list_plans() -> List[PlanInfo]:
 )
 async def create_checkout(
     body: CheckoutRequest,
-    user: Dict[str, str] = Depends(_require_auth),
+    user: Dict[str, str] = Depends(_require_billing_admin),
     db: Session = Depends(get_db),
 ) -> CheckoutResponse:
     """Create a Stripe Checkout session for a new subscription."""
@@ -309,7 +326,7 @@ async def create_checkout(
 )
 async def create_portal(
     body: PortalRequest,
-    user: Dict[str, str] = Depends(_require_auth),
+    user: Dict[str, str] = Depends(_require_billing_admin),
     db: Session = Depends(get_db),
 ) -> PortalResponse:
     """Create a Stripe Billing Portal session for self-service management."""
@@ -408,7 +425,7 @@ async def stripe_webhook(
 )
 async def get_subscription(
     org_id: str,
-    user: Dict[str, str] = Depends(_require_auth),
+    user: Dict[str, str] = Depends(_require_billing_admin),
     db: Session = Depends(get_db),
 ) -> SubscriptionStatusResponse:
     """Return the current subscription status for an organization."""
@@ -497,7 +514,7 @@ async def get_subscription(
 )
 async def update_beds(
     body: UpdateBedsRequest,
-    user: Dict[str, str] = Depends(_require_auth),
+    user: Dict[str, str] = Depends(_require_billing_admin),
     db: Session = Depends(get_db),
 ) -> UpdateBedsResponse:
     """Update the bed count on an active subscription.

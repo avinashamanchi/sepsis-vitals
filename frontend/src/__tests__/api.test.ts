@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 function mockFetch(status = 200, body: unknown = {}) {
-  const fn = vi.fn(async (..._args: unknown[]) =>
-    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }),
+  const fn = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+    async () =>
+      new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }),
   )
   vi.stubGlobal('fetch', fn)
   return fn
