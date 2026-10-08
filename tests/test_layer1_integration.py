@@ -11,11 +11,10 @@ HAS_FHIR_DATA = (FHIR_DEMO_PATH / "MimicPatient.ndjson.gz").exists()
 
 @pytest.mark.skipif(not HAS_CSV_DATA, reason="MIMIC-IV Demo CSV not available")
 class TestCSVPipelineIntegration:
-    def test_full_pipeline_produces_training_data(self):
-        from sepsis_vitals.ml.mimic_loader import MIMICLoader
+    def test_full_pipeline_produces_training_data(self, mimic_demo_dataset):
+        from tests.conftest import first_patients
 
-        loader = MIMICLoader.from_demo()
-        df = loader.build_training_dataset(max_patients=10)
+        df = first_patients(mimic_demo_dataset, 10)
         assert len(df) > 0
         assert "patient_id" in df.columns
         assert "sepsis_label" in df.columns
@@ -24,11 +23,8 @@ class TestCSVPipelineIntegration:
         has_vitals = sum(1 for v in vital_cols if v in df.columns and df[v].notna().any())
         assert has_vitals >= 3
 
-    def test_sepsis3_labels_not_all_same(self):
-        from sepsis_vitals.ml.mimic_loader import MIMICLoader
-
-        loader = MIMICLoader.from_demo()
-        df = loader.build_training_dataset(max_patients=50)
+    def test_sepsis3_labels_not_all_same(self, mimic_demo_dataset):
+        df = mimic_demo_dataset
         assert df["sepsis_label"].nunique() >= 1
         n_pos = df["sepsis_label"].sum()
         n_total = len(df)
@@ -61,12 +57,11 @@ class TestFHIRPipelineIntegration:
 
 @pytest.mark.skipif(not (HAS_CSV_DATA and HAS_FHIR_DATA), reason="Both sources needed")
 class TestUnifiedPipeline:
-    def test_unify_csv_and_fhir(self):
-        from sepsis_vitals.ml.mimic_loader import MIMICLoader
+    def test_unify_csv_and_fhir(self, mimic_demo_dataset):
         from sepsis_vitals.ml.data_unifier import unify_datasets
+        from tests.conftest import first_patients
 
-        csv_loader = MIMICLoader.from_demo()
-        csv_df = csv_loader.build_training_dataset(max_patients=5)
+        csv_df = first_patients(mimic_demo_dataset, 5)
         result = unify_datasets([csv_df])
         assert len(result) > 0
         assert "patient_id" in result.columns

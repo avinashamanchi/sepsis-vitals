@@ -55,7 +55,7 @@ class TestMonitorEndpoints:
         ingester = VitalsIngester(predictor, registry, tracker, ws)
 
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             ingester.ingest_single("P001", {"heart_rate": 80, "temperature": 37.0})
         )
 
