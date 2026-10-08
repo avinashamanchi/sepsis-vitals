@@ -1,4 +1,7 @@
-const BASE = import.meta.env.VITE_API_URL ?? ''
+// Default '/api': the Vite dev proxy and the nginx container both strip this
+// prefix before forwarding to the FastAPI backend, which has no /api routes.
+// `||` (not `??`) so a blank VITE_API_URL in .env also falls back.
+const BASE = import.meta.env.VITE_API_URL || '/api'
 
 /** Session-scoped tokens reduce exposure if a shared clinical workstation is left behind. */
 function safeGetItem(key: string): string | null {
@@ -130,6 +133,22 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ email, password }) },
     ),
 
+  weeklyTrends: (days = 7) =>
+    request<Array<{ date: string | null; predictions: number; alerts: number }>>(
+      `/patients/dashboard/weekly-trends?days=${days}`,
+    ),
+
+  riskDistribution: (hoursBack = 24) =>
+    request<Array<{ risk_level: string; count: number; percentage: number }>>(
+      `/patients/dashboard/risk-distribution?hours_back=${hoursBack}`,
+    ),
+
+  confirmPasswordReset: (token: string, newPassword: string) =>
+    request<{ detail: string }>('/auth/password-reset/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ token, new_password: newPassword }),
+    }),
+
   requestPasswordReset: (email: string) =>
     request<{ detail: string }>('/auth/password-reset/request', {
       method: 'POST',
@@ -156,16 +175,19 @@ export const api = {
   copilot: (body: { vitals: Record<string, number>; patient_id: string; question?: string }) =>
     request('/copilot', { method: 'POST', body: JSON.stringify(body) }),
 
+  // Mirrors PatientSummaryOut. latest_* are null until a patient is observed:
+  // render that as "not yet observed", never as low risk or 0.
   getPatients: (siteId?: string) =>
     request<Array<{
       id: string
-      name?: string
-      bed?: string
-      vitals: Record<string, number>
-      riskLevel: string
-      riskProbability: number
-      lastUpdated: string
-    }>>(`/patients/${siteId ? `?site_id=${siteId}` : ''}`),
+      external_id: string
+      site_id: string
+      age_years: number | null
+      sex: string | null
+      latest_vitals: Record<string, number> | null
+      latest_risk_level: string | null
+      latest_recorded_at: string | null
+    }>>(`/patients${siteId ? `?site_id=${encodeURIComponent(siteId)}` : ''}`),
 
   patientTrend: (patientId: string) =>
     request<{
@@ -193,8 +215,7 @@ export const api = {
     request<{
       patient_count: number
       active_alerts: number
-      predictions_today: number
-      avg_response_min: number | null
+      recent_predictions: number
     }>(`/patients/dashboard/stats${siteId ? `?site_id=${encodeURIComponent(siteId)}` : ''}`),
 
   systemHealth: () =>

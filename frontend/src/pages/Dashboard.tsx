@@ -35,12 +35,15 @@ export function Dashboard() {
   const wsConnected = useStore((s) => s.wsConnected)
   const activeAlerts = alerts.filter((a) => !a.dismissed).length
 
-  const [stats, setStats] = useState({
-    patientCount: patients.length || 12,
-    predictionsToday: 147,
-    modelAuroc: '0.92',
-    modelName: 'Synthetic baseline',
-  })
+  // Illustrative figures only in demo mode; live mode shows '—' until loaded.
+  const [stats, setStats] = useState<{
+    patientCount: number | string
+    predictionsToday: number | string
+    modelAuroc: string
+    modelName: string
+  }>(isDemo
+    ? { patientCount: patients.length || 12, predictionsToday: 147, modelAuroc: '0.92', modelName: 'Synthetic baseline' }
+    : { patientCount: '—', predictionsToday: '—', modelAuroc: '—', modelName: 'Loading model info' })
 
   useEffect(() => {
     if (isDemo) return
@@ -61,7 +64,8 @@ export function Dashboard() {
         setStats((s) => ({
           ...s,
           patientCount: data.patient_count,
-          predictionsToday: data.predictions_today,
+          // Scores computed from vitals recorded in the last 24 h.
+          predictionsToday: data.recent_predictions,
         }))
       })
       .catch((err: unknown) => console.error('Failed to load dashboard stats:', err))

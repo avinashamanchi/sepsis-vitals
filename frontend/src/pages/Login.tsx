@@ -4,6 +4,15 @@ import { Link, useNavigate } from 'react-router-dom'
 import { api, isDemo } from '../lib/api'
 import { useStore } from '../stores/useStore'
 
+/** Reset links carry the token in the URL fragment, which browsers never send to servers. */
+function readResetToken(): string | null {
+  try {
+    return new URLSearchParams(window.location.hash.slice(1)).get('reset_token')
+  } catch {
+    return null
+  }
+}
+
 export function Login() {
   const setAuth = useStore((state) => state.setAuth)
   const navigate = useNavigate()
@@ -12,6 +21,37 @@ export function Login() {
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
   const [loading, setLoading] = useState(false)
+  const [resetToken, setResetToken] = useState<string | null>(() => (isDemo ? null : readResetToken()))
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+
+  const handleConfirmReset = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setError('')
+    if (newPassword.length < 12) {
+      setError('Use at least 12 characters.')
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setError('The passwords do not match.')
+      return
+    }
+    if (!resetToken) return
+    setLoading(true)
+    try {
+      await api.confirmPasswordReset(resetToken, newPassword)
+      // Drop the single-use token from the address bar and history.
+      window.history.replaceState(null, '', window.location.pathname + window.location.search)
+      setResetToken(null)
+      setNewPassword('')
+      setConfirmPassword('')
+      setInfo('Password updated. Sign in with your new password.')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'This reset link is invalid or has expired.')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const handleDemoLogin = () => {
     setAuth('demo-token', { email: 'research-demo@sepsisvitals.com', role: 'demo' })
@@ -102,6 +142,48 @@ export function Login() {
               </span>
               <ArrowRight className="h-5 w-5 text-accent transition-transform group-hover:translate-x-1" aria-hidden="true" />
             </button>
+          ) : resetToken ? (
+            <form onSubmit={handleConfirmReset} className="space-y-4" aria-label="Set a new password">
+              <div>
+                <label htmlFor="new-password" className="mb-1.5 block text-xs text-text-secondary">
+                  New password (at least 12 characters)
+                </label>
+                <input
+                  id="new-password"
+                  type="password"
+                  value={newPassword}
+                  onChange={(event) => setNewPassword(event.target.value)}
+                  autoComplete="new-password"
+                  required
+                  minLength={12}
+                  className="w-full rounded-md border border-border bg-surface px-3.5 py-3 text-sm outline-none transition-colors focus:border-accent/50"
+                />
+              </div>
+              <div>
+                <label htmlFor="confirm-password" className="mb-1.5 block text-xs text-text-secondary">
+                  Confirm new password
+                </label>
+                <input
+                  id="confirm-password"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  autoComplete="new-password"
+                  required
+                  minLength={12}
+                  className="w-full rounded-md border border-border bg-surface px-3.5 py-3 text-sm outline-none transition-colors focus:border-accent/50"
+                />
+              </div>
+              {error && <p role="alert" className="text-xs leading-5 text-danger">{error}</p>}
+              <button
+                type="submit"
+                disabled={loading}
+                className="flex w-full items-center justify-center gap-2 rounded-md bg-accent px-4 py-3 text-sm font-bold text-void disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <KeyRound className="h-4 w-4" aria-hidden="true" />
+                {loading ? 'Saving…' : 'Set new password'}
+              </button>
+            </form>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>

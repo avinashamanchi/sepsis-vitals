@@ -47,6 +47,8 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,
+        // The backend serves routes at the root (e.g. /patients), like nginx's /api/ proxy.
+        rewrite: (path) => path.replace(/^\/api/, ''),
       },
       '/ws': {
         target: 'ws://localhost:8080',

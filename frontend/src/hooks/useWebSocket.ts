@@ -50,8 +50,9 @@ export function useWebSocket() {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       let host: string
       try {
+        // Relative bases such as "/api" resolve against the page's own host.
         host = import.meta.env.VITE_API_URL
-          ? new URL(import.meta.env.VITE_API_URL).host
+          ? new URL(import.meta.env.VITE_API_URL, window.location.href).host
           : window.location.host
       } catch {
         setWsState('offline')
