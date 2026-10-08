@@ -77,6 +77,18 @@ class PatientOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PatientSummaryOut(PatientOut):
+    """Patient with their latest observation, for list views.
+
+    The ``latest_*`` fields are null until the patient has a recorded
+    observation; clients must show that as "not yet observed", not as low risk.
+    """
+
+    latest_vitals: Optional[Dict[str, float]] = None
+    latest_risk_level: Optional[str] = None
+    latest_recorded_at: Optional[datetime] = None
+
+
 class VitalsRecord(BaseModel):
     """Body for recording a new set of vital signs."""
 
@@ -245,7 +257,7 @@ def create_patient(
 
 @router.get(
     "",
-    response_model=List[PatientOut],
+    response_model=List[PatientSummaryOut],
     summary="List patients",
 )
 def list_patients(
@@ -254,11 +266,17 @@ def list_patients(
     limit: int = Query(50, ge=1, le=200, description="Max records to return"),
     db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(verify_auth),
-) -> List[PatientOut]:
-    """Return a paginated list of patients at the caller's site."""
+) -> List[PatientSummaryOut]:
+    """Return a paginated list of patients at the caller's site, with latest observations."""
     site_filter = resolve_site_filter(user, site_id)
     patients = service.list_patients(site_id=site_filter, db=db, skip=skip, limit=limit)
-    return [PatientOut.model_validate(p) for p in patients]
+    latest = service.latest_observations([p.id for p in patients], db)
+    return [
+        PatientSummaryOut(
+            **PatientOut.model_validate(p).model_dump(), **latest.get(p.id, {})
+        )
+        for p in patients
+    ]
 
 
 @router.get(
@@ -561,3 +579,8 @@ def get_risk_distribution(
 
 router.include_router(alerts_router)
 router.include_router(dashboard_router)
+
+# Included routes are appended after "/{patient_id}", which would capture
+# GET /patients/alerts as patient_id="alerts" (the endpoint was unreachable).
+# Keep fixed paths ahead of the patient-id patterns; the sort is stable.
+router.routes[:] = sorted(router.routes, key=lambda r: "{patient_id}" in getattr(r, "path", ""))

@@ -803,12 +803,13 @@ async def predict_sepsis(body: PredictRequest, request: Request, user: Dict = De
     if predictor is None:
         raise HTTPException(status_code=503, detail="Model not loaded. Run 'python -m sepsis_vitals.train' first.")
 
-    vitals_dict = {k: v for k, v in body.vitals.dict().items() if v is not None}
+    vitals_dict = {k: v for k, v in body.vitals.model_dump().items() if v is not None}
     if _count_measurements(vitals_dict) < 3:
         raise HTTPException(status_code=422, detail="Provide at least 3 vital signs for ML prediction.")
 
-    comorbidities = body.comorbidities.dict() if body.comorbidities else None
+    comorbidities = body.comorbidities.model_dump() if body.comorbidities else None
     await _ensure_not_foreign_patient_async(sanitise_string(body.patient_id), user)
+    history = await _recorded_history_async(sanitise_string(body.patient_id))
 
     start = time.monotonic()
     prediction = predictor.predict(
@@ -816,6 +817,7 @@ async def predict_sepsis(body: PredictRequest, request: Request, user: Dict = De
         patient_id=sanitise_string(body.patient_id),
         age_years=body.age_years,
         comorbidities=comorbidities,
+        history=history,
     )
     elapsed_ms = (time.monotonic() - start) * 1000
 
@@ -882,13 +884,14 @@ async def predict_batch(body: BatchPredictRequest, request: Request, user: Dict 
 
     for i, patient in enumerate(body.patients):
         try:
-            vitals_dict = {k: v for k, v in patient.vitals.dict().items() if v is not None}
-            comorbidities = patient.comorbidities.dict() if patient.comorbidities else None
+            vitals_dict = {k: v for k, v in patient.vitals.model_dump().items() if v is not None}
+            comorbidities = patient.comorbidities.model_dump() if patient.comorbidities else None
             prediction = predictor.predict(
                 vitals=vitals_dict,
                 patient_id=sanitise_string(patient.patient_id),
                 age_years=patient.age_years,
                 comorbidities=comorbidities,
+                history=await _recorded_history_async(sanitise_string(patient.patient_id)),
             )
             result = prediction.to_dict()
             results.append(result)
@@ -921,6 +924,36 @@ async def _ensure_not_foreign_patient_async(patient_id: str, user: Dict[str, Any
         finally:
             db.close()
     await asyncio.to_thread(_check)
+
+
+async def _recorded_history_async(patient_id: str, limit: int = 4) -> list:
+    """Recent recorded vitals for a registered patient, oldest first.
+
+    Gives /predict the same deltas, rolling statistics and observation gap the
+    model saw in training. Unregistered IDs have no history.
+    """
+    def _load() -> list:
+        from sepsis_vitals.db import SessionLocal, VitalReading
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(VitalReading)
+                .filter(VitalReading.patient_id == patient_id)
+                .order_by(VitalReading.recorded_at.desc())
+                .limit(limit)
+                .all()
+            )
+            names = ("temperature", "heart_rate", "resp_rate", "sbp", "dbp", "spo2",
+                     "gcs", "lactate", "wbc", "procalcitonin")
+            history = [
+                {"timestamp": r.recorded_at, "map": r.map_pressure,
+                 **{n: getattr(r, n) for n in names}}
+                for r in rows
+            ]
+            return list(reversed(history))
+        finally:
+            db.close()
+    return await asyncio.to_thread(_load)
 
 
 async def _verify_patient_org_async(patient_id: str, user: Dict[str, Any]) -> None:
@@ -1187,7 +1220,7 @@ async def clinical_copilot(body: CopilotRequest, user: Dict = Depends(verify_aut
 
     _metrics["copilot_calls_total"] += 1
 
-    vitals_dict = {k: v for k, v in body.vitals.dict().items() if v is not None}
+    vitals_dict = {k: v for k, v in body.vitals.model_dump().items() if v is not None}
     scores = compute_scores(vitals_dict)
     scores_dict = scores.as_dict()
 
@@ -1195,7 +1228,7 @@ async def clinical_copilot(body: CopilotRequest, user: Dict = Depends(verify_aut
     ml_risk = None
     predictor = _get_predictor()
     if predictor:
-        comorbidities = body.comorbidities.dict() if body.comorbidities else None
+        comorbidities = body.comorbidities.model_dump() if body.comorbidities else None
         pred = predictor.predict(
             vitals=vitals_dict,
             patient_id=body.patient_id,
@@ -1382,6 +1415,7 @@ async def websocket_alerts(websocket: WebSocket):
     """
     # Authenticate WebSocket handshake via JWT
     ws_org_id = None  # org_id for filtering broadcasts
+    ws_expires_at: Optional[float] = None  # close when the access token expires
     selected_subprotocol = None
     if _auth_enabled:
         offered = [
@@ -1404,6 +1438,7 @@ async def websocket_alerts(websocket: WebSocket):
                 await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                 return
             ws_org_id = payload.get("org_id")
+            ws_expires_at = float(payload["exp"])
             if ws_org_id is None and payload.get("role") != "system_admin":
                 # Fail closed: an org-less connection would receive every site's alerts.
                 await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
@@ -1420,8 +1455,16 @@ async def websocket_alerts(websocket: WebSocket):
     )
     try:
         while True:
-            # Keep connection alive, receive any client messages
-            data = await websocket.receive_text()
+            # Keep connection alive, receive any client messages. The session
+            # must not outlive its access token: the client reconnects with a
+            # fresh token after refreshing.
+            if ws_expires_at is not None:
+                remaining = ws_expires_at - time.time()
+                if remaining <= 0:
+                    raise asyncio.TimeoutError
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=remaining)
+            else:
+                data = await websocket.receive_text()
             # Client can send vitals for immediate scoring
             try:
                 vitals = json.loads(data)
@@ -1434,6 +1477,9 @@ async def websocket_alerts(websocket: WebSocket):
                 await websocket.send_json({"type": "error", "detail": "Invalid JSON"})
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)
+    except asyncio.TimeoutError:
+        ws_manager.disconnect(websocket)
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="token expired")
 
 
 # ---------------------------------------------------------------------------

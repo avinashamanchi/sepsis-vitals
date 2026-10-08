@@ -240,6 +240,8 @@ class SepsisPredictor:
         patient_id: str = "unknown",
         age_years: Optional[int] = None,
         comorbidities: Optional[Dict[str, int]] = None,
+        history: Optional[List[Dict[str, Any]]] = None,
+        observed_at: Optional[Any] = None,
     ) -> SepsisPrediction:
         """Generate a sepsis risk prediction from vital signs.
 
@@ -254,6 +256,13 @@ class SepsisPredictor:
             Patient age
         comorbidities : dict, optional
             Dict of {has_hypertension, has_diabetes, has_ckd, has_copd, has_heart_failure}: 0/1
+        history : list of dict, optional
+            Earlier observations of this patient, each with a ``timestamp``
+            and the same vital/lab keys. Deltas, rolling statistics and the
+            observation gap are computed from them exactly as in training;
+            without history the request is scored as a first observation.
+        observed_at : datetime-like, optional
+            Time of the current observation (defaults to now).
 
         Returns
         -------
@@ -265,9 +274,9 @@ class SepsisPredictor:
         # Compute clinical scores
         scores = compute_scores(vitals)
 
-        # Build feature vector
+        # Build the feature vector with the training pipeline (no train/serve skew)
         feature_vector = self._build_feature_vector(
-            vitals, scores, age_years, comorbidities
+            vitals, age_years, comorbidities, history or [], observed_at
         )
 
         # Impute NaN values using training medians
@@ -333,91 +342,71 @@ class SepsisPredictor:
             return None
         return self._state_store.get_trend(patient_id)
 
+    _INPUT_COLUMNS = (
+        "temperature", "heart_rate", "resp_rate", "sbp", "dbp", "spo2", "gcs", "map",
+        "lactate", "wbc", "procalcitonin", "on_supplemental_o2", "spo2_scale2",
+    )
+    _COMORBIDITIES = (
+        "has_hypertension", "has_diabetes", "has_ckd", "has_copd", "has_heart_failure",
+    )
+    # Rolling window 3 plus a margin; only the last three rows affect features.
+    _HISTORY_ROWS = 4
+
     def _build_feature_vector(
         self,
         vitals: Dict[str, Any],
-        scores: Any,
         age_years: Optional[int],
         comorbidities: Optional[Dict[str, int]],
+        history: List[Dict[str, Any]],
+        observed_at: Optional[Any] = None,
     ) -> np.ndarray:
-        """Build a feature vector matching the training feature set."""
-        features = {}
+        """Build the model's feature vector with the *training* pipeline.
 
-        # Base vitals
-        for vital in ["temperature", "heart_rate", "resp_rate", "sbp", "dbp", "spo2", "gcs", "map"]:
-            features[vital] = vitals.get(vital, np.nan)
+        The current observation is appended to the patient's recent history
+        and passed through :func:`sepsis_vitals.ml.trainer.prepare_features`,
+        so deltas, rolling statistics, missingness and the observation gap are
+        computed exactly as during training. Earlier versions scored every
+        request as a first observation, which lowered AUROC and roughly halved
+        predicted risk (see reports/synthetic_pipeline_audit.md).
+        """
+        from sepsis_vitals.ml.trainer import prepare_features
 
-        # KNOWN TRAIN/SERVE SKEW: every request is scored as if it were a
-        # patient's first observation (no deltas, rolling std, or observation
-        # gap). Training rows mostly have history, and first observations are
-        # almost always pre-onset, so live risk is systematically lower than
-        # in evaluation. See reports/synthetic_pipeline_audit.md. Fix by
-        # building features from stored history with the training pipeline.
-        # Delta features (NaN for single observation)
-        for vital in ["temperature", "heart_rate", "resp_rate", "sbp", "spo2", "gcs"]:
-            features[f"{vital}_delta"] = np.nan
+        now = pd.Timestamp(observed_at) if observed_at is not None else pd.Timestamp.now()
+        if now.tzinfo is not None:
+            now = now.tz_convert("UTC").tz_localize(None)
+        static: Dict[str, Any] = {
+            "patient_id": "_",
+            "age_years": age_years if age_years is not None else 55,
+        }
+        for name in self._COMORBIDITIES:
+            static[name] = int((comorbidities or {}).get(name, 0) or 0)
 
-        # Rolling features (same as current value for single obs)
-        for vital in ["temperature", "heart_rate", "resp_rate", "sbp", "spo2", "gcs"]:
-            features[f"{vital}_roll_mean"] = vitals.get(vital, np.nan)
-            features[f"{vital}_roll_std"] = np.nan  # NaN matches training first-obs
+        def _row(obs: Dict[str, Any], ts: pd.Timestamp) -> Dict[str, Any]:
+            row = {col: obs.get(col, np.nan) for col in self._INPUT_COLUMNS}
+            return {**row, **static, "timestamp": ts}
 
-        # Missingness
-        for vital in ["temperature", "heart_rate", "resp_rate", "sbp", "spo2", "gcs"]:
-            features[f"{vital}_missing"] = 1 if pd.isna(vitals.get(vital)) else 0
-        features["n_vitals_missing"] = sum(
-            1 for v in ["temperature", "heart_rate", "resp_rate", "sbp", "spo2", "gcs"]
-            if pd.isna(vitals.get(v))
+        rows = []
+        for obs in history:
+            raw_ts = obs.get("timestamp")
+            if raw_ts is None:
+                continue  # an observation without a time cannot be ordered
+            ts = pd.Timestamp(raw_ts)
+            if ts.tzinfo is not None:
+                ts = ts.tz_convert("UTC").tz_localize(None)
+            if ts < now:  # only observations strictly before the current one
+                rows.append(_row(obs, ts))
+        rows = sorted(rows, key=lambda r: r["timestamp"])[-self._HISTORY_ROWS:]
+        rows.append(_row(vitals, now))
+
+        frame = pd.DataFrame(rows)
+        for col in ("on_supplemental_o2", "spo2_scale2"):
+            frame[col] = frame[col].fillna(False).astype(bool)
+        features, _ = prepare_features(frame)
+        last = features.iloc[-1]
+        return np.array(
+            [[float(last.get(name, np.nan)) for name in self.feature_names]],
+            dtype=np.float64,
         )
-
-        # Clinical scores
-        features["qsofa"] = scores.qsofa
-        features["news2_computed"] = scores.news2_style
-        features["sirs_computed"] = scores.sirs_count
-        si = scores.shock_index
-        features["shock_index_computed"] = si if si is not None else np.nan
-
-        # Demographics
-        features["age_years"] = age_years if age_years is not None else 55
-
-        # Comorbidities
-        if comorbidities:
-            features["has_hypertension"] = comorbidities.get("has_hypertension", 0)
-            features["has_diabetes"] = comorbidities.get("has_diabetes", 0)
-            features["has_ckd"] = comorbidities.get("has_ckd", 0)
-            features["has_copd"] = comorbidities.get("has_copd", 0)
-            features["has_heart_failure"] = comorbidities.get("has_heart_failure", 0)
-        else:
-            features["has_hypertension"] = 0
-            features["has_diabetes"] = 0
-            features["has_ckd"] = 0
-            features["has_copd"] = 0
-            features["has_heart_failure"] = 0
-
-        # Lab values
-        for lab in ["lactate", "wbc", "procalcitonin"]:
-            features[lab] = vitals.get(lab, np.nan)
-            features[f"{lab}_delta"] = np.nan
-            features[f"{lab}_roll_mean"] = vitals.get(lab, np.nan)
-            features[f"{lab}_missing"] = 1 if pd.isna(vitals.get(lab)) else 0
-        features["n_labs_missing"] = sum(
-            1 for v in ["lactate", "wbc", "procalcitonin"]
-            if pd.isna(vitals.get(v))
-        )
-
-        # Temporal
-        features["obs_gap_min"] = np.nan
-
-        # Risk level numeric
-        risk_map = {"low": 0, "moderate": 1, "high": 2, "critical": 3}
-        features["risk_level_numeric"] = risk_map.get(scores.risk_level, 0)
-
-        # Build ordered vector matching training features
-        vector = []
-        for feat_name in self.feature_names:
-            vector.append(features.get(feat_name, np.nan))
-
-        return np.array([vector], dtype=np.float64)
 
     def _compute_confidence_interval(
         self, feature_vector: np.ndarray, risk_prob: float

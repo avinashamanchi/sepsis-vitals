@@ -41,6 +41,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
 
+from sepsis_vitals.security import log_ref  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -751,7 +753,7 @@ class VitalsIngestionQueue:
             self._stats["received"] += 1
             logger.debug(
                 "Queued vitals for patient %s (%d vitals, source=%s)",
-                reading.patient_id,
+                log_ref(reading.patient_id),
                 len(reading.vitals),
                 reading.source,
             )
@@ -762,7 +764,7 @@ class VitalsIngestionQueue:
                 "patient %s.  Consider increasing queue size or adding "
                 "more processing capacity.",
                 self._queue.maxsize,
-                reading.patient_id,
+                log_ref(reading.patient_id),
             )
 
     async def process_loop(self) -> None:
@@ -815,7 +817,7 @@ class VitalsIngestionQueue:
                 logger.exception(
                     "Error in vitals handler %s for patient %s",
                     getattr(handler, "__name__", repr(handler)),
-                    reading.patient_id,
+                    log_ref(reading.patient_id),
                 )
             else:
                 self._stats["processed"] += 1
@@ -1135,7 +1137,7 @@ class MLLPServer:
         logger.info(
             "Accepted ORU message %s: patient=%s, vitals=%s",
             msg.message_control_id,
-            reading.patient_id,
+            log_ref(reading.patient_id),
             list(reading.vitals.keys()),
         )
         return self._parser.build_ack(msg, ack_code="AA")
@@ -1302,7 +1304,7 @@ class FHIRWebhookHandler:
 
         logger.info(
             "FHIR webhook Observation: patient=%s, vital=%s",
-            patient_id, vital,
+            log_ref(patient_id), vital,
         )
         return {
             "status": "accepted",

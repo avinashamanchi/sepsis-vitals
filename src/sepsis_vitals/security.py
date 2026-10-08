@@ -722,3 +722,15 @@ def compute_blind_index(value: str) -> str:
         digest = hmac.new(enc._key, value.lower().encode("utf-8"), hashlib.sha256)
         return digest.hexdigest()
     return hashlib.sha256(value.lower().encode("utf-8")).hexdigest()
+
+
+def log_ref(identifier: object) -> str:
+    """Short, keyed, irreversible reference for an identifier in log lines.
+
+    Lets operators correlate log entries for one patient without writing the
+    MRN or internal ID itself to logs. Uses the blind-index HMAC, so it cannot
+    be reversed with a dictionary of MRNs when SEPSIS_PII_KEY is set.
+    """
+    if identifier is None:
+        return "ref:none"
+    return "ref:" + compute_blind_index(str(identifier))[:12]

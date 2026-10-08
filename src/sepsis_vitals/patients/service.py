@@ -39,18 +39,17 @@ def create_patient(
     Raises
     ------
     ValueError
-        If a patient with the same *external_id* already exists.
+        If a patient with the same *external_id* already exists at *site_id*.
+        MRNs are only unique within a site.
     """
     ext_id_hash = compute_blind_index(external_id)
     existing = (
         db.query(Patient)
-        .filter(Patient.external_id_hash == ext_id_hash)
+        .filter(Patient.site_id == site_id, Patient.external_id_hash == ext_id_hash)
         .first()
     )
     if existing is not None:
-        raise ValueError(
-            f"Patient with external_id '{external_id}' already exists"
-        )
+        raise ValueError("Patient already exists at this site")
 
     patient = Patient(
         external_id=external_id,
@@ -71,15 +70,17 @@ def get_patient(patient_id: str, db: Session) -> Patient | None:
 
 
 def get_patient_by_external_id(
-    external_id: str, db: Session
+    external_id: str, db: Session, site_id: str | None = None
 ) -> Patient | None:
-    """Return a patient by their external (site-assigned) identifier."""
+    """Return a patient by their site-assigned identifier.
+
+    MRNs are only unique per site; pass *site_id* to disambiguate.
+    """
     ext_id_hash = compute_blind_index(external_id)
-    return (
-        db.query(Patient)
-        .filter(Patient.external_id_hash == ext_id_hash)
-        .first()
-    )
+    query = db.query(Patient).filter(Patient.external_id_hash == ext_id_hash)
+    if site_id is not None:
+        query = query.filter(Patient.site_id == site_id)
+    return query.first()
 
 
 def list_patients(
@@ -93,6 +94,60 @@ def list_patients(
     if site_id is not None:
         query = query.filter(Patient.site_id == site_id)
     return query.order_by(Patient.created_at.desc()).offset(skip).limit(limit).all()
+
+
+_SUMMARY_VITALS = (
+    "temperature", "heart_rate", "resp_rate", "sbp", "dbp", "spo2", "gcs",
+    "lactate", "wbc", "procalcitonin",
+)
+
+
+def latest_observations(
+    patient_ids: list[str], db: Session
+) -> dict[str, dict[str, Any]]:
+    """Return each patient's most recent reading and its score, if any.
+
+    Patients without readings are absent from the result; callers must treat
+    that as "not yet observed", never as normal or low risk.
+    """
+    if not patient_ids:
+        return {}
+    latest = (
+        db.query(
+            VitalReading.patient_id.label("pid"),
+            func.max(VitalReading.recorded_at).label("ts"),
+        )
+        .filter(VitalReading.patient_id.in_(patient_ids))
+        .group_by(VitalReading.patient_id)
+        .subquery()
+    )
+    rows = (
+        db.query(VitalReading, Score)
+        .join(
+            latest,
+            (VitalReading.patient_id == latest.c.pid)
+            & (VitalReading.recorded_at == latest.c.ts),
+        )
+        .outerjoin(Score, Score.vital_id == VitalReading.id)
+        .all()
+    )
+    out: dict[str, dict[str, Any]] = {}
+    for reading, score in rows:
+        if reading.patient_id in out:
+            continue  # identical timestamps: keep the first
+        vitals = {
+            name: getattr(reading, name)
+            for name in _SUMMARY_VITALS
+            if getattr(reading, name) is not None
+        }
+        if reading.map_pressure is not None:
+            vitals["map"] = reading.map_pressure
+        out[reading.patient_id] = {
+            "latest_vitals": vitals,
+            "latest_risk_level": score.risk_level if score is not None else None,
+            "latest_recorded_at": reading.recorded_at,
+        }
+    return out
 
 
 def update_patient(

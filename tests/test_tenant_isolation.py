@@ -175,3 +175,144 @@ def test_cannot_write_predictions_into_another_sites_patient(two_sites):
     assert resp.status_code in (404, 503)
     if resp.status_code == 503:
         pytest.skip("model artifact not loaded")
+
+
+def test_same_mrn_may_exist_at_two_sites(two_sites):
+    """MRNs are only unique per site; site A may register B's MRN for its own patient."""
+    c, h = two_sites["client"], two_sites["headers"]["a"]
+    resp = c.post("/patients", headers=h, json={
+        "external_id": two_sites["mrn_b"], "site_id": two_sites["site_a"],
+    })
+    assert resp.status_code == 201, resp.text
+    # and a duplicate within the same site is still rejected, without echoing the MRN
+    dup = c.post("/patients", headers=h, json={
+        "external_id": two_sites["mrn_b"], "site_id": two_sites["site_a"],
+    })
+    assert dup.status_code == 409
+    assert two_sites["mrn_b"] not in dup.text
+
+
+def test_patient_list_reports_latest_observation_or_null(two_sites):
+    """Unobserved patients must come back with null risk, never a default 'low'."""
+    c, h = two_sites["client"], two_sites["headers"]["a"]
+    before = {p["id"]: p for p in c.get("/patients", headers=h).json()}
+    assert before[two_sites["patient_a"]]["latest_risk_level"] is None
+    assert before[two_sites["patient_a"]]["latest_vitals"] is None
+
+    c.post(f"/patients/{two_sites['patient_a']}/vitals", headers=h,
+           json={"heart_rate": 125, "resp_rate": 26, "sbp": 88, "temperature": 39.2})
+    after = {p["id"]: p for p in c.get("/patients", headers=h).json()}[two_sites["patient_a"]]
+    assert after["latest_vitals"]["heart_rate"] == 125
+    assert after["latest_risk_level"] in {"high", "critical"}
+    assert after["latest_recorded_at"] is not None
+
+
+def _ws_token(role: str, org_id, lifetime_s: int) -> str:
+    import time
+
+    import jwt as pyjwt
+
+    from sepsis_vitals.auth import tokens
+
+    now = int(time.time())
+    payload = {"sub": f"ws-{uuid.uuid4().hex[:6]}", "email": "ws@example.org", "role": role,
+               "org_id": org_id, "type": "access", "jti": uuid.uuid4().hex,
+               "iat": now, "exp": now + lifetime_s}
+    return pyjwt.encode(payload, tokens._get_signing_key(), algorithm=tokens._ALGORITHM)
+
+
+def test_websocket_rejects_orgless_non_admin(two_sites):
+    from starlette.websockets import WebSocketDisconnect
+
+    c = two_sites["client"]
+    token = _ws_token("nurse", None, 600)
+    with pytest.raises(WebSocketDisconnect):
+        with c.websocket_connect("/ws/alerts", subprotocols=["sepsis-vitals", f"bearer.{token}"]) as ws:
+            ws.receive_text()
+
+
+def test_websocket_closes_when_token_expires(two_sites):
+    from starlette.websockets import WebSocketDisconnect
+
+    c = two_sites["client"]
+    token = _ws_token("nurse", two_sites["site_a"], 2)
+    with c.websocket_connect("/ws/alerts", subprotocols=["sepsis-vitals", f"bearer.{token}"]) as ws:
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_text()  # nothing is sent; the server closes at expiry
+    assert closed.value.code == 1008
+
+
+# -- alert workflow scoping (S4, S5) ---------------------------------------------
+
+def test_alert_ack_is_attributed_to_authenticated_user_and_scoped(two_sites):
+    c, h = two_sites["client"], two_sites["headers"]
+    pid = two_sites["patient_a"]
+    c.post(f"/patients/{pid}/vitals", headers=h["a"],
+           json={"heart_rate": 135, "resp_rate": 30, "sbp": 82, "temperature": 39.6})
+    alerts = [a for a in c.get("/patients/alerts", headers=h["a"]).json() if a["patient_id"] == pid]
+    assert alerts, "high-risk vitals should open an alert"
+    alert_id = alerts[0]["id"]
+
+    # nurse B cannot see or acknowledge site A's alert
+    assert all(a["patient_id"] != pid for a in c.get("/patients/alerts", headers=h["b"]).json())
+    other = c.put(f"/patients/alerts/{alert_id}/acknowledge", headers=h["b"],
+                  json={"reason": "not my patient"})
+    assert other.status_code == 404
+
+    # a caller-supplied user_id is ignored; the authenticated user is recorded
+    me = c.get("/auth/me", headers=h["a"]).json()
+    acked = c.put(f"/patients/alerts/{alert_id}/acknowledge", headers=h["a"],
+                  json={"user_id": "someone-else", "reason": "reviewed at bedside"})
+    assert acked.status_code == 200
+    assert acked.json()["action_by"] == me["id"]
+
+
+def test_notification_contacts_are_owner_scoped(two_sites):
+    c, h = two_sites["client"], two_sites["headers"]
+    created = c.post("/alerts/contacts", headers=h["a"],
+                     json={"channel": "websocket", "destination": "ward-a-console"})
+    assert created.status_code == 201, created.text
+    contact_id = created.json()["id"]
+
+    listed_by_b = c.get("/alerts/contacts", headers=h["b"]).json()["contacts"]
+    assert all(x["id"] != contact_id for x in listed_by_b)
+    assert c.delete(f"/alerts/contacts/{contact_id}", headers=h["b"]).status_code == 404
+    spoofed = c.post("/alerts/contacts", headers=h["b"],
+                     json={"user_id": "someone-else", "channel": "websocket", "destination": "x"})
+    assert spoofed.status_code == 403
+
+
+def test_test_alerts_and_delivery_history_are_admin_only(two_sites):
+    c, h = two_sites["client"], two_sites["headers"]["a"]
+    assert c.post("/alerts/test", headers=h,
+                  json={"channel": "sms", "destination": "+15550000000"}).status_code == 403
+    assert c.get("/alerts/history", headers=h).status_code == 403
+
+
+@pytest.mark.parametrize("endpoint,ok", [
+    ("https://fcm.googleapis.com/fcm/send/abc", True),
+    ("https://updates.push.services.mozilla.com/wpush/v2/abc", True),
+    ("https://web.push.apple.com/abc", True),
+    ("http://fcm.googleapis.com/fcm/send/abc", False),           # not https
+    ("https://169.254.169.254/latest/meta-data", False),        # cloud metadata (SSRF)
+    ("https://fcm.googleapis.com.attacker.example/x", False),   # suffix trick
+    ("https://internal-service:8080/hook", False),
+])
+def test_push_endpoint_allowlist(endpoint, ok):
+    from fastapi import HTTPException
+
+    from sepsis_vitals.alerts.router import _validate_push_endpoint
+
+    if ok:
+        _validate_push_endpoint(endpoint)
+    else:
+        with pytest.raises(HTTPException):
+            _validate_push_endpoint(endpoint)
+
+
+def test_active_alert_list_is_routable(two_sites):
+    """Regression: /patients/{patient_id} shadowed GET /patients/alerts."""
+    c, h = two_sites["client"], two_sites["headers"]["a"]
+    resp = c.get("/patients/alerts", headers=h)
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)

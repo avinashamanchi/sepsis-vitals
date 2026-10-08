@@ -24,6 +24,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
+from sepsis_vitals.security import log_ref  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 
@@ -282,7 +284,7 @@ class AlertEscalationManager:
             self._persist_alert(alert)
             logger.info(
                 "Alert registered for escalation tracking: %s (patient=%s, risk=%s)",
-                alert_id, patient_id, risk_level,
+                alert_id, log_ref(patient_id), risk_level,
             )
             return alert
 
@@ -460,7 +462,7 @@ class AlertEscalationManager:
                     "Alert escalated: %s → %s (patient=%s, elapsed=%.1fm)",
                     alert.alert_id,
                     TIER_LABELS[target_tier],
-                    alert.patient_id,
+                    log_ref(alert.patient_id),
                     elapsed.total_seconds() / 60,
                 )
 

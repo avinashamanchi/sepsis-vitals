@@ -271,3 +271,11 @@ class TestNEWS2Scale2:
         assert self._n2(spo2=85, spo2_scale2=True) == 2
         assert self._n2(spo2=87, spo2_scale2=True) == 1
         assert self._n2(spo2=88, spo2_scale2=True) == 0
+
+
+def test_log_ref_hides_identifier_but_is_stable():
+    from sepsis_vitals.security import log_ref
+
+    ref = log_ref("MRN-0012345")
+    assert "0012345" not in ref and ref.startswith("ref:")
+    assert ref == log_ref("MRN-0012345") != log_ref("MRN-0012346")
