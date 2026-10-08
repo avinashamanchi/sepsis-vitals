@@ -10,10 +10,11 @@ import logging
 import os
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
+from sepsis_vitals.auth.mailer import send_password_reset
 from sepsis_vitals.auth.middleware import get_current_user, require_role
 from sepsis_vitals.auth.service import (
     AccountLockedError,
@@ -375,25 +376,17 @@ def auth_logout(
 )
 def auth_password_reset_request(
     body: PasswordResetRequestBody,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> MessageResponse:
-    """Generate a password-reset token.
+    """Email a single-use password-reset link.
 
-    Always returns 200 regardless of whether the email exists, to prevent
-    account enumeration.  In production the token would be sent via email.
+    Always returns the same 200 response, and sends mail after the response,
+    so neither content nor timing reveals whether the account exists.
     """
     token = request_password_reset(email=body.email, db_session=db)
     if token is not None:
-        smtp_configured = bool(os.getenv("SMTP_HOST"))
-        if smtp_configured:
-            # TODO: send email via SMTP when configured
-            logger.info("Password-reset token generated for %s", body.email)
-        else:
-            logger.warning(
-                "Password-reset token generated for %s but SMTP is not configured — "
-                "token cannot be delivered. Set SMTP_HOST to enable email delivery.",
-                body.email,
-            )
+        background_tasks.add_task(send_password_reset, body.email, token)
     return MessageResponse(
         detail="If an account with that email exists, a password-reset link has been sent."
     )

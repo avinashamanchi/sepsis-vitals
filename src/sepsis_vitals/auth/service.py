@@ -181,14 +181,18 @@ def _get_token_secret() -> str:
     return _TOKEN_SECRET
 
 
-def _make_hmac_token(user_id: str, purpose: str, expires_seconds: int) -> str:
+def _make_hmac_token(
+    user_id: str, purpose: str, expires_seconds: int, binding: str = ""
+) -> str:
     """Build a compact HMAC token of the form ``user_id:expiry:signature``.
 
     The token is not stored in the database; it is self-validating via the
-    HMAC signature.
+    HMAC signature. *binding* is mixed into the signature but not the token,
+    so a token stops verifying once the bound state changes (e.g. the
+    password hash after a reset), which makes it single-use.
     """
     expiry = int(time.time()) + expires_seconds
-    message = f"{user_id}:{purpose}:{expiry}"
+    message = f"{user_id}:{purpose}:{expiry}:{binding}"
     sig = hmac.new(
         _get_token_secret().encode(),
         message.encode(),
@@ -197,7 +201,7 @@ def _make_hmac_token(user_id: str, purpose: str, expires_seconds: int) -> str:
     return f"{user_id}:{expiry}:{sig}"
 
 
-def _verify_hmac_token(token: str, purpose: str) -> str:
+def _verify_hmac_token(token: str, purpose: str, binding: str = "") -> str:
     """Validate an HMAC token and return the embedded ``user_id``.
 
     Raises :class:`InvalidTokenError` on any failure (bad format, expired,
@@ -217,7 +221,7 @@ def _verify_hmac_token(token: str, purpose: str) -> str:
     if time.time() > expiry:
         raise InvalidTokenError("Token has expired")
 
-    message = f"{user_id}:{purpose}:{expiry}"
+    message = f"{user_id}:{purpose}:{expiry}:{binding}"
     expected_sig = hmac.new(
         _get_token_secret().encode(),
         message.encode(),
@@ -369,7 +373,8 @@ def login_user(
 
     if not verify_password(password, user.password_hash):
         # Increment failed attempts and set lockout window.
-        user.failed_attempts = (user.failed_attempts or 0) + 1
+        # Bounded so the SMALLINT column cannot overflow under attack.
+        user.failed_attempts = min((user.failed_attempts or 0) + 1, 1000)
         lock_secs = lockout_duration(user.failed_attempts)
         if lock_secs > 0:
             user.locked_until = datetime.now(timezone.utc) + timedelta(
@@ -419,7 +424,7 @@ def refresh_access_token(
     from sepsis_vitals.auth.tokens import get_blacklist
 
     try:
-        payload = decode_token(refresh_token)
+        payload = decode_token(refresh_token, check_revocation=False)
     except TokenError as exc:
         raise InvalidTokenError(str(exc))
 
@@ -427,6 +432,14 @@ def refresh_access_token(
         raise InvalidTokenError("Token is not a refresh token")
 
     user_id = payload["sub"]
+    blacklist = get_blacklist()
+    if blacklist.is_revoked(
+        payload.get("jti", ""), user_id=user_id, issued_at=payload.get("iat")
+    ):
+        # A rotated (already used) refresh token was presented again: assume
+        # theft and end every session for this user.
+        blacklist.revoke_all_for_user(user_id)
+        raise InvalidTokenError("Refresh token reuse detected; all sessions revoked")
     user = db_session.query(User).filter(User.id == user_id).first()
     if user is None:
         raise InvalidTokenError("User no longer exists")
@@ -434,7 +447,7 @@ def refresh_access_token(
     # Revoke the old refresh token (single-use enforcement)
     old_jti = payload.get("jti")
     if old_jti:
-        get_blacklist().revoke(old_jti, ttl_seconds=7 * 86400)
+        blacklist.revoke(old_jti, ttl_seconds=7 * 86400)
 
     # Issue new token pair in the same family
     family_id = payload.get("fid")
@@ -488,8 +501,14 @@ def request_password_reset(
     if user is None:
         return None
     return _make_hmac_token(
-        user.id, "password_reset", _PASSWORD_RESET_EXPIRY_SECONDS
+        user.id, "password_reset", _PASSWORD_RESET_EXPIRY_SECONDS,
+        binding=_reset_binding(user),
     )
+
+
+def _reset_binding(user: User) -> str:
+    """Fingerprint of the current password hash; changes after every reset."""
+    return hashlib.sha256((user.password_hash or "").encode()).hexdigest()[:32]
 
 
 def reset_password(
@@ -520,12 +539,13 @@ def reset_password(
     WeakPasswordError
         If the new password does not meet complexity requirements.
     """
-    user_id = _verify_hmac_token(token, "password_reset")
-    _validate_password_strength(new_password)
-
+    user_id = token.split(":", 1)[0]
     user = db_session.query(User).filter(User.id == user_id).first()
     if user is None:
-        raise InvalidTokenError("User no longer exists")
+        raise InvalidTokenError("Invalid or expired token")
+    # Bound to the current password hash, so a used token no longer verifies.
+    _verify_hmac_token(token, "password_reset", binding=_reset_binding(user))
+    _validate_password_strength(new_password)
 
     user.password_hash = hash_password(new_password)
     user.failed_attempts = 0

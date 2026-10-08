@@ -275,7 +275,7 @@ class TokenError(Exception):
     """Raised when a token is invalid, expired, or malformed."""
 
 
-def decode_token(token: str) -> dict[str, Any]:
+def decode_token(token: str, check_revocation: bool = True) -> dict[str, Any]:
     """Decode and validate a JWT token.
 
     Parameters
@@ -308,9 +308,10 @@ def decode_token(token: str) -> dict[str, Any]:
     except pyjwt.InvalidTokenError as exc:
         raise TokenError(f"Invalid token: {exc}")
 
-    # Check blacklist
+    # Check blacklist (callers that must react to reuse, such as refresh
+    # rotation, pass check_revocation=False and check it themselves).
     jti = payload.get("jti")
-    if jti and _blacklist.is_revoked(
+    if check_revocation and jti and _blacklist.is_revoked(
         jti=jti,
         user_id=payload.get("sub"),
         issued_at=payload.get("iat"),

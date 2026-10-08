@@ -115,15 +115,20 @@ def get_totp_uri(secret: str, email: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+MAX_LOCKOUT_SECONDS = 900.0
+
+
 def lockout_duration(failures: int) -> float:
     """Return lockout duration in seconds using exponential backoff.
 
-    0 failures -> 0 seconds.  Each subsequent failure doubles the duration
-    starting from a 1-second base.
+    0 failures -> 0 seconds. Each subsequent failure doubles the duration
+    starting from a 1-second base, capped at 15 minutes so that anyone who
+    knows a clinician's email cannot lock the account out indefinitely (an
+    uncapped 2**n also overflows float after ~1,025 failures).
     """
     if failures <= 0:
         return 0.0
-    return float(2 ** (failures - 1))
+    return float(min(2 ** min(failures - 1, 20), MAX_LOCKOUT_SECONDS))
 
 
 def is_locked_out(lockout_until: Optional[datetime]) -> bool:
