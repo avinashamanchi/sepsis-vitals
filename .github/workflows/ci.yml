@@ -213,17 +213,29 @@ jobs:
           register_user("compose.smoke@example.org", "Correct-Horse-Battery-9!", "nurse", "SITE-SMOKE", db)
           db.close()
           PY
-          token=$(curl -fs -X POST localhost:8000/api/auth/login -H 'Content-Type: application/json' \
-            -d '{"email":"compose.smoke@example.org","password":"Correct-Horse-Battery-9!"}' \
-            | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
-          curl -fs localhost:8000/api/patients -H "Authorization: Bearer $token" | python3 -c "import json,sys; assert json.load(sys.stdin) == []"
-          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8000/api/patients)" = "401"
-          curl -fs localhost:8000/api/ready | python3 -c "import json,sys; r=json.load(sys.stdin); assert r['ready'] and r['migrations']=='at-head', r"
-          curl -fs localhost:8000/api/model/status | python3 -c "import json,sys; s=json.load(sys.stdin); assert s['state']=='ready' and s['clinically_ready'] is False, s"
+          call() {  # call METHOD PATH [BODY] -> prints status, saves body to /tmp/body.json
+            if [ -n "${3:-}" ]; then
+              code=$(curl -s -o /tmp/body.json -w '%{http_code}' -X "$1" "localhost:8000$2" -H 'Content-Type: application/json' ${AUTH:+-H "$AUTH"} -d "$3")
+            else
+              code=$(curl -s -o /tmp/body.json -w '%{http_code}' -X "$1" "localhost:8000$2" ${AUTH:+-H "$AUTH"})
+            fi
+            echo "$1 $2 -> HTTP $code"; head -c 400 /tmp/body.json; echo
+          }
+          call POST /api/auth/login '{"email":"compose.smoke@example.org","password":"Correct-Horse-Battery-9!"}'
+          test "$code" = "200"
+          AUTH="Authorization: Bearer $(python3 -c "import json; print(json.load(open('/tmp/body.json'))['access_token'])")"
+          call GET /api/patients
+          test "$code" = "200" && python3 -c "import json; assert json.load(open('/tmp/body.json')) == []"
+          AUTH= call GET /api/patients
+          test "$code" = "401"
+          call GET /api/ready
+          python3 -c "import json; r=json.load(open('/tmp/body.json')); assert r['ready'] and r['migrations']=='at-head', r"
+          call GET /api/model/status
+          python3 -c "import json; s=json.load(open('/tmp/body.json')); assert s['state']=='ready' and s['clinically_ready'] is False, s"
           curl -fs localhost:8000/ | grep -q '<div id="root">'
       - name: Logs on failure
         if: failure()
-        run: docker compose logs --tail 80 api dashboard
+        run: docker compose logs --no-color api dashboard | grep -vE "alembic.runtime|Started server|Waiting for app|DB_SSL" | tail -120
       - name: Tear down
         if: always()
         run: docker compose down -v
