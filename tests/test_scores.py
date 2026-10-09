@@ -334,3 +334,20 @@ def test_news2_temperature_bands(temp, points):
 @pytest.mark.parametrize("temp,fires", [(35.9, True), (36.0, False), (38.0, False), (38.1, True)])
 def test_sirs_temperature_threshold(temp, fires):
     assert _sirs({"temperature": temp})[1]["sirs_temp"] is fires
+
+
+def test_score_api_reports_news2_limitations(monkeypatch):
+    """C7: until a clinical specification exists, every NEWS2 output carries its gaps."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    import sepsis_vitals.api as api
+
+    monkeypatch.setattr(api, "_auth_enabled", False)
+    api.app.dependency_overrides[api.check_rate_limit] = lambda: None
+    try:
+        body = TestClient(api.app).post("/score", json={"heart_rate": 120, "resp_rate": 24}).json()
+    finally:
+        api.app.dependency_overrides.clear()
+    joined = " ".join(body["news2_limitations"])
+    assert "ACVPU" in joined and "red score" in joined

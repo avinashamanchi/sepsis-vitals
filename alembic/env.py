@@ -12,7 +12,9 @@ _MIGRATION_LOCK_KEY = 72_904_311
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Keep loggers created before migrations run (in-process alembic calls
+    # would otherwise silence the application's own loggers).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Override sqlalchemy.url from environment variable if set
 database_url = os.environ.get("DATABASE_URL")

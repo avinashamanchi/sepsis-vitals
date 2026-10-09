@@ -361,6 +361,17 @@ class HealthResponse(BaseModel):
     websocket_connections: int
 
 
+# Known, clinically unreviewed gaps in the NEWS2-style score. Returned with
+# every score so the output is never read as a complete NEWS2 assessment.
+# Resolving them needs an approved clinical specification (PROJECT_REVIEW.md C7).
+NEWS2_LIMITATIONS = [
+    "Consciousness is approximated from GCS (<15 scores 3); ACVPU and new confusion are not assessed.",
+    "The NEWS2 single-parameter red score (any parameter scoring 3) is not evaluated "
+    "and does not raise the risk level.",
+    "Supplemental oxygen and SpO2 Scale 2 are scored only when the caller supplies them.",
+]
+
+
 class ScoreResponse(BaseModel):
     qsofa: int
     sirs_count: int
@@ -370,6 +381,7 @@ class ScoreResponse(BaseModel):
     risk_level: str
     alert_flag: bool
     explanations: List[str]
+    news2_limitations: List[str] = NEWS2_LIMITATIONS
 
 
 class CopilotRequest(BaseModel):

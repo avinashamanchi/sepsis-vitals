@@ -218,6 +218,8 @@
   },
   "known_issues": [
     "Trained before the 2026-10 MIMIC item-mapping fix: the 'wbc' feature held Platelet Count (itemid 51265) and 'procalcitonin' held C-Reactive Protein (itemid 50889). Retrain before any use.",
-    "With fewer than 200 patients, train.py evaluates on the training data; the train_* and val_* metrics are identical in-sample (apparent) performance, and the dual thresholds were chosen on the same rows. Use the LOPOCV results instead."
+    "With fewer than 200 patients, train.py evaluates on the training data; the train_* and val_* metrics are identical in-sample (apparent) performance, and the dual thresholds were chosen on the same rows. Use the LOPOCV results instead.",
+    "Trained before the 2026-10 label fix: build_training_dataset re-derived onsets from a placeholder SOFA of 0, so no Sepsis-3 observation was labelled positive and ICD-fallback admissions were labelled positive for every observation (no onset censoring). Retrain before any use.",
+    "Has no manifest.json, so the API refuses to load it (SEPSIS_ALLOW_UNVERIFIED_MODEL is for development only)."
   ]
 }
