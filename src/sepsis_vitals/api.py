@@ -1213,6 +1213,25 @@ async def simulator_cases(user: Dict = Depends(verify_auth)):
     return {"cases": cases, "count": len(cases)}
 
 
+def _alembic_head() -> Optional[str]:
+    """Head revision of the migration scripts shipped with this deployment.
+
+    alembic.ini lives in the working directory in the container (/app) and
+    at the repository root in development; the installed package location
+    is neither. Returns None when no migration scripts are found.
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    candidates = [Path(os.getenv("SEPSIS_ALEMBIC_DIR", "")), Path.cwd(), Path(__file__).resolve().parents[2]]
+    for root in candidates:
+        if str(root) and (root / "alembic.ini").exists() and (root / "alembic").is_dir():
+            cfg = Config(str(root / "alembic.ini"))
+            cfg.set_main_option("script_location", str(root / "alembic"))
+            return ScriptDirectory.from_config(cfg).get_current_head()
+    return None
+
+
 @app.get("/ready")
 async def readiness():
     """API readiness: database reachable and (when managed) migrations at head.
@@ -1225,32 +1244,35 @@ async def readiness():
 
         from sepsis_vitals.db import engine
         checks: Dict[str, Any] = {}
-        with engine.connect() as conn:
-            conn.execute(sql_text("SELECT 1"))
-            checks["database"] = "ok"
-            try:
-                current = conn.execute(sql_text("SELECT version_num FROM alembic_version")).scalar()
-            except Exception:
-                current = None
+        try:
+            with engine.connect() as conn:
+                conn.execute(sql_text("SELECT 1"))
+                try:
+                    current = conn.execute(sql_text("SELECT version_num FROM alembic_version")).scalar()
+                except Exception:
+                    current = None
+        except Exception as exc:
+            logger.warning("Readiness: database unreachable (%s)", type(exc).__name__)
+            return {"database": "unreachable", "migrations": "unknown"}
+        checks["database"] = "ok"
         if current is None:
             checks["migrations"] = "unmanaged"
+            return checks
+        try:
+            head = _alembic_head()
+        except Exception as exc:
+            logger.warning("Readiness: migration scripts unreadable (%s)", type(exc).__name__)
+            head = None
+        if head is None:
+            checks["migrations"] = "unknown"
         else:
-            from alembic.config import Config
-            from alembic.script import ScriptDirectory
-            root = Path(__file__).resolve().parents[2]
-            cfg = Config(str(root / "alembic.ini"))
-            cfg.set_main_option("script_location", str(root / "alembic"))
-            head = ScriptDirectory.from_config(cfg).get_current_head()
             checks["migrations"] = "at-head" if current == head else "behind"
         return checks
 
-    try:
-        checks = await asyncio.to_thread(_check)
-    except Exception as exc:
-        logger.warning("Readiness check failed: %s", type(exc).__name__)
-        return JSONResponse(status_code=503, content={"ready": False, "database": "unreachable"})
-    ready = checks["migrations"] == "at-head" or (
-        checks["migrations"] == "unmanaged" and not _is_production
+    checks = await asyncio.to_thread(_check)
+    ready = checks["database"] == "ok" and (
+        checks["migrations"] == "at-head"
+        or (checks["migrations"] == "unmanaged" and not _is_production)
     )
     return JSONResponse(status_code=200 if ready else 503, content={"ready": ready, **checks})
 

@@ -153,3 +153,20 @@ def test_tampered_model_is_not_loaded_by_the_api(client_with_models, model_copy)
     with client_with_models(model_copy) as client:
         status = client.get("/model/status").json()
         assert status["state"] == "invalid" and status["prediction_ready"] is False
+
+
+def test_alembic_head_is_found_from_the_working_directory(monkeypatch, tmp_path):
+    """Regression: in the image the package lives in site-packages, so a
+    repo-relative lookup failed and /ready reported the database unreachable."""
+    import sepsis_vitals.api as api
+
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(root)
+    assert api._alembic_head() == "d4e5f6a7b8c9"
+
+
+def test_readiness_distinguishes_unmanaged_schema(client_with_models, model_copy):
+    with client_with_models(model_copy) as client:
+        body = client.get("/ready").json()
+    assert body["database"] == "ok"
+    assert body["migrations"] in {"unmanaged", "at-head"}
