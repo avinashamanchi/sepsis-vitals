@@ -75,6 +75,9 @@ async def _lifespan(application: FastAPI):
     """Startup/shutdown lifecycle for the FastAPI application."""
     _init_database()
     _include_routers()
+    # Load and verify the model off the event loop (~1.7 s); never raises, the
+    # outcome is reported by /model/status.
+    await asyncio.to_thread(_get_predictor)
 
     # Start PSI drift monitor background task
     from sepsis_vitals.monitoring.drift_monitor import get_drift_monitor
@@ -801,8 +804,8 @@ async def hipaa_audit_middleware(request: Request, call_next):
 
 @app.get("/health")
 async def health():
-    """Minimal health check. Sensitive details hidden in production."""
-    predictor = _get_predictor()
+    """Liveness. Never loads the model (see /model/status and /ready)."""
+    predictor = _predictor
     if _is_production:
         return {"status": "ok", "version": __version__, "timestamp": time.time()}
     return HealthResponse(
@@ -851,7 +854,7 @@ async def score_vitals(vitals: VitalsInput, user: Dict = Depends(verify_auth)):
 @app.post("/predict", response_model=PredictionResponse, dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
 async def predict_sepsis(body: PredictRequest, request: Request, user: Dict = Depends(verify_auth)):
     """ML-powered sepsis risk prediction with SHAP explanations."""
-    predictor = _get_predictor()
+    predictor = await asyncio.to_thread(_get_predictor)
     if predictor is None:
         raise _model_unavailable()
 
@@ -864,7 +867,8 @@ async def predict_sepsis(body: PredictRequest, request: Request, user: Dict = De
     history = await _recorded_history_async(sanitise_string(body.patient_id))
 
     start = time.monotonic()
-    prediction = predictor.predict(
+    prediction = await asyncio.to_thread(
+        predictor.predict,
         vitals=vitals_dict,
         patient_id=sanitise_string(body.patient_id),
         age_years=body.age_years,
@@ -924,7 +928,7 @@ async def predict_batch(body: BatchPredictRequest, request: Request, user: Dict 
                 detail="ML prediction rate limit exceeded. Reduce batch size or try again shortly.",
             )
 
-    predictor = _get_predictor()
+    predictor = await asyncio.to_thread(_get_predictor)
     if predictor is None:
         raise _model_unavailable()
 
@@ -939,7 +943,8 @@ async def predict_batch(body: BatchPredictRequest, request: Request, user: Dict 
         try:
             vitals_dict = {k: v for k, v in patient.vitals.model_dump().items() if v is not None}
             comorbidities = patient.comorbidities.model_dump() if patient.comorbidities else None
-            prediction = predictor.predict(
+            prediction = await asyncio.to_thread(
+                predictor.predict,
                 vitals=vitals_dict,
                 patient_id=sanitise_string(patient.patient_id),
                 age_years=patient.age_years,
@@ -1028,7 +1033,7 @@ async def patient_trend(patient_id: str, request: Request, user: Dict = Depends(
     # Org-level authorization: verify patient belongs to user's org (fail closed)
     await _verify_patient_org_async(patient_id, user)
 
-    predictor = _get_predictor()
+    predictor = await asyncio.to_thread(_get_predictor)
     if predictor is None:
         raise _model_unavailable()
 
@@ -1258,7 +1263,7 @@ async def model_status():
     clinically ready: ``clinically_ready`` stays false for every validation
     status this build knows about.
     """
-    _get_predictor()
+    await asyncio.to_thread(_get_predictor)
     status = dict(_model_status)
     status.setdefault("prediction_ready", False)
     status.setdefault("clinically_ready", False)
@@ -1269,7 +1274,7 @@ async def model_status():
 @app.get("/model/info", dependencies=[Depends(check_rate_limit)])
 async def model_info(user: Dict = Depends(verify_auth)):
     """Model metadata, performance metrics, and top features."""
-    predictor = _get_predictor()
+    predictor = await asyncio.to_thread(_get_predictor)
     if predictor is None:
         raise _model_unavailable()
 
@@ -1339,10 +1344,11 @@ async def clinical_copilot(body: CopilotRequest, user: Dict = Depends(verify_aut
 
     # Get ML prediction if model loaded
     ml_risk = None
-    predictor = _get_predictor()
+    predictor = await asyncio.to_thread(_get_predictor)
     if predictor:
         comorbidities = body.comorbidities.model_dump() if body.comorbidities else None
-        pred = predictor.predict(
+        pred = await asyncio.to_thread(
+            predictor.predict,
             vitals=vitals_dict,
             patient_id=body.patient_id,
             age_years=body.age_years,
@@ -1648,7 +1654,7 @@ async def prometheus_metrics(user: Dict = Depends(verify_auth)):
         "",
         "# HELP sepsis_model_loaded Whether the ML model is loaded",
         "# TYPE sepsis_model_loaded gauge",
-        f"sepsis_model_loaded {1 if _get_predictor() is not None else 0}",
+        f"sepsis_model_loaded {1 if _predictor is not None else 0}",
         "",
         "# HELP sepsis_drift_overall Whether overall population drift is detected (PSI>0.2)",
         "# TYPE sepsis_drift_overall gauge",

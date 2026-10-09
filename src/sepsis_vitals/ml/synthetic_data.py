@@ -923,8 +923,9 @@ def generate_dataset(
     df["sepsis_label"] = df["sepsis_label"].astype(int)
 
     # Onset = first observed time at/after the simulated onset (before noise).
-    onset = df[df["sepsis_label"] == 1].groupby("patient_id")["timestamp"].min()
-    df["sepsis_onset_time"] = df["patient_id"].map(onset)
+    onset = df[df["sepsis_label"] == 1].groupby("patient_id")["timestamp"].min().to_dict()
+    # dict mapping: an empty datetime Series cannot be used with Series.map
+    df["sepsis_onset_time"] = pd.to_datetime(df["patient_id"].map(onset))
     if label_mode == "onset_within_horizon":
         assert horizon_hours is not None
         lead = (df["sepsis_onset_time"] - df["timestamp"]).dt.total_seconds() / 3600.0

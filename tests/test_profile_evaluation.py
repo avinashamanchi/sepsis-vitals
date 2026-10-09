@@ -61,3 +61,11 @@ def test_profile_evaluation_reports_the_protocol_fields():
                 "auroc_without_labs", "auroc_demographics_only", "subgroups"):
         assert key in r
     assert r["split"].startswith("patient-level, temporal")
+
+
+def test_cohort_without_septic_patients_is_supported():
+    """Regression: an empty onset map crashed generate_dataset for tiny cohorts."""
+    from sepsis_vitals.ml.synthetic_data import generate_dataset
+
+    df = generate_dataset(n_patients=5, seed=42, sepsis_prevalence=0.0, include_onset_time=True)
+    assert df["sepsis_onset_time"].isna().all()
