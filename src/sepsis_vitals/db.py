@@ -207,6 +207,8 @@ class User(Base):
     totp_secret: Mapped[Optional[str]] = mapped_column(
         EncryptedString, nullable=True
     )
+    # JSON list of keyed hashes of unused single-use recovery codes.
+    mfa_recovery_hashes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     mfa_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false"
     )

@@ -7,6 +7,7 @@ email verification.
 from __future__ import annotations
 
 import hashlib
+import json
 import hmac
 import os
 import re
@@ -239,8 +240,62 @@ def _verify_hmac_token(token: str, purpose: str, binding: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 
+class MFARequiredError(AuthServiceError):
+    """Password accepted; a TOTP or recovery code is also required."""
+
+
+class MFAEnrollmentRequired(AuthServiceError):
+    """The user's role requires MFA and the user has not enrolled yet."""
+
+    def __init__(self, enrollment_token: str) -> None:
+        super().__init__("MFA enrollment required")
+        self.enrollment_token = enrollment_token
+
+
+def mfa_required_roles() -> frozenset:
+    """Roles that must use MFA (SEPSIS_MFA_REQUIRED_ROLES, comma-separated).
+
+    Empty by default, so enabling enforcement is an explicit operator
+    decision; see docs in PROJECT_REVIEW.md for the staged rollout.
+    """
+    raw = os.getenv("SEPSIS_MFA_REQUIRED_ROLES", "")
+    return frozenset(r.strip() for r in raw.split(",") if r.strip())
+
+
+def _normalise_code(code: str) -> str:
+    return code.strip().replace(" ", "").replace("-", "").upper()
+
+
+def verify_second_factor(user: User, code: str, db_session: Session) -> bool:
+    """Check a TOTP code, or consume a single-use recovery code."""
+    from sepsis_vitals.auth.jwt import verify_totp
+
+    normalised = _normalise_code(code or "")
+    if not normalised:
+        return False
+    if normalised.isdigit() and len(normalised) == 6:
+        secret = user.totp_secret
+        return secret is not None and verify_totp(secret, normalised)
+    hashes = json.loads(user.mfa_recovery_hashes or "[]")
+    digest = compute_blind_index(normalised)
+    if digest in hashes:
+        hashes.remove(digest)
+        user.mfa_recovery_hashes = json.dumps(hashes)
+        db_session.commit()
+        return True
+    return False
+
+
 def _issue_tokens(user: User) -> dict[str, str]:
-    """Return a dict with ``access_token`` and ``refresh_token`` for *user*."""
+    """Return a dict with ``access_token`` and ``refresh_token`` for *user*.
+
+    Single choke point for session issuance: a user whose role requires MFA
+    but who has not enrolled gets an enrollment-only token instead.
+    """
+    if user.role in mfa_required_roles() and not user.mfa_enabled:
+        from sepsis_vitals.auth.tokens import create_mfa_enrollment_token
+
+        raise MFAEnrollmentRequired(create_mfa_enrollment_token(user.id))
     return {
         "access_token": create_access_token(
             user_id=user.id,
@@ -331,6 +386,7 @@ def login_user(
     email: str,
     password: str,
     db_session: Session,
+    otp: str | None = None,
 ) -> dict[str, Any]:
     """Authenticate a user by email and password.
 
@@ -383,6 +439,19 @@ def login_user(
         db_session.commit()
         raise InvalidCredentialsError("Invalid email or password")
 
+    # Second factor for enrolled users, checked only after the password so it
+    # reveals nothing about unknown accounts. A wrong code counts as a failure.
+    if user.mfa_enabled:
+        if not otp:
+            raise MFARequiredError("A verification code is required")
+        if not verify_second_factor(user, otp, db_session):
+            user.failed_attempts = min((user.failed_attempts or 0) + 1, 1000)
+            lock_secs = lockout_duration(user.failed_attempts)
+            if lock_secs > 0:
+                user.locked_until = datetime.now(timezone.utc) + timedelta(seconds=lock_secs)
+            db_session.commit()
+            raise InvalidCredentialsError("Invalid email, password or verification code")
+
     # Successful login — reset failure counters and update last_login.
     user.failed_attempts = 0
     user.locked_until = None
@@ -434,7 +503,8 @@ def refresh_access_token(
     user_id = payload["sub"]
     blacklist = get_blacklist()
     if blacklist.is_revoked(
-        payload.get("jti", ""), user_id=user_id, issued_at=payload.get("iat")
+        payload.get("jti", ""), user_id=user_id, issued_at=payload.get("iat"),
+        issued_at_ms=payload.get("iat_ms"),
     ):
         # A rotated (already used) refresh token was presented again: assume
         # theft and end every session for this user.
@@ -443,6 +513,9 @@ def refresh_access_token(
     user = db_session.query(User).filter(User.id == user_id).first()
     if user is None:
         raise InvalidTokenError("User no longer exists")
+    if user.role in mfa_required_roles() and not user.mfa_enabled:
+        # Sessions from before MFA enforcement must not be extended.
+        raise InvalidTokenError("MFA enrollment required; sign in again")
 
     # Revoke the old refresh token (single-use enforcement)
     old_jti = payload.get("jti")

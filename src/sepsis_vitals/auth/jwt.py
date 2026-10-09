@@ -135,6 +135,9 @@ def is_locked_out(lockout_until: Optional[datetime]) -> bool:
     """Return True if the account is currently locked out."""
     if lockout_until is None:
         return False
+    if lockout_until.tzinfo is None:
+        # SQLite drops tzinfo from DateTime(timezone=True); values are UTC.
+        lockout_until = lockout_until.replace(tzinfo=timezone.utc)
     return datetime.now(timezone.utc) < lockout_until
 
 

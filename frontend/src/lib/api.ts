@@ -55,6 +55,22 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
 }
 
+export type LoginResult =
+  | { kind: 'session'; access_token: string; refresh_token?: string; user?: { email: string; role: string } }
+  | { kind: 'mfa_required' }
+  | { kind: 'mfa_enrollment_required'; enrollmentToken: string }
+
+/** For the MFA enrollment endpoints, which take a short-lived enrollment token. */
+async function requestWithToken<T>(path: string, token: string, options: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`)
+  return body as T
+}
+
 /** Explicit public-demo mode; GitHub Pages remains the default demo host. */
 export const isDemo =
   import.meta.env.VITE_DEMO_MODE === 'true' ||
@@ -123,14 +139,34 @@ function simulateDemoPrediction(body: {
 export const api = {
   health: () => request<{ status: string; version: string }>('/health'),
 
-  login: (email: string, password: string) =>
-    request<{
-      access_token: string
-      refresh_token: string
-      user?: { email: string; role: string }
-    }>(
-      '/auth/login',
-      { method: 'POST', body: JSON.stringify({ email, password }) },
+  /**
+   * Sign in. MFA outcomes are returned, not thrown: the backend answers 401
+   * "mfa_required" when a code is needed and 403 "mfa_enrollment_required"
+   * (with an enrollment-only token) when the user's role requires MFA.
+   */
+  login: async (email: string, password: string, otp?: string): Promise<LoginResult> => {
+    const res = await fetch(`${BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(otp ? { email, password, otp } : { email, password }),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (res.ok) return { kind: 'session', ...body }
+    if (res.status === 401 && body.detail === 'mfa_required') return { kind: 'mfa_required' }
+    if (res.status === 403 && body.detail === 'mfa_enrollment_required') {
+      return { kind: 'mfa_enrollment_required', enrollmentToken: body.enrollment_token }
+    }
+    throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`)
+  },
+
+  mfaEnroll: (enrollmentToken: string) =>
+    requestWithToken<{ secret: string; otpauth_uri: string }>(
+      '/auth/mfa/enroll', enrollmentToken, { method: 'POST' },
+    ),
+
+  mfaConfirm: (enrollmentToken: string, code: string) =>
+    requestWithToken<{ recovery_codes: string[] }>(
+      '/auth/mfa/confirm', enrollmentToken, { method: 'POST', body: JSON.stringify({ code }) },
     ),
 
   weeklyTrends: (days = 7) =>

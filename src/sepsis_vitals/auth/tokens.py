@@ -100,7 +100,7 @@ class TokenBlacklist:
     def __init__(self) -> None:
         self._blacklisted_jtis: set[str] = set()
         # user_id -> unix timestamp; tokens issued before this time are invalid
-        self._user_revoked_before: dict[str, int] = {}
+        self._user_revoked_before: dict[str, float] = {}
 
     @classmethod
     def _get_redis(cls):
@@ -135,37 +135,58 @@ class TokenBlacklist:
         self._blacklisted_jtis.add(jti)
 
     def revoke_all_for_user(self, user_id: str) -> None:
-        """Revoke all tokens for a user issued before now."""
-        now = int(time.time())
+        """Revoke all tokens for a user issued before now (millisecond precision)."""
+        now_ms = int(time.time() * 1000)
         r = self._get_redis()
         if r:
             try:
-                r.set(f"user_revoked:{user_id}", str(now))
+                r.set(f"user_revoked:{user_id}", str(now_ms))
                 return
             except Exception:
                 pass
-        self._user_revoked_before[user_id] = now
+        self._user_revoked_before[user_id] = now_ms
 
-    def is_revoked(self, jti: str, user_id: str | None = None, issued_at: int | None = None) -> bool:
-        """Check if a token is revoked (by JTI or by user-level revocation)."""
+    @staticmethod
+    def _as_ms(value: float) -> float:
+        # Revocations stored before millisecond precision hold epoch seconds.
+        return value * 1000 if value < 100_000_000_000 else value
+
+    def is_revoked(
+        self,
+        jti: str,
+        user_id: str | None = None,
+        issued_at: int | None = None,
+        issued_at_ms: int | None = None,
+    ) -> bool:
+        """Check if a token is revoked (by JTI or by user-level revocation).
+
+        Tokens carry ``iat_ms``; older tokens only have whole-second ``iat``
+        and are treated as issued at the start of that second, so a token from
+        the same second as a revocation is revoked (revoked if in doubt). Previously a token issued in the same second as a revocation
+        was rejected, e.g. the first sign-in right after enabling MFA.
+        """
+        if issued_at_ms is None and issued_at is not None:
+            issued_at_ms = issued_at * 1000
+        revoked_before: float | None = None
         r = self._get_redis()
         if r:
             try:
                 if r.exists(f"revoked:{jti}"):
                     return True
-                if user_id and issued_at is not None:
-                    revoked_before = r.get(f"user_revoked:{user_id}")
-                    if revoked_before and issued_at <= int(revoked_before):
-                        return True
+                if user_id:
+                    stored = r.get(f"user_revoked:{user_id}")
+                    revoked_before = float(stored) if stored else None
+                if revoked_before is not None and issued_at_ms is not None:
+                    return issued_at_ms <= self._as_ms(revoked_before)
                 return False
             except Exception:
                 pass
         # In-memory fallback
         if jti in self._blacklisted_jtis:
             return True
-        if user_id and issued_at is not None:
-            revoked_before = self._user_revoked_before.get(user_id)
-            if revoked_before and issued_at <= revoked_before:
+        if user_id and issued_at_ms is not None:
+            stored_mem = self._user_revoked_before.get(user_id)
+            if stored_mem is not None and issued_at_ms <= self._as_ms(stored_mem):
                 return True
         return False
 
@@ -213,7 +234,8 @@ def create_access_token(
     """
     import jwt as pyjwt
 
-    now = int(time.time())
+    now_ms = int(time.time() * 1000)
+    now = now_ms // 1000
     payload: dict[str, Any] = {
         "sub": str(user_id),
         "email": email,
@@ -222,6 +244,28 @@ def create_access_token(
         "type": "access",
         "jti": uuid.uuid4().hex,
         "iat": now,
+        "iat_ms": now_ms,
+        "exp": now + expires_minutes * 60,
+    }
+    return pyjwt.encode(payload, _get_signing_key(), algorithm=_ALGORITHM)
+
+
+def create_mfa_enrollment_token(user_id: str, expires_minutes: int = 10) -> str:
+    """Short-lived token accepted only by the MFA enrollment endpoints.
+
+    Its ``type`` is ``mfa_enroll``, so every other endpoint (which requires
+    ``type == "access"``) rejects it.
+    """
+    import jwt as pyjwt
+
+    now_ms = int(time.time() * 1000)
+    now = now_ms // 1000
+    payload: dict[str, Any] = {
+        "sub": str(user_id),
+        "type": "mfa_enroll",
+        "jti": uuid.uuid4().hex,
+        "iat": now,
+        "iat_ms": now_ms,
         "exp": now + expires_minutes * 60,
     }
     return pyjwt.encode(payload, _get_signing_key(), algorithm=_ALGORITHM)
@@ -254,13 +298,15 @@ def create_refresh_token(
     """
     import jwt as pyjwt
 
-    now = int(time.time())
+    now_ms = int(time.time() * 1000)
+    now = now_ms // 1000
     payload: dict[str, Any] = {
         "sub": str(user_id),
         "type": "refresh",
         "jti": uuid.uuid4().hex,
         "fid": family_id or uuid.uuid4().hex,
         "iat": now,
+        "iat_ms": now_ms,
         "exp": now + expires_days * 86400,
     }
     return pyjwt.encode(payload, _get_signing_key(), algorithm=_ALGORITHM)
@@ -315,6 +361,7 @@ def decode_token(token: str, check_revocation: bool = True) -> dict[str, Any]:
         jti=jti,
         user_id=payload.get("sub"),
         issued_at=payload.get("iat"),
+        issued_at_ms=payload.get("iat_ms"),
     ):
         raise TokenError("Token has been revoked")
 

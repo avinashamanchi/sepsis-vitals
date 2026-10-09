@@ -22,6 +22,15 @@ export function Login() {
   const [info, setInfo] = useState('')
   const [loading, setLoading] = useState(false)
   const [resetToken, setResetToken] = useState<string | null>(() => (isDemo ? null : readResetToken()))
+  const [otp, setOtp] = useState('')
+  const [needsCode, setNeedsCode] = useState(false)
+  const [enrollment, setEnrollment] = useState<{
+    token: string
+    secret: string
+    uri: string
+    codes?: string[]
+  } | null>(null)
+  const [enrollCode, setEnrollCode] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
 
@@ -70,7 +79,17 @@ export function Login() {
 
     setLoading(true)
     try {
-      const result = await api.login(email.trim(), password)
+      const result = await api.login(email.trim(), password, needsCode ? otp.trim() : undefined)
+      if (result.kind === 'mfa_required') {
+        setNeedsCode(true)
+        setInfo('Enter the 6-digit code from your authenticator app, or a recovery code.')
+        return
+      }
+      if (result.kind === 'mfa_enrollment_required') {
+        const started = await api.mfaEnroll(result.enrollmentToken)
+        setEnrollment({ token: result.enrollmentToken, secret: started.secret, uri: started.otpauth_uri })
+        return
+      }
       setAuth(result.access_token, {
         email: result.user?.email ?? email.trim(),
         role: result.user?.role ?? 'nurse',
@@ -81,6 +100,28 @@ export function Login() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleConfirmEnrollment = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!enrollment) return
+    setError('')
+    setLoading(true)
+    try {
+      const confirmed = await api.mfaConfirm(enrollment.token, enrollCode.trim())
+      setEnrollment({ ...enrollment, codes: confirmed.recovery_codes })
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'That code was not accepted.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const finishEnrollment = () => {
+    setEnrollment(null)
+    setEnrollCode('')
+    setNeedsCode(true)
+    setInfo('Two-factor authentication is on. Sign in with a code from your app.')
   }
 
   const handleReset = async () => {
@@ -142,6 +183,53 @@ export function Login() {
               </span>
               <ArrowRight className="h-5 w-5 text-accent transition-transform group-hover:translate-x-1" aria-hidden="true" />
             </button>
+          ) : enrollment ? (
+            enrollment.codes ? (
+              <div className="space-y-4" aria-label="Recovery codes">
+                <p className="text-sm text-text-secondary">
+                  Two-factor authentication is enabled. Store these single-use recovery codes
+                  somewhere safe; they are shown only once.
+                </p>
+                <ul className="grid grid-cols-2 gap-2 font-mono text-sm">
+                  {enrollment.codes.map((code) => <li key={code}>{code}</li>)}
+                </ul>
+                <button
+                  type="button"
+                  onClick={finishEnrollment}
+                  className="w-full rounded-md bg-accent px-4 py-3 text-sm font-bold text-void"
+                >
+                  I have stored my recovery codes
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleConfirmEnrollment} className="space-y-4" aria-label="Set up two-factor authentication">
+                <p className="text-sm text-text-secondary">
+                  Your role requires two-factor authentication. Add this key to an authenticator
+                  app, then enter the 6-digit code it shows.
+                </p>
+                <p className="break-all rounded-md border border-border bg-surface p-3 font-mono text-sm" aria-label="Authenticator key">
+                  {enrollment.secret}
+                </p>
+                <label htmlFor="enroll-code" className="mb-1.5 block text-xs text-text-secondary">Authenticator code</label>
+                <input
+                  id="enroll-code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={enrollCode}
+                  onChange={(event) => setEnrollCode(event.target.value)}
+                  required
+                  className="w-full rounded-md border border-border bg-surface px-3.5 py-3 text-sm outline-none focus:border-accent/50"
+                />
+                {error && <p role="alert" className="text-xs leading-5 text-danger">{error}</p>}
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full rounded-md bg-accent px-4 py-3 text-sm font-bold text-void disabled:opacity-50"
+                >
+                  Turn on two-factor authentication
+                </button>
+              </form>
+            )
           ) : resetToken ? (
             <form onSubmit={handleConfirmReset} className="space-y-4" aria-label="Set a new password">
               <div>
@@ -223,6 +311,22 @@ export function Login() {
                   className="w-full rounded-md border border-border bg-surface px-3.5 py-3 text-sm outline-none transition-colors focus:border-accent/50"
                 />
               </div>
+              {needsCode && (
+                <div>
+                  <label htmlFor="otp" className="mb-1.5 block text-xs text-text-secondary">
+                    Verification code
+                  </label>
+                  <input
+                    id="otp"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    value={otp}
+                    onChange={(event) => setOtp(event.target.value)}
+                    required
+                    className="w-full rounded-md border border-border bg-surface px-3.5 py-3 text-sm outline-none transition-colors focus:border-accent/50"
+                  />
+                </div>
+              )}
               {error && <p role="alert" className="text-xs leading-5 text-danger">{error}</p>}
               {info && <p role="status" className="text-xs leading-5 text-accent">{info}</p>}
               <button

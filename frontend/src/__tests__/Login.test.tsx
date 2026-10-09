@@ -6,6 +6,8 @@ const m = vi.hoisted(() => ({
   login: vi.fn(),
   requestPasswordReset: vi.fn(),
   confirmPasswordReset: vi.fn(),
+  mfaEnroll: vi.fn(),
+  mfaConfirm: vi.fn(),
 }))
 vi.mock('../lib/api', () => ({ api: m, isDemo: false }))
 
@@ -22,7 +24,7 @@ beforeEach(() => {
 
 describe('sign in', () => {
   it('stores the session on success', async () => {
-    m.login.mockResolvedValue({ access_token: 'abc', user: { email: 'n@h.org', role: 'nurse' } })
+    m.login.mockResolvedValue({ kind: 'session', access_token: 'abc', user: { email: 'n@h.org', role: 'nurse' } })
     const { container } = renderLogin()
     fireEvent.change(screen.getByLabelText('Work email'), { target: { value: 'n@h.org' } })
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw' } })
@@ -73,5 +75,48 @@ describe('password reset', () => {
     fireEvent.submit(screen.getByRole('form', { name: 'Set a new password' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('do not match')
     expect(m.confirmPasswordReset).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('two-factor authentication', () => {
+  const fill = (container: HTMLElement) => {
+    fireEvent.change(screen.getByLabelText('Work email'), { target: { value: 'n@h.org' } })
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw' } })
+    fireEvent.submit(container.querySelector('form')!)
+  }
+
+  it('asks for a code and then signs in with it', async () => {
+    m.login
+      .mockResolvedValueOnce({ kind: 'mfa_required' })
+      .mockResolvedValueOnce({ kind: 'session', access_token: 'with-mfa' })
+    const { container } = renderLogin()
+    fill(container)
+    const code = await screen.findByLabelText('Verification code')
+    expect(useStore.getState().token).toBeNull()
+    fireEvent.change(code, { target: { value: '123456' } })
+    fireEvent.submit(container.querySelector('form')!)
+    await waitFor(() => expect(useStore.getState().token).toBe('with-mfa'))
+    expect(m.login).toHaveBeenLastCalledWith('n@h.org', 'pw', '123456')
+  })
+
+  it('walks a required-role user through enrollment without granting a session', async () => {
+    m.login.mockResolvedValueOnce({ kind: 'mfa_enrollment_required', enrollmentToken: 'enroll-tok' })
+    m.mfaEnroll.mockResolvedValue({ secret: 'JBSWY3DPEHPK3PXP', otpauth_uri: 'otpauth://totp/x' })
+    m.mfaConfirm.mockResolvedValue({ recovery_codes: ['AAAAA-BBBBB', 'CCCCC-DDDDD'] })
+    const { container } = renderLogin()
+    fill(container)
+    expect(await screen.findByLabelText('Authenticator key')).toHaveTextContent('JBSWY3DPEHPK3PXP')
+    expect(m.mfaEnroll).toHaveBeenCalledWith('enroll-tok')
+    expect(useStore.getState().token).toBeNull()
+
+    fireEvent.change(screen.getByLabelText('Authenticator code'), { target: { value: '654321' } })
+    fireEvent.submit(screen.getByRole('form', { name: 'Set up two-factor authentication' }))
+    expect(await screen.findByText('AAAAA-BBBBB')).toBeInTheDocument()
+    expect(m.mfaConfirm).toHaveBeenCalledWith('enroll-tok', '654321')
+
+    fireEvent.click(screen.getByRole('button', { name: 'I have stored my recovery codes' }))
+    expect(await screen.findByLabelText('Verification code')).toBeInTheDocument()
+    expect(useStore.getState().token).toBeNull()
   })
 })

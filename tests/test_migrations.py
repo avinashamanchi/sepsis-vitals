@@ -27,7 +27,11 @@ def _offline_postgres_sql(monkeypatch) -> str:
     from alembic import command
     from alembic.config import Config
 
-    monkeypatch.delenv("DATABASE_URL", raising=False)
+    import sepsis_vitals.db  # noqa: F401  bind the app engine to the test DB first
+
+    # env.py prefers DATABASE_URL; point it at Postgres for offline DDL only.
+    # (Deleting the variable once let sepsis_vitals.db bind to ./sepsis_vitals.db.)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/schema_check")
     buf = io.StringIO()
     cfg = Config(str(ROOT / "alembic.ini"), output_buffer=buf)
     cfg.set_main_option("script_location", str(ROOT / "alembic"))

@@ -11,6 +11,7 @@ import os
 from typing import Any, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
@@ -22,6 +23,8 @@ from sepsis_vitals.auth.service import (
     DuplicateEmailError,
     InvalidCredentialsError,
     InvalidTokenError,
+    MFAEnrollmentRequired,
+    MFARequiredError,
     WeakPasswordError,
     login_user,
     refresh_access_token,
@@ -58,6 +61,9 @@ class LoginRequest(BaseModel):
 
     email: EmailStr
     password: str = Field(..., min_length=1, max_length=128)
+    otp: Optional[str] = Field(
+        None, max_length=32, description="TOTP or recovery code (required once MFA is enabled)"
+    )
 
 
 class RefreshRequest(BaseModel):
@@ -180,6 +186,14 @@ class MessageResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _enrollment_required(exc: MFAEnrollmentRequired) -> JSONResponse:
+    """403 carrying a token that only the /auth/mfa endpoints accept."""
+    return JSONResponse(
+        status_code=status.HTTP_403_FORBIDDEN,
+        content={"detail": "mfa_enrollment_required", "enrollment_token": exc.enrollment_token},
+    )
+
+
 def _user_to_response(user: User) -> UserResponse:
     """Convert a SQLAlchemy ``User`` instance to a ``UserResponse``."""
     return UserResponse(
@@ -207,7 +221,7 @@ def _user_to_response(user: User) -> UserResponse:
 def auth_register(
     body: RegisterRequest,
     db: Session = Depends(get_db),
-) -> RegisterResponse:
+) -> RegisterResponse | JSONResponse:
     """Create a new user account and return JWT tokens."""
     if (
         os.getenv("SEPSIS_ENV", "development") == "production"
@@ -228,6 +242,8 @@ def auth_register(
             org_id=None,
             db_session=db,
         )
+    except MFAEnrollmentRequired as exc:
+        return _enrollment_required(exc)
     except DuplicateEmailError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -261,14 +277,23 @@ def auth_register(
 def auth_login(
     body: LoginRequest,
     db: Session = Depends(get_db),
-) -> TokenResponse:
+) -> TokenResponse | JSONResponse:
     """Authenticate and return access + refresh tokens."""
     try:
         result = login_user(
             email=body.email,
             password=body.password,
             db_session=db,
+            otp=body.otp,
         )
+    except MFARequiredError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="mfa_required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except MFAEnrollmentRequired as exc:
+        return _enrollment_required(exc)
     except AccountLockedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -552,3 +577,39 @@ def auth_assign_site(
         admin.get("id"), target.id, previous, target.site_id,
     )
     return _user_to_response(target)
+
+
+@router.put(
+    "/users/{user_id}/mfa/reset",
+    response_model=UserResponse,
+    summary="Reset another user's MFA after device loss (system_admin only)",
+)
+def auth_reset_mfa(
+    user_id: str,
+    admin: dict[str, Any] = Depends(require_role("system_admin")),
+    db: Session = Depends(get_db),
+) -> UserResponse:
+    """Clear a user's MFA so they can re-enroll; ends all of their sessions.
+
+    Administrators cannot reset their own MFA here: a second administrator
+    (or the operator CLI, sepsis_vitals.auth.admin_cli) must do it, so one
+    compromised admin session cannot strip its own second factor.
+    """
+    from sepsis_vitals.auth.mfa import reset_mfa
+
+    if str(admin.get("id")) == str(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Ask another administrator to reset your MFA",
+        )
+    target = db.query(User).filter(User.id == user_id).first()
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    reset_mfa(target, db)
+    logger.warning("AUDIT mfa_reset admin=%s user=%s", admin.get("id"), target.id)
+    return _user_to_response(target)
+
+
+from sepsis_vitals.auth import mfa as _mfa  # noqa: E402  (mounted under /auth/mfa)
+
+router.include_router(_mfa.router)

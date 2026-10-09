@@ -157,3 +157,38 @@ def test_refresh_token_replay_revokes_all_sessions(db):
         refresh_access_token(rotated["refresh_token"], db)  # family is dead too
     with pytest.raises(TokenError):
         decode_token(rotated["access_token"])
+
+
+def test_lockout_check_accepts_naive_timestamps_from_sqlite():
+    """Regression: SQLite returns naive datetimes; comparing them raised TypeError (login 500)."""
+    from datetime import datetime, timedelta
+
+    from sepsis_vitals.auth.jwt import is_locked_out
+
+    naive_future = datetime.utcnow() + timedelta(minutes=5)
+    naive_past = datetime.utcnow() - timedelta(minutes=5)
+    assert is_locked_out(naive_future) is True
+    assert is_locked_out(naive_past) is False
+
+
+def test_session_issued_right_after_revocation_is_valid():
+    """Regression: whole-second revocation rejected tokens issued in the same second."""
+    from sepsis_vitals.auth.tokens import TokenBlacklist
+
+    bl = TokenBlacklist()
+    revoked_ms = 1_800_000_000_500
+    bl._user_revoked_before["u-1"] = revoked_ms
+    assert bl.is_revoked("j1", user_id="u-1", issued_at_ms=revoked_ms - 1) is True
+    assert bl.is_revoked("j2", user_id="u-1", issued_at_ms=revoked_ms + 1) is False
+    # tokens without iat_ms: same second as the revocation counts as revoked
+    assert bl.is_revoked("j3", user_id="u-1", issued_at=1_800_000_000) is True
+    assert bl.is_revoked("j4", user_id="u-1", issued_at=1_800_000_001) is False
+
+
+def test_revocations_stored_in_seconds_still_apply():
+    from sepsis_vitals.auth.tokens import TokenBlacklist
+
+    bl = TokenBlacklist()
+    bl._user_revoked_before["u-2"] = 1_800_000_000  # legacy value in seconds
+    assert bl.is_revoked("j", user_id="u-2", issued_at_ms=1_799_999_999_000) is True
+    assert bl.is_revoked("j", user_id="u-2", issued_at_ms=1_800_000_001_000) is False
