@@ -79,6 +79,8 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - name: Publish guard (what Pages would deploy)
+        run: ../scripts/check_published_site.sh dist
       - run: npm audit --audit-level=high
 
   postgres-migrations:

@@ -173,6 +173,7 @@ same institution is not sufficient evidence of generalizability.
 ```text
 src/sepsis_vitals/     API, auth, ingestion, scoring, monitoring, and ML
 frontend/              React research workspace and public evidence site
+                       (built in CI and deployed to GitHub Pages; output not committed)
 tests/                 Python unit and integration tests
 compliance/            Draft study and quality-system documents
 models/                Development artifacts and provenance
