@@ -155,11 +155,20 @@ jobs:
             -e SEPSIS_AUTH_ENABLED=false -e SEPSIS_RUN_MIGRATIONS=false \
             -v "$PWD/models:/models:ro" sepsis-vitals-api:ci
           for i in $(seq 1 30); do curl -fs localhost:18081/health >/dev/null && break; sleep 2; done
-          curl -fs localhost:18081/model/status | python -c "import json,sys; s=json.load(sys.stdin); assert s['state']=='ready' and s['validation_status']=='synthetic-development' and s['clinically_ready'] is False, s"
-          curl -fs -X POST localhost:18081/predict -H 'Content-Type: application/json' \
-            -d '{"patient_id":"probe","age_years":70,"vitals":{"heart_rate":118,"resp_rate":24,"sbp":96,"temperature":38.6,"lactate":2.4}}' \
-            | python -c "import json,sys; r=json.load(sys.stdin); assert r['clinical_use']=='not-permitted' and r['provenance']['artifact_sha256'] and r['alert'] is True, r"
-          docker logs api-model 2>&1 | tail -5
+          code=$(curl -s -o /tmp/status.json -w '%{http_code}' localhost:18081/model/status)
+          echo "model/status HTTP $code"; cat /tmp/status.json; echo
+          test "$code" = "200"
+          python -c "import json; s=json.load(open('/tmp/status.json')); assert s['state']=='ready' and s['validation_status']=='synthetic-development' and s['clinically_ready'] is False, s"
+          code=$(curl -s -o /tmp/predict.json -w '%{http_code}' -X POST localhost:18081/predict -H 'Content-Type: application/json' \
+            -d '{"patient_id":"probe","age_years":70,"vitals":{"heart_rate":118,"resp_rate":24,"sbp":96,"temperature":38.6,"lactate":2.4}}')
+          echo "predict HTTP $code"; head -c 600 /tmp/predict.json; echo
+          test "$code" = "200"
+          python -c "import json; r=json.load(open('/tmp/predict.json')); assert r['clinical_use']=='not-permitted' and r['provenance']['artifact_sha256'] and r['alert'] is True, r"
+      - name: Container logs on failure
+        if: failure()
+        run: |
+          for c in api-nomodel api-model; do echo "== $c"; docker logs "$c" 2>&1 | tail -80 || true; done
+          docker run --rm --entrypoint pip sepsis-vitals-api:ci list 2>/dev/null | grep -iE "^(numpy|pandas|scipy|scikit-learn|joblib) " || true
       - name: Build dashboard image
         run: docker build -f docker/Dockerfile.frontend -t sepsis-vitals-web:ci .
 
