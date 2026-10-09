@@ -514,8 +514,15 @@ def generate_patient_trajectory(
     base_time: pd.Timestamp,
     sepsis_severity: str = "early",
     sick_type: Optional[str] = None,
+    septic_blend_ceiling: Optional[float] = None,
+    mimic_blend_ceiling: float = 0.9,
 ) -> list:
     """Generate a temporal trajectory of vital signs for a single patient.
+
+    ``septic_blend_ceiling`` rescales septic deterioration so it reaches that
+    fraction of the target physiology (legacy: ~0.70 x severity jitter);
+    ``mimic_blend_ceiling`` caps sick-but-not-septic patients (legacy 0.9).
+    With the legacy values, mimics end up more abnormal than septic patients.
 
     For septic patients, simulates deterioration over time with variable onset.
     For sick-but-not-septic patients, generates abnormal vitals that mimic
@@ -603,6 +610,8 @@ def generate_patient_trajectory(
                 blend = (0.25 + (progress - 0.4) / 0.3 * 0.25) * severity_jitter
             else:
                 blend = (0.50 + (progress - 0.7) / 0.3 * 0.20) * severity_jitter
+            if septic_blend_ceiling is not None:
+                blend *= septic_blend_ceiling / 0.70
 
             current_vitals: dict[str, Tuple[float, float]] = {}
             for vital in normal_vitals:
@@ -621,7 +630,7 @@ def generate_patient_trajectory(
         elif sick_type is not None:
             # Sick-but-not-septic: blend toward sick vitals quickly and reach high
             # so that they strongly resemble sepsis
-            sick_blend = min(progress * 2.5, 0.9)  # Ramp up fast, max 0.9
+            sick_blend = min(progress * 2.5, mimic_blend_ceiling)  # Ramp up fast (legacy max 0.9)
             current_vitals = {}
             for vital in normal_vitals:
                 nm, ns = normal_vitals[vital]
@@ -759,8 +768,31 @@ def generate_dataset(
     obs_per_patient: Tuple[int, int] = (6, 24),
     seed: int = 42,
     include_demographics: bool = True,
+    *,
+    age_effect: float = 1.0,
+    comorbidity_effect: float = 1.0,
+    septic_blend_ceiling: Optional[float] = None,
+    mimic_blend_ceiling: float = 0.9,
+    label_mode: str = "current_state",
+    horizon_hours: Optional[float] = None,
+    include_onset_time: bool = False,
 ) -> pd.DataFrame:
     """Generate a full synthetic dataset for sepsis model training.
+
+    Keyword-only options (defaults reproduce the legacy generator exactly):
+
+    * ``age_effect`` / ``comorbidity_effect`` scale how strongly age and
+      comorbidity count raise the chance of being septic (1.0 legacy, 0.0
+      none). The legacy coupling lets age alone reach AUROC ~0.75.
+    * ``septic_blend_ceiling`` / ``mimic_blend_ceiling``: see
+      :func:`generate_patient_trajectory`.
+    * ``label_mode="current_state"`` (legacy) labels rows at or after onset.
+      ``label_mode="onset_within_horizon"`` labels pre-onset rows within
+      ``horizon_hours`` of onset as positive and drops rows at or after onset,
+      which is the target an early-warning claim needs. ``horizon_hours`` has
+      no default: it is a clinical choice for the study team.
+    * ``include_onset_time`` adds ``sepsis_onset_time`` (first observed
+      post-onset time; NaT for non-septic patients).
 
     The dataset has three patient categories:
     1. **Septic** (~20%): True sepsis with progressive deterioration
@@ -793,6 +825,11 @@ def generate_dataset(
         gcs, map, lactate, wbc, procalcitonin, sepsis_label,
         has_hypertension, has_diabetes, has_ckd, has_copd, has_heart_failure
     """
+    if label_mode not in ("current_state", "onset_within_horizon"):
+        raise ValueError(f"Unknown label_mode {label_mode!r}")
+    if label_mode == "onset_within_horizon" and (horizon_hours is None or horizon_hours <= 0):
+        raise ValueError("label_mode='onset_within_horizon' requires a positive horizon_hours")
+
     rng = np.random.default_rng(seed)
     all_rows: list[dict] = []
 
@@ -817,13 +854,13 @@ def generate_dataset(
                 comorbidities.append(comorb)
 
         # Determine patient category: septic, sick-nonseptic, or healthy
-        age_multiplier = _get_sepsis_risk_multiplier(age)
+        age_multiplier = 1.0 + age_effect * (_get_sepsis_risk_multiplier(age) - 1.0)
         sepsis_risk = sepsis_prevalence * age_multiplier
 
         if len(comorbidities) >= 2:
-            sepsis_risk *= 1.3
+            sepsis_risk *= 1.0 + comorbidity_effect * 0.3
         if len(comorbidities) >= 3:
-            sepsis_risk *= 1.2
+            sepsis_risk *= 1.0 + comorbidity_effect * 0.2
 
         is_septic = rng.random() < min(sepsis_risk, 0.7)
 
@@ -874,6 +911,8 @@ def generate_dataset(
             base_time=patient_base_time,
             sepsis_severity=severity,
             sick_type=sick_type,
+            septic_blend_ceiling=septic_blend_ceiling,
+            mimic_blend_ceiling=mimic_blend_ceiling,
         )
         all_rows.extend(rows)
 
@@ -882,6 +921,16 @@ def generate_dataset(
     # Ensure correct dtypes
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     df["sepsis_label"] = df["sepsis_label"].astype(int)
+
+    # Onset = first observed time at/after the simulated onset (before noise).
+    onset = df[df["sepsis_label"] == 1].groupby("patient_id")["timestamp"].min()
+    df["sepsis_onset_time"] = df["patient_id"].map(onset)
+    if label_mode == "onset_within_horizon":
+        assert horizon_hours is not None
+        lead = (df["sepsis_onset_time"] - df["timestamp"]).dt.total_seconds() / 3600.0
+        df = df[~(lead <= 0)].reset_index(drop=True)  # drop rows at/after onset
+        lead = (df["sepsis_onset_time"] - df["timestamp"]).dt.total_seconds() / 3600.0
+        df["sepsis_label"] = ((lead > 0) & (lead <= horizon_hours)).astype(int)
 
     # Label noise -- reflects real-world clinical uncertainty: retrospective
     # chart reviews disagree on sepsis diagnosis ~10-15% of the time
@@ -895,6 +944,8 @@ def generate_dataset(
     df.loc[miss_noise, "sepsis_label"] = 0
     df.loc[over_noise, "sepsis_label"] = 1
 
+    if not include_onset_time:
+        df = df.drop(columns=["sepsis_onset_time"])
     if not include_demographics:
         df = df.drop(columns=["sex", "ethnicity"], errors="ignore")
 
