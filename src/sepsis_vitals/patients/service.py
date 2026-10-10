@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from sepsis_vitals.db import Alert, Patient, PredictionRecord, Score, VitalReading
 from sepsis_vitals.scores import ScoreBundle, compute_scores
-from sepsis_vitals.security import compute_blind_index
+from sepsis_vitals.security import blind_index_candidates, compute_blind_index
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@ def create_patient(
     ext_id_hash = compute_blind_index(external_id)
     existing = (
         db.query(Patient)
-        .filter(Patient.site_id == site_id, Patient.external_id_hash == ext_id_hash)
+        .filter(Patient.site_id == site_id, Patient.external_id_hash.in_(blind_index_candidates(external_id)))
         .first()
     )
     if existing is not None:
@@ -76,8 +76,7 @@ def get_patient_by_external_id(
 
     MRNs are only unique per site; pass *site_id* to disambiguate.
     """
-    ext_id_hash = compute_blind_index(external_id)
-    query = db.query(Patient).filter(Patient.external_id_hash == ext_id_hash)
+    query = db.query(Patient).filter(Patient.external_id_hash.in_(blind_index_candidates(external_id)))
     if site_id is not None:
         query = query.filter(Patient.site_id == site_id)
     return query.first()

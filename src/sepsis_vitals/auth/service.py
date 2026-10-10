@@ -30,7 +30,7 @@ from sepsis_vitals.auth.tokens import (
     decode_token,
 )
 from sepsis_vitals.db import User
-from sepsis_vitals.security import compute_blind_index
+from sepsis_vitals.security import blind_index_candidates, compute_blind_index
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -277,8 +277,9 @@ def verify_second_factor(user: User, code: str, db_session: Session) -> bool:
         secret = user.totp_secret
         return secret is not None and verify_totp(secret, normalised)
     hashes = json.loads(user.mfa_recovery_hashes or "[]")
-    digest = compute_blind_index(normalised)
-    if digest in hashes:
+    # Codes hashed under a previous PII key still match during a key rotation.
+    digest = next((d for d in blind_index_candidates(normalised) if d in hashes), None)
+    if digest is not None:
         hashes.remove(digest)
         user.mfa_recovery_hashes = json.dumps(hashes)
         db_session.commit()
@@ -351,7 +352,7 @@ def register_user(
     _validate_password_strength(password)
 
     email_hash = compute_blind_index(email)
-    existing = db_session.query(User).filter(User.email_hash == email_hash).first()
+    existing = db_session.query(User).filter(User.email_hash.in_(blind_index_candidates(email))).first()
     if existing is not None:
         raise DuplicateEmailError(f"Email {email!r} is already registered")
 
@@ -415,8 +416,7 @@ def login_user(
     """
     _check_login_rate_limit(email)
 
-    email_hash = compute_blind_index(email)
-    user = db_session.query(User).filter(User.email_hash == email_hash).first()
+    user = db_session.query(User).filter(User.email_hash.in_(blind_index_candidates(email))).first()
     if user is None:
         raise InvalidCredentialsError("Invalid email or password")
 
@@ -569,8 +569,7 @@ def request_password_reset(
     str or None
         An HMAC-based reset token if the user exists, otherwise ``None``.
     """
-    email_hash = compute_blind_index(email)
-    user = db_session.query(User).filter(User.email_hash == email_hash).first()
+    user = db_session.query(User).filter(User.email_hash.in_(blind_index_candidates(email))).first()
     if user is None:
         return None
     return _make_hmac_token(

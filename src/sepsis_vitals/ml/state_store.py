@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from sepsis_vitals.security import compute_blind_index, log_ref
+from sepsis_vitals.security import blind_index_candidates, compute_blind_index, log_ref
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +33,24 @@ def _ref(patient_id: str) -> str:
     """Keyed, irreversible reference stored instead of the patient identifier.
 
     Lookups only ever need equality, so the store never holds an identifier
-    it could reveal. HMAC-SHA256 with SEPSIS_PII_KEY (plain SHA-256 in
+    it could reveal. HMAC-SHA256 with the current PII key (plain SHA-256 in
     development when no key is configured).
     """
     return compute_blind_index(str(patient_id))
+
+
+def _refs(patient_id: str) -> List[str]:
+    """References under every configured PII key, current first.
+
+    During a key rotation a patient's rows may still carry the reference
+    computed with a previous key; reads match all of them, and the next
+    write moves them to the current reference (see ``_rekey``).
+    """
+    return blind_index_candidates(str(patient_id))
+
+
+def _in(refs: List[str]) -> str:
+    return "(" + ",".join("?" * len(refs)) + ")"
 
 
 def default_store_path(state_dir: Optional[str] = None) -> Path:
@@ -159,6 +173,7 @@ class PatientStateStore:
 
         try:
             with self._lock, self._conn:
+                self._rekey(patient_id)
                 # Ensure the patient row exists.
                 self._conn.execute(
                     """
@@ -211,6 +226,38 @@ class PatientStateStore:
             logger.exception("Failed to store prediction for patient %s", log_ref(patient_id))
             raise
 
+    def _rekey(self, patient_id: str) -> None:
+        """Move a patient's rows from previous-key references to the current one.
+
+        Called inside the write transaction, so after a PII key rotation each
+        patient's history is re-keyed the next time the patient is scored.
+        """
+        current, *old = _refs(patient_id)
+        if not old:
+            return
+        placeholders = _in(old)
+        moved = self._conn.execute(
+            f"UPDATE predictions SET patient_id = ? WHERE patient_id IN {placeholders}",  # nosec B608
+            (current, *old),
+        ).rowcount
+        prior = self._conn.execute(
+            f"SELECT baseline_risk, created_at FROM patients WHERE patient_id IN {placeholders} "  # nosec B608
+            "ORDER BY created_at LIMIT 1",
+            old,
+        ).fetchone()
+        if prior is not None:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO patients (patient_id, baseline_risk, created_at) VALUES (?, ?, ?)",
+                (current, prior["baseline_risk"], prior["created_at"]),
+            )
+            self._conn.execute(
+                "UPDATE patients SET baseline_risk = COALESCE(baseline_risk, ?) WHERE patient_id = ?",
+                (prior["baseline_risk"], current),
+            )
+            self._conn.execute(f"DELETE FROM patients WHERE patient_id IN {placeholders}", old)  # nosec B608
+        if moved or prior is not None:
+            logger.info("Re-keyed stored predictions for patient %s", log_ref(patient_id))
+
     # ------------------------------------------------------------------
     # Read operations
     # ------------------------------------------------------------------
@@ -221,15 +268,16 @@ class PatientStateStore:
         """Return recent predictions for *patient_id*, newest first."""
         try:
             with self._lock:
+                refs = _refs(patient_id)
                 rows = self._conn.execute(
-                    """
+                    f"""
                     SELECT timestamp, risk_probability, risk_level
                     FROM predictions
-                    WHERE patient_id = ?
+                    WHERE patient_id IN {_in(refs)}
                     ORDER BY created_at DESC
                     LIMIT ?
-                    """,
-                    (_ref(patient_id), limit),
+                    """,  # nosec B608 - placeholders only
+                    (*refs, limit),
                 ).fetchall()
         except sqlite3.Error:
             logger.exception(
@@ -252,9 +300,11 @@ class PatientStateStore:
         """Return the baseline risk for *patient_id*, or ``None``."""
         try:
             with self._lock:
+                refs = _refs(patient_id)
                 row = self._conn.execute(
-                    "SELECT baseline_risk FROM patients WHERE patient_id = ?",
-                    (_ref(patient_id),),
+                    f"SELECT baseline_risk FROM patients WHERE patient_id IN {_in(refs)} "  # nosec B608
+                    "ORDER BY baseline_risk IS NULL LIMIT 1",
+                    refs,
                 ).fetchone()
         except sqlite3.Error:
             logger.exception(

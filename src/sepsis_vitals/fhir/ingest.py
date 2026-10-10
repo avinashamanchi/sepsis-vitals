@@ -49,7 +49,7 @@ from sepsis_vitals.db import Patient, Score, SessionLocal, VitalReading
 from sepsis_vitals.fhir.access import can_access, ingest_site, resolve_patient
 from sepsis_vitals.fhir.resources import FHIRBundle, FHIRObservation, FHIRPatient, vitals_from_observations
 from sepsis_vitals.schemas import VitalsInput
-from sepsis_vitals.security import compute_blind_index
+from sepsis_vitals.security import blind_index_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +175,7 @@ def _lookup(db: Session, internal: Dict[str, Any]) -> Optional[Patient]:
         db.query(Patient)
         .filter(
             Patient.site_id == internal["site_id"],
-            Patient.external_id_hash == compute_blind_index(internal["external_id"]),
+            Patient.external_id_hash.in_(blind_index_candidates(internal["external_id"])),
         )
         .first()
     )

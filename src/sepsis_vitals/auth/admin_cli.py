@@ -24,11 +24,11 @@ def main(argv: list[str] | None = None) -> int:
 
     from sepsis_vitals.auth.mfa import reset_mfa
     from sepsis_vitals.db import SessionLocal, User
-    from sepsis_vitals.security import compute_blind_index
+    from sepsis_vitals.security import blind_index_candidates
 
     db = SessionLocal()
     try:
-        user = db.query(User).filter(User.email_hash == compute_blind_index(opts.email)).first()
+        user = db.query(User).filter(User.email_hash.in_(blind_index_candidates(opts.email))).first()
         if user is None:
             print("No account with that email.", file=sys.stderr)
             return 1

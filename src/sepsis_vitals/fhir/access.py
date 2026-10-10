@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from sepsis_vitals.auth.scope import is_unscoped, require_site
 from sepsis_vitals.db import Patient
-from sepsis_vitals.security import compute_blind_index
+from sepsis_vitals.security import blind_index_candidates
 
 
 def ingest_site(user: Dict[str, Any]) -> str:
@@ -43,7 +43,7 @@ def find_patient(patient_id: str, db: Session, user: Dict[str, Any]) -> Patient 
     if patient is None:
         # MRNs are unique per site: scoped users only match their own site.
         query = db.query(Patient).filter(
-            Patient.external_id_hash == compute_blind_index(patient_id)
+            Patient.external_id_hash.in_(blind_index_candidates(patient_id))
         )
         site = require_site(user)
         if site is not None:
