@@ -68,18 +68,28 @@ class ConfidenceInterval(BaseModel):
 
 
 class PredictionResponse(BaseModel):
+    """Research output of the development model and the rule-based scores.
+
+    ``risk_level`` is an ordinal category, not a probability: the higher of
+    ``rule_risk_level`` (from the NEWS2-style/qSOFA/SIRS/shock-index scores)
+    and ``model_risk_level`` (from ``risk_probability``). It exists so the
+    model can never lower what the rules flag. ``risk_probability`` is the
+    model output on synthetic development data; it is not a calibrated
+    probability for patients. ``clinical_use`` is always "not-permitted".
+    """
+
     patient_id: str
     timestamp: str
-    risk_probability: float
-    risk_level: str
+    risk_probability: float = Field(..., description="Development-model output; not calibrated for patients")
+    risk_level: str = Field(..., description="Higher of rule_risk_level and model_risk_level (ordinal, not a probability)")
     confidence_interval: ConfidenceInterval
-    alert: bool
+    alert: bool = Field(..., description="Rule alert, or model level high/critical, or model output above its alert cut-off")
     clinical_scores: Dict[str, Any]
     top_risk_factors: List[Dict[str, Any]]
     recommendation: str
     model: Dict[str, str]
-    rule_risk_level: str
-    model_risk_level: str
+    rule_risk_level: str = Field(..., description="Level from the rule-based scores alone")
+    model_risk_level: str = Field(..., description="Level from the model output alone")
     provenance: Dict[str, Any]
     research_only: bool = True
     clinical_use: str = "not-permitted"
