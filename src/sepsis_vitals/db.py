@@ -19,6 +19,7 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -211,6 +212,10 @@ class User(Base):
     )
     # JSON list of keyed hashes of unused single-use recovery codes.
     mfa_recovery_hashes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Last TOTP time step (unix time // 30) accepted for the current secret.
+    # A code is accepted only for a later step, so each code works once
+    # (RFC 6238 section 5.2). NULL: none used yet; reset when the secret changes.
+    totp_last_step: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     mfa_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false"
     )

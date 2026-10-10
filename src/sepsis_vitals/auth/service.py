@@ -266,25 +266,97 @@ def _normalise_code(code: str) -> str:
     return code.strip().replace(" ", "").replace("-", "").upper()
 
 
+def lock_user_row(db_session: Session, user_id: str) -> User:
+    """Re-read *user_id* holding its row lock until the transaction ends.
+
+    Serialises MFA state changes for one account across workers
+    (``SELECT ... FOR UPDATE`` on PostgreSQL; SQLite takes a database write
+    lock at the first write and ignores FOR UPDATE).
+    """
+    return (
+        db_session.query(User)
+        .filter(User.id == user_id)
+        .with_for_update()
+        .populate_existing()
+        .one()
+    )
+
+
+def _rowcount(result: Any) -> int:
+    """Rows matched by an UPDATE (a CursorResult attribute)."""
+    return int(getattr(result, "rowcount", 0))
+
+
+def consume_totp_step(user: User, step: int, db_session: Session) -> bool:
+    """Record *step* as used for *user*'s current TOTP secret, exactly once.
+
+    A single conditional UPDATE (``totp_last_step`` NULL or earlier than
+    *step*) decides: of two concurrent requests with the same code, in any
+    number of workers, exactly one matches a row. The change is not
+    committed here. It commits with the caller's successful authentication,
+    and rolls back with it. Database errors propagate, so a failure denies
+    access instead of skipping the check.
+    """
+    from sqlalchemy import or_, update
+    from sqlalchemy.orm.attributes import set_committed_value
+
+    result = db_session.execute(
+        update(User)
+        .where(User.id == user.id)
+        .where(or_(User.totp_last_step.is_(None), User.totp_last_step < step))
+        .values(totp_last_step=step)
+        .execution_options(synchronize_session=False)
+    )
+    if _rowcount(result) != 1:
+        return False
+    set_committed_value(user, "totp_last_step", step)
+    return True
+
+
+def _consume_recovery_code(user: User, normalised: str, db_session: Session) -> bool:
+    """Remove one unused recovery code, exactly once (compare-and-set)."""
+    from sqlalchemy import update
+    from sqlalchemy.orm.attributes import set_committed_value
+
+    stored = user.mfa_recovery_hashes
+    hashes = json.loads(stored or "[]")
+    # Codes hashed under a previous PII key still match during a key rotation.
+    digest = next((d for d in blind_index_candidates(normalised) if d in hashes), None)
+    if digest is None:
+        return False
+    hashes.remove(digest)
+    remaining = json.dumps(hashes)
+    result = db_session.execute(
+        update(User)
+        .where(User.id == user.id, User.mfa_recovery_hashes == stored)
+        .values(mfa_recovery_hashes=remaining)
+        .execution_options(synchronize_session=False)
+    )
+    if _rowcount(result) != 1:
+        return False  # used concurrently: the other request won
+    set_committed_value(user, "mfa_recovery_hashes", remaining)
+    return True
+
+
 def verify_second_factor(user: User, code: str, db_session: Session) -> bool:
-    """Check a TOTP code, or consume a single-use recovery code."""
-    from sepsis_vitals.auth.jwt import verify_totp
+    """Check and consume a TOTP code (once per time step) or a recovery code.
+
+    Nothing is committed here: the caller commits the consumption together
+    with the successful authentication. Malformed or wrong codes consume
+    nothing.
+    """
+    from sepsis_vitals.auth.jwt import match_totp_step
 
     normalised = _normalise_code(code or "")
     if not normalised:
         return False
     if normalised.isdigit() and len(normalised) == 6:
         secret = user.totp_secret
-        return secret is not None and verify_totp(secret, normalised)
-    hashes = json.loads(user.mfa_recovery_hashes or "[]")
-    # Codes hashed under a previous PII key still match during a key rotation.
-    digest = next((d for d in blind_index_candidates(normalised) if d in hashes), None)
-    if digest is not None:
-        hashes.remove(digest)
-        user.mfa_recovery_hashes = json.dumps(hashes)
-        db_session.commit()
-        return True
-    return False
+        if secret is None:
+            return False
+        step = match_totp_step(secret, normalised)
+        return step is not None and consume_totp_step(user, step, db_session)
+    return _consume_recovery_code(user, normalised, db_session)
 
 
 def _issue_tokens(user: User) -> dict[str, str]:

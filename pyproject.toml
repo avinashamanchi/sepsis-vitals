@@ -93,6 +93,11 @@ target-version = "py310"
 select = ["E4","E7","E9","F"]
 ignore  = ["E402"]
 
+[tool.ruff.lint.per-file-ignores]
+# Reuses the client/clock fixtures from tests/test_mfa.py by importing them;
+# pytest injects them by parameter name, which ruff reads as a redefinition.
+"tests/test_mfa_replay.py" = ["F811"]
+
 [tool.bandit]
 exclude_dirs = ["tests","examples"]
 skips = ["B101"]

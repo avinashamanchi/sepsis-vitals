@@ -14,7 +14,8 @@ through to the patient list and dashboard, and replay de-duplication; tenant
 boundaries in the UI; no demo data in live mode; Predict showing rule and
 model levels separately and "Clinical use: not permitted"; the
 password-reset token lifecycle in the browser; refresh rotation, replay and
-logout revocation; admin-only test alerts; no API path that changes
+logout revocation; MFA sign-in in the browser and refusal of a replayed
+TOTP code (N52) against the multi-worker API; admin-only test alerts; no API path that changes
 clinical use; and liveness versus readiness during a database outage.
 """
 
@@ -39,9 +40,11 @@ NEW_PASSWORD = f"E2e-new-{secrets.token_urlsafe(12)}-7!"
 USERS = {"a": (f"e2e-nurse-a-{RUN}@example.org", f"E2E-A-{RUN}"),
          "b": (f"e2e-nurse-b-{RUN}@example.org", f"E2E-B-{RUN}"),
          "refresh": (f"e2e-refresh-{RUN}@example.org", f"E2E-A-{RUN}"),
-         "logout": (f"e2e-logout-{RUN}@example.org", f"E2E-A-{RUN}")}
+         "logout": (f"e2e-logout-{RUN}@example.org", f"E2E-A-{RUN}"),
+         "mfa": (f"e2e-mfa-{RUN}@example.org", f"E2E-A-{RUN}")}
 MRN = f"MRN-E2E-{RUN}"
 FAILURES: list[str] = []
+tokens_holder: Dict[str, str] = {}  # MFA secret for the browser check (never printed)
 
 
 def check(condition: bool, message: str) -> None:
@@ -184,6 +187,46 @@ def api_checks(tokens: Dict[str, Dict[str, str]]) -> None:
     check(revoked == 401, f"access token is rejected after logout (HTTP {revoked})")
 
 
+def enroll_mfa(access_token: str) -> str:
+    """Enroll the 'mfa' account via the API; returns the TOTP secret (never printed).
+
+    The confirmation uses the previous step's code (within the server's
+    one-step drift), so the current step stays free for the browser sign-in.
+    """
+    import pyotp
+
+    status, started = call("POST", "/auth/mfa/enroll", None, access_token)
+    check(status == 200, f"MFA enrollment started (HTTP {status})")
+    secret = started["secret"]
+    for _ in range(2):  # a 30 s boundary between computing and checking: retry once
+        code = pyotp.TOTP(secret).at(time.time() - 30)
+        status, _ = call("POST", "/auth/mfa/confirm", {"code": code}, access_token)
+        if status == 200:
+            break
+    check(status == 200, f"MFA enrollment confirmed (HTTP {status})")
+    return secret
+
+
+def mfa_browser_check(new_page, secret: str) -> None:
+    import pyotp
+    from playwright.sync_api import expect
+
+    page = new_page()
+    page.goto(BASE + "/login")
+    page.fill("#email", USERS["mfa"][0])
+    page.fill("#password", PASSWORD)
+    page.get_by_role("button", name="Sign in").click()
+    expect(page.locator("#otp")).to_be_visible()
+    code = pyotp.TOTP(secret).now()
+    page.fill("#otp", code)
+    page.get_by_role("button", name="Sign in").click()
+    agree = page.get_by_role("button", name="I Agree — Enter Application")
+    agree.wait_for()
+    check(True, "MFA account signs in through the UI with a code")
+    status = call("POST", "/auth/login", {"email": USERS["mfa"][0], "password": PASSWORD, "otp": code})[0]
+    check(status == 401, f"the code used in the browser is refused when replayed (HTTP {status})")
+
+
 def browser_checks() -> None:
     from playwright.sync_api import expect, sync_playwright
 
@@ -240,6 +283,8 @@ def browser_checks() -> None:
         expect(page_b.get_by_text("No patients match")).to_be_visible()
         check(page_b.get_by_text(MRN).count() == 0, "site B nurse does not see site A's patient (UI)")
 
+        mfa_browser_check(new_page, tokens_holder["mfa"])
+
         token = api_python(
             "from sepsis_vitals.auth.service import request_password_reset\n"
             "from sepsis_vitals.db import SessionLocal\n"
@@ -278,6 +323,7 @@ def main() -> int:
         print("\nlogin failed; stopping")
         return 1
     api_checks(tokens)
+    tokens_holder["mfa"] = enroll_mfa(tokens["mfa"]["access_token"])
     browser_checks()
     outage_checks()
     print(f"\n{len(FAILURES)} failure(s)" if FAILURES else "\nall end-to-end checks passed")

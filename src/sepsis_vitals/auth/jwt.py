@@ -96,18 +96,51 @@ def generate_totp_secret() -> str:
     return pyotp.random_base32()
 
 
-def verify_totp(secret: str, code: str) -> bool:
-    """Return True if *code* is a valid TOTP token for *secret*.
+#: RFC 6238 time step and the drift tolerated either side of the server's step.
+TOTP_INTERVAL_S = 30
+TOTP_DRIFT_STEPS = 1
 
-    Accepts the codes of the adjacent 30-second steps as well (RFC 6238
-    section 5.2: allow for clock drift and transmission delay). Without it a
-    code typed near the end of its step, or checked just after the step
-    changed, was rejected. Codes are not yet blocked from reuse within that
-    window; see N52 in PROJECT_REVIEW.md.
+
+def _now() -> float:
+    """Wall clock for TOTP checks (tests replace it with a controlled clock)."""
+    return time.time()
+
+
+def current_totp_step(now: Optional[float] = None) -> int:
+    return int((now if now is not None else _now()) // TOTP_INTERVAL_S)
+
+
+def match_totp_step(secret: str, code: str, now: Optional[float] = None) -> Optional[int]:
+    """The time step whose code is *code*, within the tolerated drift, or None.
+
+    Accepted steps are the server's current step and one step either side
+    (RFC 6238 section 5.2: clock drift and transmission delay). Steps are
+    tried newest first, so a code that is valid for two steps (rare
+    collision) resolves to the later one. Anything other than six digits
+    matches nothing. This function is stateless: callers that authenticate
+    must also *consume* the step (``auth.service.consume_totp_step``) so a
+    code cannot be used twice.
     """
     import pyotp
-    totp = pyotp.TOTP(secret)
-    return totp.verify(code, valid_window=1)
+
+    # ASCII only: str.isdigit() also accepts e.g. full-width digits.
+    if not (isinstance(code, str) and len(code) == 6 and code.isascii() and code.isdigit()):
+        return None
+    totp = pyotp.TOTP(secret, interval=TOTP_INTERVAL_S)
+    current = current_totp_step(now)
+    for step in range(current + TOTP_DRIFT_STEPS, current - TOTP_DRIFT_STEPS - 1, -1):
+        if hmac.compare_digest(totp.at(step * TOTP_INTERVAL_S), code):
+            return step
+    return None
+
+
+def verify_totp(secret: str, code: str) -> bool:
+    """Stateless check that *code* is valid for *secret* now (with drift).
+
+    Does **not** prevent reuse. Authentication paths use
+    ``auth.service.verify_second_factor``/``consume_totp_step`` instead.
+    """
+    return match_totp_step(secret, code) is not None
 
 
 def get_totp_uri(secret: str, email: str) -> str:
