@@ -158,8 +158,17 @@ def _get_predictor():
     """
     global _predictor, _model_status
     if _predictor is None:
-        from sepsis_vitals.ml.artifacts import ModelArtifactError
-        from sepsis_vitals.ml.predictor import SepsisPredictor
+        try:
+            from sepsis_vitals.ml.artifacts import ModelArtifactError
+            from sepsis_vitals.ml.predictor import SepsisPredictor
+        except ImportError as exc:
+            # An API-only install (sepsis-vitals[api] without [ml]) still serves
+            # scores and patient data; predictions report why they are unavailable.
+            _model_status = {
+                "state": "unavailable",
+                "reason": f"ML runtime not installed (missing {exc.name}); install sepsis-vitals[ml]",
+            }
+            return None
         candidate = SepsisPredictor()
         try:
             candidate.load()

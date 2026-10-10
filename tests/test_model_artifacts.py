@@ -170,3 +170,18 @@ def test_readiness_distinguishes_unmanaged_schema(client_with_models, model_copy
         body = client.get("/ready").json()
     assert body["database"] == "ok"
     assert body["migrations"] in {"unmanaged", "at-head"}
+
+
+def test_api_starts_without_the_ml_runtime(client_with_models, model_copy, monkeypatch):
+    """Regression (N37): with only sepsis-vitals[api] installed, the model
+    warm-up's ImportError aborted startup. Simulated by hiding the predictor."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "sepsis_vitals.ml.predictor", None)
+    with client_with_models(model_copy) as client:
+        assert client.get("/health").status_code == 200
+        status = client.get("/model/status").json()
+        assert status["state"] == "unavailable" and "sepsis-vitals[ml]" in status["reason"]
+        assert status["prediction_ready"] is False and status["clinical_use"] == "not-permitted"
+        resp = client.post("/predict", json={"patient_id": "x", "vitals": {"heart_rate": 90, "resp_rate": 18, "sbp": 120}})
+        assert resp.status_code == 503 and resp.json()["detail"]["model_state"] == "unavailable"

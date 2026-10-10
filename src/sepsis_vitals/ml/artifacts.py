@@ -62,7 +62,7 @@ class ModelArtifactError(RuntimeError):
 class ArtifactStatus:
     """What the API reports about prediction readiness."""
 
-    state: str  # ready | absent | invalid | incompatible | unverified
+    state: str  # ready | absent | invalid | incompatible | unverified (| unavailable: no ML runtime)
     reason: str = ""
     model_id: Optional[str] = None
     model_version: Optional[str] = None

@@ -8,13 +8,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libpq-dev libffi-dev curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Dependencies come from the hashed lock for [api,ml] (requirements/deploy.txt,
+# see docs/dependencies.md): every package and version is pinned and verified.
+COPY requirements/deploy.txt requirements/deploy.txt
+RUN pip install --no-cache-dir --require-hashes -r requirements/deploy.txt
+
 COPY pyproject.toml README.md ./
 COPY src/ src/
-
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir build && \
-    pip install --no-cache-dir ".[api,ml]" && \
-    pip wheel --no-deps --wheel-dir /wheels .
+RUN pip wheel --no-deps --wheel-dir /wheels . && \
+    pip check
 
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
@@ -45,7 +47,7 @@ COPY alembic.ini ./
 COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/sepsis-entrypoint
 
 # Install the package wheel (fail the build if it does not install)
-RUN pip install --no-cache-dir --no-index --find-links=/wheels sepsis_vitals
+RUN pip install --no-cache-dir --no-index --no-deps --find-links=/wheels sepsis_vitals && pip check
 
 # Model artifacts are mounted read-only at /models (never baked into the
 # image); mutable patient state lives in /app/state (mount an encrypted volume).

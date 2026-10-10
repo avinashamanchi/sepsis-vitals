@@ -20,8 +20,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install ruff
-      - run: ruff check src/ tests/
+          cache: pip
+          cache-dependency-path: requirements/dev.txt
+      - name: Install locked dependencies
+        run: |
+          pip install --require-hashes -r requirements/dev.txt
+          pip install --no-deps -e .
+      - run: ruff check src/ tests/ scripts/
+      - name: Locks satisfy pyproject.toml
+        run: python scripts/check_lock.py
 
   typecheck:
     runs-on: ubuntu-latest
@@ -31,8 +38,11 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: pyproject.toml
-      - run: pip install -e ".[dev]"
+          cache-dependency-path: requirements/dev.txt
+      - name: Install locked dependencies
+        run: |
+          pip install --require-hashes -r requirements/dev.txt
+          pip install --no-deps -e .
       - run: mypy src/sepsis_vitals --ignore-missing-imports
 
   security:
@@ -42,7 +52,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install bandit[toml]
+          cache: pip
+          cache-dependency-path: requirements/dev.txt
+      - name: Install locked dependencies
+        run: |
+          pip install --require-hashes -r requirements/dev.txt
+          pip install --no-deps -e .
       - run: bandit -r src/ -c pyproject.toml -ll
 
   test:
@@ -56,12 +71,42 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-          cache-dependency-path: pyproject.toml
-      - run: pip install -e ".[dev,api,ml]"
+          cache-dependency-path: requirements/dev.txt
+      - name: Install locked dependencies
+        run: |
+          pip install --require-hashes -r requirements/dev.txt
+          pip install --no-deps -e .
       - run: pytest --tb=short -q --durations=15
         if: matrix.python-version != '3.11'
       - run: pytest --cov=sepsis_vitals --cov-report=term-missing --tb=short -q --durations=15
         if: matrix.python-version == '3.11'
+
+  extras:
+    # Each installation set alone, resolved fresh from pyproject.toml into a
+    # clean environment: catches code that relies on a package only another
+    # extra installs, and extras metadata that no longer resolves.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+        extras: ["", "api", "ml", "api,ml", "ml,train", "copilot", "integrations"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install the set into a clean environment
+        env:
+          EXTRAS: ${{ matrix.extras }}
+        run: |
+          python -m venv /tmp/set
+          if [ -n "$EXTRAS" ]; then /tmp/set/bin/pip install ".[$EXTRAS]"; else /tmp/set/bin/pip install .; fi
+          /tmp/set/bin/pip check
+      - name: Smoke test the set
+        env:
+          EXTRAS: ${{ matrix.extras }}
+        run: /tmp/set/bin/python scripts/smoke_extras.py "$EXTRAS"
 
   frontend:
     runs-on: ubuntu-latest
@@ -107,8 +152,11 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: pyproject.toml
-      - run: pip install -e ".[api,ml,dev]"
+          cache-dependency-path: requirements/dev.txt
+      - name: Install locked dependencies
+        run: |
+          pip install --require-hashes -r requirements/dev.txt
+          pip install --no-deps -e .
       - name: Bootstrap extensions (as the compose Postgres container does)
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f docker/postgres/init.sql
       - name: Generate a throwaway PII key for this job
