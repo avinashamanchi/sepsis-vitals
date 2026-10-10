@@ -248,6 +248,18 @@ jobs:
           test "$code" = "503"
           docker stop -t 20 api-nomodel
           test "$(docker inspect -f '{{.State.ExitCode}}' api-nomodel)" = "0"   # clean SIGTERM shutdown
+      - name: Tampered model is refused in the container (integrity failure)
+        run: |
+          cp -r models /tmp/tampered && printf '\0' >> /tmp/tampered/sepsis_model.joblib
+          docker run -d --name api-tampered -p 18082:8080 -e SEPSIS_ENV=development \
+            -e SEPSIS_AUTH_ENABLED=false -e SEPSIS_RUN_MIGRATIONS=false \
+            -v /tmp/tampered:/models:ro sepsis-vitals-api:ci
+          for i in $(seq 1 30); do curl -fs localhost:18082/health >/dev/null && break; sleep 2; done
+          curl -fs localhost:18082/model/status | tee /dev/stderr | python3 -c "import json,sys; s=json.load(sys.stdin); assert s['state']=='invalid' and not s['prediction_ready'] and s['clinical_use']=='not-permitted', s"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:18082/predict -H 'Content-Type: application/json' \
+            -d '{"patient_id":"x","vitals":{"heart_rate":90,"resp_rate":18,"sbp":120}}')
+          test "$code" = "503"
+          docker rm -f api-tampered >/dev/null
       - name: Four workers start together on a fresh database, five times
         # Regression for N31: concurrent create_all aborted the whole server.
         # One green start does not prove a race is gone, so repeat it.
@@ -302,6 +314,9 @@ jobs:
         working-directory: docker
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Generate throwaway .env
         run: |
           openssl genrsa -out /tmp/jwt.pem 2048 2>/dev/null
@@ -353,11 +368,20 @@ jobs:
           call GET /api/model/status
           python3 -c "import json; s=json.load(open('/tmp/body.json')); assert s['state']=='ready' and s['clinically_ready'] is False, s"
           curl -fs localhost:8000/ | grep -q '<div id="root">'
+      - name: End-to-end browser and API checks
+        # SPA at "/", login and EULA, FHIR ingestion to the patient list, tenant
+        # boundaries in the UI, Predict shows rule vs model levels and clinical
+        # use not permitted, password-reset lifecycle, refresh/logout revocation,
+        # admin-only alerts, and liveness vs readiness during a database outage.
+        run: |
+          python -m pip install --require-hashes -r ../requirements/e2e.txt
+          python -m playwright install --with-deps chromium
+          python ../scripts/e2e_compose.py
       - name: Audit trail reaches the log stream and the database
         run: |
           docker compose logs --no-color api | grep -q HIPAA_AUDIT || { echo "no HIPAA_AUDIT lines in the API logs"; exit 1; }
-          if docker compose logs --no-color api | grep -q "compose.smoke@example.org"; then
-            echo "login email appears in the API logs"; exit 1
+          if docker compose logs --no-color api | grep -q "@example.org"; then
+            echo "an account email appears in the API logs"; exit 1
           fi
           rows=$(docker compose exec -T db psql -U sepsis -d sepsis_vitals -tAc "SELECT count(*) FROM audit_log")
           echo "audit_log rows: $rows"

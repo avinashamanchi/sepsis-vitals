@@ -27,6 +27,10 @@ const DEMO_TREND = Array.from({ length: 24 }, (_, i) => ({
   predictions: [3, 5, 4, 6, 8, 12, 14, 18, 22, 19, 16, 14, 12, 15, 18, 20, 24, 21, 17, 13, 9, 7, 5, 4][i],
 }))
 
+function show(value: number | undefined, unit = ''): string {
+  return value == null ? '—' : `${value}${unit}`
+}
+
 export function Dashboard() {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -44,6 +48,40 @@ export function Dashboard() {
   }>(isDemo
     ? { patientCount: patients.length || 12, predictionsToday: 147, modelAuroc: '0.92', modelName: 'Synthetic baseline' }
     : { patientCount: '—', predictionsToday: '—', modelAuroc: '—', modelName: 'Loading model info' })
+
+  // Live mode shows only what the API returns: recent observed patients and the
+  // recorded trend. Demo data is used in demo mode only (N41).
+  type Row = { id: string; label: string; temp?: number; hr?: number; rr?: number; sbp?: number
+    spo2?: number; lac?: number; risk: RiskLevel | null; time: string }
+  type TrendPoint = { hour: string; predictions: number; alerts: number }
+  const [rows, setRows] = useState<Row[] | null>(isDemo ? DEMO_PATIENTS.map((p) => ({ ...p, label: p.id })) : null)
+  const [trend, setTrend] = useState<TrendPoint[] | null>(isDemo ? DEMO_TREND : null)
+  const [liveError, setLiveError] = useState(false)
+
+  useEffect(() => {
+    if (isDemo) return
+    api.getPatients()
+      .then((list) => {
+        const observed = list
+          .filter((p) => p.latest_recorded_at)
+          .sort((a, b) => String(b.latest_recorded_at).localeCompare(String(a.latest_recorded_at)))
+          .slice(0, 8)
+        setRows(observed.map((p) => {
+          const v: Record<string, number | undefined> = p.latest_vitals ?? {}
+          const level = p.latest_risk_level
+          return {
+            id: p.id, label: p.external_id || p.id, temp: v.temperature, hr: v.heart_rate, rr: v.resp_rate,
+            sbp: v.sbp, spo2: v.spo2, lac: v.lactate,
+            risk: level === 'low' || level === 'moderate' || level === 'high' || level === 'critical' ? level : null,
+            time: p.latest_recorded_at ? new Date(p.latest_recorded_at).toLocaleString() : '—',
+          }
+        }))
+      })
+      .catch(() => { setRows([]); setLiveError(true) })
+    api.weeklyTrends(7)
+      .then((days) => setTrend(days.map((d) => ({ hour: d.date ?? '—', predictions: d.predictions, alerts: d.alerts }))))
+      .catch(() => { setTrend([]); setLiveError(true) })
+  }, [])
 
   useEffect(() => {
     if (isDemo) return
@@ -134,12 +172,17 @@ export function Dashboard() {
             <div className="px-4 py-3 border-b border-border">
               <h2 className="font-heading text-sm font-semibold flex items-center gap-2">
                 <Brain className="w-4 h-4 text-info" />
-                {t('dashboard.alertTrend')}
+                {isDemo ? t('dashboard.alertTrend') : 'Scores and alerts, last 7 days'}
               </h2>
             </div>
             <div className="p-4 h-[280px]">
+              {trend === null ? (
+                <p className="text-sm text-text-muted">Loading…</p>
+              ) : trend.length === 0 ? (
+                <p className="text-sm text-text-muted" data-testid="trend-empty">No recorded scores or alerts yet.</p>
+              ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={DEMO_TREND}>
+                <AreaChart data={trend}>
                   <defs>
                     <linearGradient id="alertGrad" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#ff3b5c" stopOpacity={0.3} />
@@ -189,6 +232,7 @@ export function Dashboard() {
                   />
                 </AreaChart>
               </ResponsiveContainer>
+              )}
             </div>
           </div>
         </div>
@@ -219,7 +263,15 @@ export function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {DEMO_PATIENTS.map((p) => (
+              {rows === null && (
+                <tr><td colSpan={9} className="px-4 py-6 text-center text-text-muted">Loading…</td></tr>
+              )}
+              {rows !== null && rows.length === 0 && (
+                <tr><td colSpan={9} className="px-4 py-6 text-center text-text-muted" data-testid="patients-empty">
+                  {liveError ? 'Patients could not be loaded.' : 'No observed patients yet.'}
+                </td></tr>
+              )}
+              {(rows ?? []).map((p) => (
                 <tr
                   key={p.id}
                   className="border-b border-border/50 hover:bg-elevated/50 transition-colors cursor-pointer"
@@ -228,14 +280,16 @@ export function Dashboard() {
                   role="button"
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/patients/${p.id}`) } }}
                 >
-                  <td className="px-4 py-3 font-medium">{p.id}</td>
-                  <td className="px-4 py-3 text-text-secondary">{p.temp}°</td>
-                  <td className="px-4 py-3 text-text-secondary">{p.hr}</td>
-                  <td className="px-4 py-3 text-text-secondary">{p.rr}</td>
-                  <td className="px-4 py-3 text-text-secondary">{p.sbp}</td>
-                  <td className="px-4 py-3 text-text-secondary">{p.spo2}%</td>
-                  <td className="px-4 py-3 text-text-secondary">{p.lac}</td>
-                  <td className="px-4 py-3"><RiskBadge level={p.risk} pulse={p.risk === 'critical'} /></td>
+                  <td className="px-4 py-3 font-medium">{p.label}</td>
+                  <td className="px-4 py-3 text-text-secondary">{show(p.temp, '°')}</td>
+                  <td className="px-4 py-3 text-text-secondary">{show(p.hr)}</td>
+                  <td className="px-4 py-3 text-text-secondary">{show(p.rr)}</td>
+                  <td className="px-4 py-3 text-text-secondary">{show(p.sbp)}</td>
+                  <td className="px-4 py-3 text-text-secondary">{show(p.spo2, '%')}</td>
+                  <td className="px-4 py-3 text-text-secondary">{show(p.lac)}</td>
+                  <td className="px-4 py-3">
+                    {p.risk ? <RiskBadge level={p.risk} pulse={p.risk === 'critical'} /> : <span className="text-xs text-text-muted">Not scored</span>}
+                  </td>
                   <td className="px-4 py-3 text-text-muted text-xs">{p.time}</td>
                 </tr>
               ))}

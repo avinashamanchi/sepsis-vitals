@@ -51,6 +51,13 @@ export interface Prediction {
   research_only?: boolean
   validation_status?: string
   intended_use?: string
+  /** Risk level from the rule-based scores alone. */
+  rule_risk_level?: RiskLevel | 'unknown'
+  /** Risk level from the model probability alone. */
+  model_risk_level?: RiskLevel | 'unknown'
+  /** Always "not-permitted" in this build. */
+  clinical_use?: string
+  provenance?: Record<string, unknown>
 }
 
 export interface ScoreResult {

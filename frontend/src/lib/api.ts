@@ -20,6 +20,41 @@ export function setOnUnauthorized(cb: () => void) {
   onUnauthorized = cb
 }
 
+/** An HTTP error from the API, with a message a person can read. */
+export class ApiError extends Error {
+  readonly status: number
+  readonly detail: unknown
+
+  constructor(status: number, detail: unknown) {
+    super(describeDetail(status, detail))
+    this.name = 'ApiError'
+    this.status = status
+    this.detail = detail
+  }
+}
+
+/**
+ * FastAPI returns `detail` as a string, an object (for example the 503 when no
+ * usable model is installed) or a list of validation errors. Never show
+ * "[object Object]".
+ */
+export function describeDetail(status: number, detail: unknown): string {
+  if (typeof detail === 'string' && detail) return detail
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((d) => (d && typeof d === 'object' && 'msg' in d ? String((d as { msg: unknown }).msg) : ''))
+      .filter(Boolean)
+    if (messages.length) return `Invalid input: ${messages.join('; ')}`
+  }
+  if (detail && typeof detail === 'object') {
+    const d = detail as { message?: unknown; model_state?: unknown }
+    if (typeof d.message === 'string') {
+      return typeof d.model_state === 'string' ? `${d.message} (model state: ${d.model_state})` : d.message
+    }
+  }
+  return `Request failed (HTTP ${status})`
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const token = safeGetItem('sv_token')
   const headers: Record<string, string> = {
@@ -42,7 +77,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       onUnauthorized()
     }
     const body = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(body.detail ?? `HTTP ${res.status}`)
+    throw new ApiError(res.status, body?.detail)
   }
 
   // Handle empty responses (204 No Content, etc.)
@@ -67,7 +102,7 @@ async function requestWithToken<T>(path: string, token: string, options: Request
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
   })
   const body = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`)
+  if (!res.ok) throw new ApiError(res.status, body?.detail)
   return body as T
 }
 

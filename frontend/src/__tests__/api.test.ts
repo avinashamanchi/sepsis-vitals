@@ -90,3 +90,27 @@ describe('demo mode', () => {
     expect((await loadApi({ VITE_DEMO_MODE: 'true' })).isDemo).toBe(true)
   })
 })
+
+describe('API errors are readable (N40)', () => {
+  it('turns a structured 503 into a sentence, never "[object Object]"', async () => {
+    mockFetch(503, {
+      detail: { message: 'Predictions are unavailable: no usable model is installed.', model_state: 'absent' },
+    })
+    const { api, ApiError } = await loadApi({ VITE_API_URL: '' })
+    const error = await api.predict({ patient_id: 'x', vitals: { heart_rate: 90 } }).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as Error).message).toBe(
+      'Predictions are unavailable: no usable model is installed. (model state: absent)',
+    )
+    expect((error as InstanceType<typeof ApiError>).status).toBe(503)
+  })
+
+  it('summarises validation errors and falls back to the status code', async () => {
+    const { describeDetail } = await loadApi()
+    expect(describeDetail(422, [{ msg: 'Input should be less than or equal to 350' }, { msg: 'Field required' }]))
+      .toBe('Invalid input: Input should be less than or equal to 350; Field required')
+    expect(describeDetail(500, { unexpected: true })).toBe('Request failed (HTTP 500)')
+    expect(describeDetail(404, 'Patient not found')).toBe('Patient not found')
+    expect(describeDetail(502, undefined)).toBe('Request failed (HTTP 502)')
+  })
+})
