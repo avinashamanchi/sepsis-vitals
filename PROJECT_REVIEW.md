@@ -21,6 +21,9 @@ prioritized plan.
 > tied to commits and CI runs. §7 is kept as history. Nothing here makes the
 > software production-ready or clinically safe; see the readiness statements
 > in §8.6.
+>
+> **Stage 4 (2026-10-10), closing engineering gaps:** [§9](#9-stage-4-register)
+> supersedes §8 as the authoritative register. §8 is kept as history.
 
 ---
 
@@ -650,3 +653,206 @@ Local limits: Node, Docker and PostgreSQL are not used locally (the workspace bl
 4. **Emergency-access policy (N18):** who may break glass, scope, duration and review.
 5. **Intended use (P1):** setting, users and the decisions the output supports.
 6. **Data:** credentialed MIMIC-IV access for re-evaluation (M5), and representative data from the target setting for real validation (M7). No real patient data was accessed, uploaded or altered in this work.
+
+
+## 9. Stage 4 register
+
+Re-checked on 2026-10-10 on branch `review/independent-review-fixes`.
+Baseline: `14900ae`, with all 10 CI jobs green and 745 tests. Final code head:
+`4e0ce33` (CI run 38050588164, all 25 jobs green). Statuses use the seven categories defined in §8; each item has
+exactly one.
+
+### 9.1 Baseline and checklist
+
+| Check | Result |
+|---|---|
+| CI on `14900ae` (stage-3 head) | All 10 jobs passed (run 38008134940) |
+| Test baseline | 745 collected, all passing on `17f6c56`/`14900ae` |
+| Untracked `files/` | All 11 files are byte-identical to commit `3b289c1` (git history). No unmerged work (§9.5, F1) |
+
+Stage-4 work, in dependency order:
+1. Architecture and startup (step 8).
+2. AU-2.1 (FHIR writes).
+3. AU-3.7 (PII key rotation).
+4. A6 (dependency locks and extras).
+5. A11 (dependency security).
+6. A9 (frontend and E2E tests).
+7. M6 (uncertainty).
+8. Approval preparation (step 9).
+9. Untracked files (step 10).
+10. Clinical requirements (step 11).
+11. Final verification (step 12).
+
+### 9.2 Register: items changed or added in stage 4
+
+| # | Finding | Status | Commit(s) | Evidence |
+|---|---|---|---|---|
+| A4 | Route modules imported `api` and depended on import order | Fixed and verified | 4aed8ac | Shared dependencies are in `sepsis_vitals.dependencies` and schemas in `sepsis_vitals.schemas`. Routers never import `api` (checked in fresh processes for 11 modules). Import order does not change the OpenAPI output. All routers are included once at import (`tests/test_module_structure.py`) |
+| N36 | **New.** In production, `init_db` built an unmanaged schema when replicas started before migrations, so a later `alembic upgrade head` failed on "already exists" | Fixed and verified | 4aed8ac | Production creates nothing on an unmanaged database. CI step "API replicas start before the migration task" passed on PostgreSQL |
+| N31 | Multi-worker `create_all` race (stage 3), re-examined | Fixed and verified | ccdae32, 4aed8ac | The retry now matches only the race errors (8 classifier cases), is bounded, and stale tables raise `SchemaMismatchError`. Barrier stress test without the retry: 0/8 clean rounds on SQLite and 0/3 on PostgreSQL. With it: 8/8 and 10/10 (80/80 workers). The 4-worker container started cleanly 5/5 times. One green run is not treated as proof: the stress runs on every CI build |
+| N46 | **New.** Nothing configured logging under uvicorn, so INFO records (all `HIPAA_AUDIT` lines) were dropped from container output | Fixed and verified | 4aed8ac | `configure_logging()`. compose-smoke checks audit lines, `audit_log` rows, and that no account email appears in the logs |
+| AU-2.1 | FHIR POST handlers did blocking database work on the event loop | Fixed and verified | 87579e1 | Worker-thread unit of work with its own session; rollback returns a 503 OperationOutcome; patient upsert retries on races; replays de-duplicated under per-patient and row locks (`tests/test_fhir_ingest.py`, 23 tests). Against the old handlers, 9 fail, 7 of them showing the original defects |
+| N47 | **New.** FHIR reads and writes were not audited; MRNs in paths would have been logged | Fixed and verified | 87579e1 | `fhir_read`/`fhir_write` actions; non-UUID identifiers logged as `ref:` |
+| N48 | **New.** FHIR input: a non-object body gave a 500, a malformed `effectiveDateTime` was stored as "now", and non-finite or out-of-range values were accepted | Fixed and verified | 87579e1 | 400 or 422 OperationOutcomes, and no rows written (tests) |
+| N43 | **New.** The patient list showed only one of several vitals recorded together (FHIR stores one row per observation) | Fixed and verified | 64aeadd | Found by the compose E2E. Readings at the latest time are merged (test plus E2E) |
+| AU-3.7 | No PII key rotation | Fixed and verified | 29ddc2e, 911c0ae | Versioned keyring with AEAD-bound key IDs and HKDF subkeys; lookups work during a rotation; `python -m sepsis_vitals.pii_rotation inventory/rotate/verify` (dry run by default, bounded and resumable batches, no values printed). 24 tests. CI rotated everything on PostgreSQL and read it back with only the new key. Rotating **production** keys is an approval item (§9.4) |
+| A6 | Unlocked dependencies; `anthropic` in core; unused packages | Fixed and verified | 6216ccf | Hashed universal locks `requirements/deploy.txt` (image) and `dev.txt` (CI). Extras split: api, ml, train, copilot, integrations. CI `extras` job: 7 sets × Python 3.10/3.12, all green. The lock installs cleanly (817 tests in a fresh env). macOS needs libomp for LightGBM/XGBoost (documented) |
+| N37 | **New.** An `[api]`-only install could not start (the model warm-up `ImportError` aborted startup) | Fixed and verified | 6216ccf | State "unavailable" and 503; regression test; `extras (api)` smoke |
+| A11a | No Dependabot or pip-audit | Fixed and verified | e8055aa | pip-audit gates both locks and each Python's pins (no known vulnerabilities, no exceptions); full-severity `npm audit`; `.github/dependabot.yml`. CI permissions reviewed (no `pull_request_target`, `contents: read`, no secrets) |
+| A11b | `SECURITY.md` with a private reporting channel | Awaiting explicit approval | e8055aa | `SECURITY.md` invents no address. GitHub private vulnerability reporting is **disabled**; the owner must enable it (§9.4 item 9). Interim process documented |
+| A9 | Thin frontend tests; no end-to-end test | Fixed and verified | 35357d9, 64aeadd, e4a68f6, b242e9e | Vitest for API errors, basename, Predict, Dashboard and PatientDetail. `scripts/e2e_compose.py` (Playwright) runs through nginx against the compose stack: SPA, login, EULA, FHIR to UI, tenant boundary in the UI, reset lifecycle, refresh and logout revocation, admin-only alerts, clinical-use labelling, and readiness during a DB outage. Docker job: tampered model refused |
+| N39 | **New.** The Docker dashboard rendered nothing at "/" (hard-coded router basename) | Fixed and verified | 35357d9 | Basename from `BASE_URL`; E2E loads "/" |
+| N40 | **New.** Structured API errors were shown as "[object Object]" | Fixed and verified | 35357d9 | `ApiError` and `describeDetail` (vitest) |
+| N41 | **New.** The live Dashboard still showed demo patients and a demo trend (N9 incomplete) | Fixed and verified | 35357d9, 64aeadd | Real data or explicit empty and error states (vitest, E2E) |
+| N42 | **New.** PatientDetail showed "low" with no data and drew an invented ±8-point "confidence" band and fixed threshold lines | Fixed and verified | 35357d9 | "Not scored"; only the model output is plotted (vitest) |
+| M6 | No uncertainty in ablation and profile reports | Fixed and verified | d7a2d00 | Paired patient-level cluster bootstrap with percentile 95% intervals, fixed seed, degenerate replicates counted, conditional-on-model caveat. Reports regenerated in the locked environment (`requirements/dev.txt`). Ablation: full 0.9136 (0.907–0.919), no labs 0.8482 (0.837–0.859), difference −0.0654 (−0.074 to −0.058). The earlier figures (0.9158/0.8584) predate the M4 generator fix. Profile point estimates are unchanged. `tests/test_uncertainty.py` |
+| N38 | **New.** The pipeline scaled test features twice for scaler-based models | Fixed and verified | b242e9e, d7a2d00 | Probe: reported AUROC 0.488 against a correct 0.795 for a logistic-regression model. Published reports used GradientBoosting (no scaler) and were unaffected. Regression test |
+| N44 | **New.** The ALB health check used `/health`, so traffic could reach tasks whose database was unreachable or unmigrated; the migration task named in a comment does not exist | Implemented; verification blocked | e4a68f6 | ALB checks `/ready` (repo only). A plan against the account needs AWS access; the migration step is in §9.4 item 8 |
+| N45 | **New.** `terraform/main.tf` was not valid HCL, so every `terraform plan` would have failed | Fixed and verified | 87c833a | CI job `terraform-validate` (offline: no backend, no credentials) |
+| N50 | **New.** Password-reset and email-verification tokens had no signing key in RSA-JWT deployments (compose, Terraform), so every reset request returned a 500 | Fixed and verified | 4e0ce33 | Found by the compose E2E. Compose requires `SEPSIS_TOKEN_SECRET`; config test; the E2E reset lifecycle runs in the browser. Terraform side: see N51 |
+| N51 | **New.** The ECS execution role had no policies (no ECR pull, logs, `GetSecretValue` or `kms:Decrypt`), so Terraform-deployed tasks could not start; the frozen copilot's secret was also required at start | Implemented; verification blocked | 4e0ce33 | Managed execution policy plus least-privilege secret read; `SEPSIS_TOKEN_SECRET` added; `ANTHROPIC_API_KEY` no longer injected. Validates offline in CI; a plan or apply needs AWS access (§9.4 item 8) |
+| N52 | **New.** TOTP codes can be reused within their validity window (RFC 6238 §5.2) | Unresolved | — | Drift tolerance fixed in 4e0ce33 (codes checked just after their step were rejected; this was a CI flake). **Next action:** add `users.totp_last_step` (migration 005), accept each time step at most once in `verify_second_factor`, and test with a frozen clock |
+| S7 | `TRUSTED_PROXIES` in Terraform | Implemented; verification blocked | a3e5593 | The config now validates (N45). A plan needs AWS access (§9.4 item 8) |
+| S11b | Legacy SQLite stores in plaintext | Awaiting explicit approval | e4a68f6 | The conversion tool now refuses to run without a key, verifies each copy row by row, renames atomically, resumes after interruption, and proves the sources unchanged (8 tests on disposable copies). The real legacy files were not opened |
+| S8 | MFA enforcement | Awaiting explicit approval | e4a68f6 | Read-only `admin_cli mfa-status` gives counts per role and how many accounts enforcement would hold. The rollout plan is in §9.4 item 3 |
+| N2 | Plaintext credentials in `.claude/settings.local.json` | Awaiting explicit approval | — | **Two** credentials: an OAuth token (`gho_`, 2 rules) and a classic PAT (`ghp_`, 4 rules, calling another owner's repositories). Neither is the current `gh` session token; neither was ever committed. Not revoked (§9.4 item 1) |
+| F1 | **New.** Untracked `files/` directory | Awaiting explicit approval | — | Byte-identical to `3b289c1`; the frontend parts were deliberately removed in `c494430`; `outbox.ts` stored clinical payloads unencrypted in IndexedDB, which `main.tsx` still deletes. Recommendation: discard (§9.4 item 6) |
+| N49 | **New.** `main` has no branch protection (no required checks or reviews) | Awaiting explicit approval | — | Repository setting (§9.4 item 10) |
+
+### 9.3 Register: items whose status did not change in stage 4
+
+| Status | Findings |
+|---|---|
+| Fixed and verified (re-verified on the final head) | S1–S6, S9, S10, S11a, S12, C1–C6, M3, M4, A1–A3, A8, A10, N1, N3–N17, N19a, N20–N35 |
+| Awaiting explicit approval | S13 and A5 (dead code, §9.5), M1 and N19b (replace the synthetic model; `retrain.py` now refuses without `--replace` and archives first, b242e9e), P2, P4, P5, P6, P7, A7 (merge and Pages) |
+| Awaiting clinician-approved requirements | C7, M2, N18, P1, P3 (see `compliance/clinical_requirements_needed.md`) |
+| Awaiting authorized data or external access | M5, M7 |
+| Disproved or superseded | AU-0.3, AU-2.3, AU-2.4, AU-4.4, AU-4.5 (evidence in §8.2) |
+| Unresolved | N52 only (above) |
+
+P-item proposals, based on their definitions in §3.4:
+- **P2 (setting/data/model mismatch):** decide whether the product is a vitals-only model for LMIC wards. If so, the [ml] artifact would be trained with the `no_labs` feature set; the ablation report gives the synthetic difference with intervals.
+- **P4 (buyer and deliverables):** choose the buyer and the deliverable list suggested in §3.4.
+- **P5 (regulatory framing):** engage regulatory counsel on CDS/device status before any clinician-facing display; silent mode only until then.
+- **P6 (stale AUDIT_INSTRUCTIONS.md):** retire it; its still-valid checks live on as AU-* (§9.4 item 5).
+- **P7 (license):** decide whether trained models and clinical content get a separate, restrictive license.
+
+### 9.4 Approvals requested: targets, actions, risks, rollback
+
+Nothing below has been done. Each item needs a separate, explicit approval.
+
+| # | Target | Exact proposed action | Risk | Rollback and its limits |
+|---|---|---|---|---|
+| 1 | Two GitHub credentials in `.claude/settings.local.json` (`gho_` OAuth token; `ghp_` classic PAT) | **Owner:** revoke the OAuth token at GitHub → Settings → Applications → Authorized OAuth Apps → the app that issued it → Revoke. Revoke the PAT at Settings → Developer settings → Personal access tokens (classic); identify it by its scopes, note and last use (it was used against another owner's repositories). `gh auth login` alone does **not** revoke an old credential. Revoking the GitHub CLI authorization also ends the current `gh` session. **Then, with approval, I remove** allow-rules 17, 19, 75, 80, 81 and 82 (the only ones containing credentials) from the local file | A revoked token used elsewhere stops working | **Not reversible.** A revoked token cannot be restored; issue a new one. The removed rules are not backed up, because the backup would contain the secrets |
+| 2 | Merge PR #4 into `main` | The merge method is the owner's choice: merge commit, squash and rebase are all enabled. To merge **without** deploying Pages, first run `gh workflow disable "Deploy to GitHub Pages"`; later, `gh workflow enable ...` then `gh workflow run pages.yml --ref main` | `main` has no required checks (N49). Merging updates the Pages workflow; if it stays enabled, the public site is redeployed from the CI build | Merge commit: `git revert -m 1 <merge>`. Squash: `git revert <squash commit>`. Rebase: `git revert <first>^..<last>` over the 37 rebased commits. The revert restores `docs/` and the old `pages.yml`, which redeploys on that `docs/**` change. A deployed page may already have been viewed or cached |
+| 3 | Turn on MFA enforcement | (a) `python -m sepsis_vitals.auth.admin_cli mfa-status --roles system_admin`. (b) Each admin enrols at `/auth/mfa/enroll` and stores their recovery codes offline. (c) Re-run `mfa-status` until `ready_to_enforce` is true. (d) Set `SEPSIS_MFA_REQUIRED_ROLES=system_admin` and restart. (e) Extend to other roles the same way | Unenrolled users in an enforced role can only enrol; a lost device needs `reset-mfa` | Unset the variable and restart. Users locked out: `admin_cli reset-mfa --email <user>`. Enrolment itself stays in place |
+| 4 | Convert legacy SQLite stores | `python scripts/migrate_state_stores.py --source models --output <new state dir> --dry-run`, then without `--dry-run`, with the production `SEPSIS_PII_KEY`; then set `SEPSIS_STATE_DIR` to the output. The legacy paths in this checkout are `models/patient_state.db` and `models/alert_escalation.db` (not opened in this work). Deleting the originals is a separate approval under your retention policy | The copy rewrites personal data into a new format | Sources are never modified (hashes are checked). Point `SEPSIS_STATE_DIR` back. Once the originals are deleted, the only way back is a backup |
+| 5 | Remove dead code and retire `AUDIT_INSTRUCTIONS.md` | One commit removing the §9.5 items and their tests; update `compliance/irb_protocol_template.md`, which references `health_economics/model.py`, and the `BREAK_GLASS_TOKEN_HASH` line in `docker-compose.yml` | Loses unused features (for example the forecast and ensemble experiments) | `git revert <commit>` |
+| 6 | Discard the untracked `files/` directory (F1) | Delete it. All 11 files are recoverable with `git show 3b289c1:<path>` | None found: it holds no unique content | From git history (`3b289c1`) |
+| 7 | Replace the committed synthetic model (M1, N19b) | `python retrain.py --source synthetic ...`, with the generator options from the decoupled profile; this needs a CLI flag added first. Archive the current `models/` files and manifest under `models/archive/<sha>/`. Rebuild `models/manifest.json` with `validation_status: synthetic-development`. Compare with `scripts/evaluate_synthetic_profiles.py`. **Clinician input is still needed** for the label/horizon (M2) and operating point (P3), and retraining on synthetic data is not validation | A changed artifact changes every prediction | Restore the archived files: the manifest pins the SHA-256, so a mixed restore is refused |
+| 8 | Terraform (S7, N44): verify, and add the missing migration step | (a) With the deployment's AWS credentials and `backend.hcl`: `terraform -chdir=terraform init -backend-config=backend.hcl` then `terraform -chdir=terraform plan -input=false -lock-timeout=60s -var acm_certificate_arn=<arn>`. Do **not** use `-out` unless the plan file is stored securely: it contains secrets in plaintext. Plan refreshes state with read-only AWS calls and takes the state lock (one DynamoDB write); it changes no resources. (b) Before the first deploy, populate the secret values Terraform creates without a value: PII key, JWT private and public keys, webhook secret, and the new token secret (N50). Missing values stop tasks from starting. (c) Before each deploy: `aws ecs run-task` on the API task definition with the command override `python -m alembic upgrade head`. The plan should show the N51 IAM grants and the ALB health-check change (N44) | Reading state exposes secrets held in it (`random_password` values) to whoever runs the plan | A plan has nothing to roll back. Any **apply** is a separate approval |
+| 9 | Enable GitHub private vulnerability reporting (A11b) | `gh api -X PUT repos/avinashamanchi/sepsis-vitals/private-vulnerability-reporting`, or the setting in the UI | None | `gh api -X DELETE ...` |
+| 10 | Protect `main` (N49) | Require pull requests and the CI checks (lint, typecheck, security, test ×3, extras, frontend, postgres-migrations, docker, compose-smoke, terraform-validate) | Blocks direct pushes | Remove the rule |
+| 11 | Rotate production PII keys (AU-3.7 tool ready) | Only if wanted or after a suspected exposure: follow `docs/pii_key_rotation.md` (add the key, promote it, dry run, `--apply` after a backup, verify, retire). After an exposure it is an incident, not just a rotation | Old backups stay readable only with the old key | Until retirement, removing the new key ID restores the previous configuration. After retirement, only the escrowed copy of the old key helps |
+
+**Release checklist for item 2 (merge):**
+1. CI green on the exact PR head, all jobs (§9.6).
+2. Item 1 done: the credentials are revoked. This is independent of the merge, but it is a pending security action.
+3. Decide whether Pages deploys now. If not, disable the Pages workflow before merging.
+4. Choose the merge method; note the commit or range for rollback.
+5. After the merge, check that CI on `main` is green and, if deployed, that the published site passes `scripts/check_published_site.sh`. Confirm the site shows the research-only notices.
+6. Nothing in the merge enables clinical use, MFA enforcement, billing, the copilot or break-glass. These stay off until their own approvals.
+
+### 9.5 Dead-code inventory, re-verified
+
+The candidates were searched across code, tests, scripts, workflows, Docker,
+packaging and documentation (not imports only).
+
+| Path | Runtime or build use | Other references | Removal also needs |
+|---|---|---|---|
+| `src/sepsis_vitals/state.py` | none | its tests in `test_new_systems.py` | those tests |
+| `src/sepsis_vitals/ml/forecast.py` | none | `tests/test_forecast.py`; AUDIT_INSTRUCTIONS.md | those tests |
+| `src/sepsis_vitals/ml/ensemble.py` | none | `tests/test_ensemble.py` | those tests |
+| `health_economics/` | none (not packaged) | tests; **`compliance/irb_protocol_template.md` line 112** | a document edit (owner) |
+| `auth/jwt.py`: `create_access_token`, `verify_token`, `_b64url_*`, `UserStore` | none | tests in `test_new_systems.py` | those tests |
+| `auth/service.py` break-glass functions | unreachable (the endpoint returns 403) | **`docker-compose.yml` passes `BREAK_GLASS_TOKEN_HASH`**; tests | the compose line; keep the 403 endpoint until N18 is decided |
+| `AUDIT_INSTRUCTIONS.md` | none | this review only | none |
+| `files/` (untracked) | none | none | none |
+
+### 9.6 Verification on the final head
+
+| Check | Commit | Result |
+|---|---|---|
+| Full local `pytest` (fresh environment from `requirements/dev.txt`, Python 3.11, macOS) | 4e0ce33 | **841 passed, 0 failed, 0 skipped**, 193 s |
+| Tests collected | 4e0ce33 | 841 Python (stage 3: 745; stage 2: 667; stage 1: 632), plus 9 vitest files |
+| ruff, mypy, bandit `-ll` | 4e0ce33 | clean; mypy 91 files; bandit 0 medium or high |
+| pip-audit, both locks; `scripts/check_lock.py` | 4e0ce33 | no known vulnerabilities; locks satisfy `pyproject.toml` |
+| CI, all jobs | 4e0ce33 | **25/25 passed**: [run 38050588164](https://github.com/avinashamanchi/sepsis-vitals/actions/runs/38050588164). Each test job: 822 passed and 19 skipped; frontend: 9 vitest files passed, `npm audit` found 0 vulnerabilities; compose E2E: 33/33 checks |
+
+What the CI jobs cover:
+- **Test matrix:** Python 3.10, 3.11 and 3.12, installed from the hashed lock, each with pip-audit.
+- **extras:** 7 installation sets × 2 Pythons, each fresh, with `pip check` and smoke tests.
+- **frontend:** clean `npm ci`, lint, vitest, build, full-severity `npm audit`, publish guard.
+- **postgres-migrations:**
+  - concurrent upgrades;
+  - backfill;
+  - API/auth/tenant/parity tests on PostgreSQL;
+  - PII key rotation with read-back using only the new key;
+  - the production "replicas before migrations" order;
+  - 8-worker × 10-round startup stress (with the no-retry run printed as evidence).
+- **docker:**
+  - non-root;
+  - model absent, tampered and mounted;
+  - five 4-worker cold starts;
+  - clean shutdown.
+- **compose-smoke:**
+  - loopback ports;
+  - routing through nginx;
+  - the browser E2E;
+  - audit lines and `audit_log` rows, with no account email in the logs.
+- **terraform-validate:** offline only.
+
+Locally, nothing that needs Node, Docker, PostgreSQL or Terraform was run;
+those checks are the CI jobs above.
+
+**Test changes (745 → 841, +96 Python tests; none removed):**
+- `test_pii_rotation` +24 (new).
+- `test_fhir_ingest` +23 (new).
+- `test_schema_startup` +16 (new).
+- `test_uncertainty` +11 (new).
+- `test_module_structure` +10. Two import-order tests were replaced by stronger fresh-process checks across 11 modules and two import orders, plus checks for OpenAPI, startup side effects and shared dependencies.
+- `test_retrain_cli` +4 (new).
+- `test_state_store_protection` +3.
+- `test_deploy_config` +2.
+- `test_mfa` +2.
+- `test_model_artifacts` +1.
+
+Patches of `api._auth_enabled` in 6 test files now target `sepsis_vitals.dependencies` (same assertions).
+
+Frontend:
+- New vitest files: `Predict`, `Dashboard`, `PatientDetail`, `basePath`; `api.test` gained 2 tests.
+- `Analytics.test` mocks were extended for the live Dashboard.
+
+Skips:
+- The 19 CI skips are availability checks: 18 need the MIMIC-IV demo or FHIR demo files, which are not in the repository, and 1 needs a loaded model artifact. Locally, where the data exists, nothing is skipped.
+- A test count says nothing about coverage on its own. The evidence is the defect-reproducing tests named in §9.2: 9 of the new FHIR tests fail on the old handlers, the startup stress test fails without the retry, and the E2E found N43 and N50.
+
+### 9.7 Readiness
+
+- **Development:** ready for continued development on the final head. Locks are hashed and verified, CI covers every supported Python and installation set, and there are browser end-to-end checks. Passing tests do not establish clinical safety, regulatory compliance or model validity.
+- **Deployment:** the API and dashboard images, compose stack, migrations, readiness gating and multi-worker startup are verified in CI. The Terraform configuration now validates, after fixes for a parse error (N45), missing execution-role permissions (N51) and the health-check target (N44), but it has **never been planned against an account**; the migration step is a runbook item; nothing is deployed; merging and Pages are pending approval. **Not production-ready.**
+- **Security and privacy:**
+  - Fixed and tested: tenant isolation, token lifecycle, FHIR write isolation and audit, artifact integrity, protected new stores, dependency pinning and auditing.
+  - Available but unused: the PII key rotation mechanism (production keys have not been rotated).
+  - Pending: MFA enforcement is off; TOTP codes can still be reused within their window (N52, unresolved); legacy stores are unconverted; **two exposed GitHub credentials are not revoked**; private vulnerability reporting is not enabled; `main` is unprotected.
+  - Not done: penetration test, HIPAA/GDPR assessment.
+- **Model validation:** **none on clinical data.** The committed model is `synthetic-development`, trained on the legacy generator that ties risk to age. All reported numbers, now with intervals, describe synthetic data, conditional on the trained models. The MIMIC-demo results are in-sample and predate the label fix.
+- **Clinical use:** **not permitted.** Every prediction and `/model/status` report `clinical_use: "not-permitted"`, no validation status counts as clinically approved, the UI says so, and no API or UI path changes it (verified end to end).
+
+### 9.8 Clinical and data blockers
+
+Unchanged: P1 intended use, M2 target and horizon, C7 NEWS2 red score and
+ACVPU, P3 acceptance and alerting criteria, N18 emergency-access policy, M5
+authorized MIMIC access, M7 representative data. The exact decisions and
+evidence needed, and every engineering placeholder that must not be read as
+a clinical decision, are in `compliance/clinical_requirements_needed.md`.
