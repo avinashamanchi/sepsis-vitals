@@ -82,7 +82,7 @@ def _validate_push_endpoint(endpoint: str) -> None:
 
 async def _require_auth(request: Request):
     """Require authentication for alerts endpoints."""
-    from sepsis_vitals.api import verify_auth
+    from sepsis_vitals.dependencies import verify_auth
     return await verify_auth(request)
 
 

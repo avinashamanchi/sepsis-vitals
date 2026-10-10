@@ -24,7 +24,7 @@ def client(monkeypatch):
     from sepsis_vitals.db import init_db
 
     monkeypatch.setenv("SEPSIS_JWT_SECRET", "mfa-test-secret-0123456789abcdef")
-    monkeypatch.setattr(api, "_auth_enabled", True)
+    monkeypatch.setattr("sepsis_vitals.dependencies._auth_enabled", True)
     for dep in (api.check_rate_limit, api.check_auth_rate_limit):
         api.app.dependency_overrides[dep] = lambda: None
     init_db()

@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from sepsis_vitals.api import verify_auth
+from sepsis_vitals.dependencies import verify_auth
 from sepsis_vitals.auth.scope import (
     ensure_site_write,
     is_unscoped,

@@ -343,7 +343,7 @@ def test_score_api_reports_news2_limitations(monkeypatch):
 
     import sepsis_vitals.api as api
 
-    monkeypatch.setattr(api, "_auth_enabled", False)
+    monkeypatch.setattr("sepsis_vitals.dependencies._auth_enabled", False)
     api.app.dependency_overrides[api.check_rate_limit] = lambda: None
     try:
         body = TestClient(api.app).post("/score", json={"heart_rate": 120, "resp_rate": 24}).json()

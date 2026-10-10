@@ -9,14 +9,30 @@ never clinical readiness) and /model/info.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import Depends
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from sepsis_vitals import api as core
+from sepsis_vitals import dependencies as _deps
+from sepsis_vitals.dependencies import check_rate_limit, verify_auth
+
+router = APIRouter()
+logger = logging.getLogger("sepsis_vitals.api")
+
+
+def _core():
+    """The application module, for runtime state (model, monitor, metrics).
+
+    Looked up per request, never at import: this module does not import
+    ``sepsis_vitals.api``, so it can be imported first, alone or in any order.
+    """
+    from sepsis_vitals import api
+
+    return api
 
 
 def _alembic_head() -> Optional[str]:
@@ -38,7 +54,7 @@ def _alembic_head() -> Optional[str]:
     return None
 
 
-@core.app.get("/ready")
+@router.get("/ready")
 async def readiness():
     """API readiness: database reachable and (when managed) migrations at head.
 
@@ -58,7 +74,7 @@ async def readiness():
                 except Exception:
                     current = None
         except Exception as exc:
-            core.logger.warning("Readiness: database unreachable (%s)", type(exc).__name__)
+            logger.warning("Readiness: database unreachable (%s)", type(exc).__name__)
             return {"database": "unreachable", "migrations": "unknown"}
         checks["database"] = "ok"
         if current is None:
@@ -67,7 +83,7 @@ async def readiness():
         try:
             head = _alembic_head()
         except Exception as exc:
-            core.logger.warning("Readiness: migration scripts unreadable (%s)", type(exc).__name__)
+            logger.warning("Readiness: migration scripts unreadable (%s)", type(exc).__name__)
             head = None
         if head is None:
             checks["migrations"] = "unknown"
@@ -78,12 +94,12 @@ async def readiness():
     checks = await asyncio.to_thread(_check)
     ready = checks["database"] == "ok" and (
         checks["migrations"] == "at-head"
-        or (checks["migrations"] == "unmanaged" and not core._is_production)
+        or (checks["migrations"] == "unmanaged" and not _deps._is_production)
     )
     return JSONResponse(status_code=200 if ready else 503, content={"ready": ready, **checks})
 
 
-@core.app.get("/model/status")
+@router.get("/model/status")
 async def model_status():
     """Prediction readiness, validation status and provenance of the model.
 
@@ -91,20 +107,20 @@ async def model_status():
     clinically ready: ``clinically_ready`` stays false for every validation
     status this build knows about.
     """
-    await asyncio.to_thread(core._get_predictor)
-    status = dict(core._model_status)
+    await asyncio.to_thread(_core()._get_predictor)
+    status = dict(_core()._model_status)
     status.setdefault("prediction_ready", False)
     status.setdefault("clinically_ready", False)
     status.setdefault("clinical_use", "not-permitted")
     return status
 
 
-@core.app.get("/model/info", dependencies=[Depends(core.check_rate_limit)])
-async def model_info(user: Dict = Depends(core.verify_auth)):
+@router.get("/model/info", dependencies=[Depends(check_rate_limit)])
+async def model_info(user: Dict = Depends(verify_auth)):
     """Model metadata, performance metrics, and top features."""
-    predictor = await asyncio.to_thread(core._get_predictor)
+    predictor = await asyncio.to_thread(_core()._get_predictor)
     if predictor is None:
-        raise core._model_unavailable()
+        raise _core()._model_unavailable()
 
     return {
         "artifact_status": predictor.artifact_status.as_dict(),

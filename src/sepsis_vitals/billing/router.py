@@ -36,7 +36,7 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 # ---------------------------------------------------------------------------
 
 try:
-    from sepsis_vitals.api import _billing_limiter, _webhook_limiter, _client_ip
+    from sepsis_vitals.dependencies import _billing_limiter, _client_ip, _webhook_limiter
 except ImportError:
     from sepsis_vitals.security import RateLimiter
     _billing_limiter = RateLimiter(rate=1.0, burst=3)
@@ -103,7 +103,7 @@ async def _require_auth(request: Request) -> Dict[str, str]:
     Mirrors ``verify_auth`` from :mod:`sepsis_vitals.api` so the billing
     router can be mounted independently during tests.
     """
-    from sepsis_vitals.api import verify_auth
+    from sepsis_vitals.dependencies import verify_auth
 
     user = await verify_auth(request)
     if user is None:

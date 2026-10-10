@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from sepsis_vitals.api import verify_auth
+from sepsis_vitals.dependencies import verify_auth
 from sepsis_vitals.auth.scope import is_unscoped, require_site
 from sepsis_vitals.db import Patient, Score, VitalReading, get_db
 from sepsis_vitals.fhir.loinc import INTERNAL_TO_ENTRY

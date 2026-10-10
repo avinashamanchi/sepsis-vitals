@@ -14,14 +14,13 @@ Wires together all security, ML, real-time, and monitoring subsystems:
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import json
 import logging
 import os
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -33,44 +32,69 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
 
 from sepsis_vitals import __version__
 from sepsis_vitals.scores import compute_scores
-from sepsis_vitals.security import RateLimiter, RateLimitExceeded, SecurityAlertTracker, sanitise_string
+from sepsis_vitals.security import RateLimitExceeded, SecurityAlertTracker, sanitise_string
+
+# Shared dependencies and schemas live in their own modules so routers never
+# import this one; the names are re-exported here for compatibility.
+from sepsis_vitals import dependencies as _deps
+from sepsis_vitals.dependencies import (  # noqa: F401
+    _TRUSTED_PROXIES,
+    _anonymous_user,
+    _api_limiter,
+    _auth_limiter,
+    _billing_limiter,
+    _client_ip,
+    _copilot_limiter,
+    _is_production,
+    _ml_limiter,
+    _verify_patient_org_async,
+    _webhook_limiter,
+    check_auth_rate_limit,
+    check_ml_rate_limit,
+    check_rate_limit,
+    require_role_dep,
+    verify_auth,
+    verify_patient_org,
+)
+from sepsis_vitals.schemas import (  # noqa: F401
+    NEWS2_LIMITATIONS,
+    BatchPredictRequest,
+    ComorbidityInput,
+    ConfidenceInterval,
+    CopilotRequest,
+    CopilotResponse,
+    HealthResponse,
+    MonitorRegisterRequest,
+    PredictionResponse,
+    PredictRequest,
+    ScoreResponse,
+    SimulatorReplayRequest,
+    SimulatorWardRequest,
+    VitalsInput,
+    _count_measurements,
+)
 
 # ---------------------------------------------------------------------------
 # App config
 # ---------------------------------------------------------------------------
 
-_is_production = os.getenv("SEPSIS_ENV", "development") == "production"
 
 # ---------------------------------------------------------------------------
-# Trusted proxy configuration for X-Forwarded-For validation
-# ---------------------------------------------------------------------------
-
-_TRUSTED_PROXIES: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
-_raw_trusted = os.getenv("TRUSTED_PROXIES", "")
-if _raw_trusted:
-    for cidr in _raw_trusted.split(","):
-        cidr = cidr.strip()
-        if cidr:
-            try:
-                _TRUSTED_PROXIES.append(ipaddress.ip_network(cidr, strict=False))
-            except ValueError:
-                pass
-
-
-# ---------------------------------------------------------------------------
-# Lifespan — database init and router wiring at startup
+# Lifespan — database init and model warm-up at startup
 # ---------------------------------------------------------------------------
 
 
 @asynccontextmanager
 async def _lifespan(application: FastAPI):
     """Startup/shutdown lifecycle for the FastAPI application."""
+    from sepsis_vitals.logging_config import configure_logging
+
+    configure_logging()  # audit and INFO logs reach stdout under uvicorn
     _init_database()
-    _include_routers()
+    _include_routers()  # no-op: done at import; kept for apps built before that
     # Load and verify the model off the event loop (~1.7 s); never raises, the
     # outcome is reported by /model/status.
     await asyncio.to_thread(_get_predictor)
@@ -115,314 +139,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
-
-# ---------------------------------------------------------------------------
-# Rate limiting
-# ---------------------------------------------------------------------------
-
-# 10 req/s burst 20 for general API, 2 req/s burst 5 for expensive ML predict
-_api_limiter = RateLimiter(rate=10.0, burst=20)
-_ml_limiter = RateLimiter(rate=2.0, burst=5)
-_auth_limiter = RateLimiter(rate=3.0, burst=10)   # Auth: 3/s burst 10 (brute-force protection)
-_copilot_limiter = RateLimiter(rate=0.5, burst=3)
-_billing_limiter = RateLimiter(rate=1.0, burst=3)  # Stripe mutations: 1/s
-_webhook_limiter = RateLimiter(rate=5.0, burst=10)  # Stripe webhooks: 5/s
-
-
-def _client_ip(request: Request) -> str:
-    """Extract the real client IP, only trusting X-Forwarded-For when the
-    immediate client is in ``TRUSTED_PROXIES``."""
-    direct_ip = request.client.host if request.client else "unknown"
-    if direct_ip == "unknown":
-        return direct_ip
-
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded and _TRUSTED_PROXIES:
-        try:
-            addr = ipaddress.ip_address(direct_ip)
-            if any(addr in net for net in _TRUSTED_PROXIES):
-                return forwarded.split(",")[0].strip()
-        except ValueError:
-            pass
-    elif forwarded and not _TRUSTED_PROXIES:
-        # No trusted proxies configured — fall back to direct IP
-        return direct_ip
-
-    return direct_ip
-
-
-async def check_rate_limit(request: Request) -> None:
-    """General API rate limit — dependency for most endpoints."""
-    ip = _client_ip(request)
-    if not _api_limiter.allow(ip):
-        raise HTTPException(
-            status_code=429,
-            detail="Rate limit exceeded. Try again shortly.",
-        )
-
-
-async def check_ml_rate_limit(request: Request) -> None:
-    """ML prediction rate limit — more restrictive."""
-    ip = _client_ip(request)
-    if not _ml_limiter.allow(ip):
-        raise HTTPException(
-            status_code=429,
-            detail="ML prediction rate limit exceeded. Max 2 requests/second.",
-        )
-
-
-async def check_auth_rate_limit(request: Request) -> None:
-    """Auth endpoint rate limit — brute-force protection."""
-    ip = _client_ip(request)
-    if not _auth_limiter.allow(ip):
-        raise HTTPException(
-            status_code=429,
-            detail="Too many auth requests. Try again shortly.",
-        )
-
-
-# ---------------------------------------------------------------------------
-# Authentication (JWT with short-lived access tokens + RBAC)
-# ---------------------------------------------------------------------------
-
-_auth_enabled = os.getenv("SEPSIS_AUTH_ENABLED", "true").lower() == "true"
-if _is_production and not _auth_enabled:
-    logger.warning(
-        "SEPSIS_AUTH_ENABLED=false is ignored in production — forcing auth on"
-    )
-    _auth_enabled = True
-
-
-def _anonymous_user() -> Dict[str, Any]:
-    """Return a synthetic admin user dict when auth is disabled (dev only)."""
-    return {"id": "anonymous", "email": "dev@localhost", "role": "system_admin", "org_id": None}
-
-
-async def verify_auth(request: Request) -> Dict[str, Any]:
-    """Verify JWT access token from Authorization header.
-
-    Uses the real JWT middleware (short-lived HS256 tokens issued by
-    /auth/login) when auth is enabled.  Falls back to an anonymous
-    system_admin identity when SEPSIS_AUTH_ENABLED=false (development only).
-    """
-    if not _auth_enabled:
-        return _anonymous_user()
-
-    try:
-        from sepsis_vitals.auth.middleware import get_current_user
-        from sepsis_vitals.db import get_db
-
-        def _resolve() -> Dict[str, Any]:
-            # Resolve the DB session dependency manually since we're not in
-            # a standard Depends() chain for this legacy shim.
-            db_gen = get_db()
-            db = next(db_gen)
-            try:
-                return get_current_user(request, db)
-            finally:
-                try:
-                    next(db_gen)
-                except StopIteration:
-                    pass
-
-        # The user lookup is a blocking database query; keep it off the event
-        # loop, which also serves WebSockets and every other request.
-        return await asyncio.to_thread(_resolve)
-    except ImportError:
-        if _is_production:
-            logger.critical("Auth middleware not available in production — rejecting request")
-            raise HTTPException(
-                status_code=500,
-                detail="Authentication service unavailable",
-            )
-        logger.warning("Auth middleware not available — falling back to anonymous (dev only)")
-        return _anonymous_user()
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error("Auth verification failed: %s", exc)
-        raise HTTPException(
-            status_code=401,
-            detail="Authentication failed",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-
-def verify_patient_org(patient_id: str, user: Dict[str, Any], db) -> None:
-    """Verify that the patient belongs to the requesting user's org.
-
-    Delegates to :mod:`sepsis_vitals.auth.scope`: only ``system_admin``
-    (including the anonymous dev identity when auth is disabled) is
-    unscoped. Every other user must have a site assignment that matches the
-    patient's ``site_id``; otherwise HTTP 404 is raised so existence at
-    another site is not disclosed.
-    """
-    from sepsis_vitals.auth.scope import is_unscoped, load_patient_for_user
-
-    if is_unscoped(user):
-        return  # system_admin, incl. the auth-disabled dev identity
-    load_patient_for_user(patient_id, user, db)
-
-
-def require_role_dep(*roles: str):
-    """Dependency factory that ensures the current user has one of the given roles."""
-    allowed = set(roles)
-
-    async def _check(user: Dict = Depends(verify_auth)) -> Dict[str, Any]:
-        if user.get("role") not in allowed:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Insufficient permissions. Required role: {', '.join(sorted(allowed))}",
-            )
-        return user
-
-    return _check
-
-
-# ---------------------------------------------------------------------------
-# Pydantic request/response models
-# ---------------------------------------------------------------------------
-
-class VitalsInput(BaseModel):
-    temperature: Optional[float] = Field(None, ge=25.0, le=45.0, description="Body temperature in °C")
-    heart_rate: Optional[float] = Field(None, ge=0, le=350, description="Heart rate in bpm")
-    resp_rate: Optional[float] = Field(None, ge=0, le=80, description="Respiratory rate /min")
-    sbp: Optional[float] = Field(None, ge=30, le=300, description="Systolic blood pressure mmHg")
-    dbp: Optional[float] = Field(None, ge=20, le=200, description="Diastolic blood pressure mmHg")
-    spo2: Optional[float] = Field(None, ge=0, le=100, description="Oxygen saturation %")
-    gcs: Optional[float] = Field(None, ge=3, le=15, description="Glasgow Coma Scale")
-    map: Optional[float] = Field(None, ge=20, le=200, description="Mean arterial pressure mmHg")
-    lactate: Optional[float] = Field(None, ge=0, le=30, description="Serum lactate mmol/L")
-    wbc: Optional[float] = Field(None, ge=0, le=100, description="White blood cell count x10^9/L")
-    procalcitonin: Optional[float] = Field(None, ge=0, le=200, description="Procalcitonin ng/mL")
-    on_supplemental_o2: Optional[bool] = Field(
-        None, description="Receiving supplemental oxygen (NEWS2 adds 2 points)"
-    )
-    spo2_scale2: Optional[bool] = Field(
-        None, description="Use NEWS2 SpO2 Scale 2 (prescribed 88-92% target only)"
-    )
-
-
-_NEWS2_FLAGS = ("on_supplemental_o2", "spo2_scale2")
-
-
-def _count_measurements(vitals: Dict[str, Any]) -> int:
-    """Number of measured values, excluding NEWS2 context flags."""
-    return sum(1 for k in vitals if k not in _NEWS2_FLAGS)
-
-
-class ComorbidityInput(BaseModel):
-    has_hypertension: int = Field(0, ge=0, le=1)
-    has_diabetes: int = Field(0, ge=0, le=1)
-    has_ckd: int = Field(0, ge=0, le=1)
-    has_copd: int = Field(0, ge=0, le=1)
-    has_heart_failure: int = Field(0, ge=0, le=1)
-
-
-class PredictRequest(BaseModel):
-    vitals: VitalsInput
-    patient_id: str = Field("unknown", max_length=100)
-    age_years: Optional[int] = Field(None, ge=0, le=120)
-    comorbidities: Optional[ComorbidityInput] = None
-
-
-class BatchPredictRequest(BaseModel):
-    patients: List[PredictRequest] = Field(..., max_length=10)
-
-
-class ConfidenceInterval(BaseModel):
-    lower: float
-    upper: float
-
-
-class PredictionResponse(BaseModel):
-    patient_id: str
-    timestamp: str
-    risk_probability: float
-    risk_level: str
-    confidence_interval: ConfidenceInterval
-    alert: bool
-    clinical_scores: Dict[str, Any]
-    top_risk_factors: List[Dict[str, Any]]
-    recommendation: str
-    model: Dict[str, str]
-    rule_risk_level: str
-    model_risk_level: str
-    provenance: Dict[str, Any]
-    research_only: bool = True
-    clinical_use: str = "not-permitted"
-    validation_status: str = "Synthetic development baseline; no clinical validation"
-    intended_use: str = "Retrospective research and prospective silent-mode evaluation"
-
-
-class HealthResponse(BaseModel):
-    status: str
-    version: str
-    timestamp: float
-    model_loaded: bool
-    model_name: Optional[str]
-    auth_enabled: bool
-    websocket_connections: int
-
-
-# Known, clinically unreviewed gaps in the NEWS2-style score. Returned with
-# every score so the output is never read as a complete NEWS2 assessment.
-# Resolving them needs an approved clinical specification (PROJECT_REVIEW.md C7).
-NEWS2_LIMITATIONS = [
-    "Consciousness is approximated from GCS (<15 scores 3); ACVPU and new confusion are not assessed.",
-    "The NEWS2 single-parameter red score (any parameter scoring 3) is not evaluated "
-    "and does not raise the risk level.",
-    "Supplemental oxygen and SpO2 Scale 2 are scored only when the caller supplies them.",
-]
-
-
-class ScoreResponse(BaseModel):
-    qsofa: int
-    sirs_count: int
-    news2_style: int
-    shock_index: Optional[float]
-    uva: int
-    risk_level: str
-    alert_flag: bool
-    explanations: List[str]
-    news2_limitations: List[str] = NEWS2_LIMITATIONS
-
-
-class CopilotRequest(BaseModel):
-    vitals: VitalsInput
-    patient_id: str = Field("unknown", max_length=100)
-    age_years: Optional[int] = Field(None, ge=0, le=120)
-    comorbidities: Optional[ComorbidityInput] = None
-    question: Optional[str] = Field(None, max_length=500, description="Optional clinical question")
-
-
-class CopilotResponse(BaseModel):
-    analysis: str
-    risk_level: str
-    key_concerns: List[str]
-    suggested_actions: List[str]
-    disclaimer: str
-
-
-# Monitor / simulator request models
-class MonitorRegisterRequest(BaseModel):
-    patient_id: str = Field(..., min_length=1, max_length=100, description="Patient identifier")
-    demographics: Optional[Dict[str, Any]] = Field(None, description="Patient demographics")
-    comorbidities: Optional[Dict[str, Any]] = Field(None, description="Patient comorbidities")
-
-
-class SimulatorWardRequest(BaseModel):
-    n_patients: int = Field(8, ge=1, le=50, description="Number of patients")
-    speed: int = Field(360, ge=1, le=3600, description="Simulation speed multiplier")
-    sepsis_count: int = Field(2, ge=0, le=50, description="Number of sepsis patients")
-    seed: int = Field(42, ge=0, description="Random seed")
-
-
-class SimulatorReplayRequest(BaseModel):
-    subject_id: Optional[str] = Field(None, max_length=100, description="MIMIC subject ID or 'random'")
-    speed: int = Field(720, ge=1, le=3600, description="Replay speed multiplier")
-    sepsis_only: bool = Field(False, description="Only select sepsis cases")
-
 
 # ---------------------------------------------------------------------------
 # Lazy-loaded singletons
@@ -815,7 +531,7 @@ async def health():
         timestamp=time.time(),
         model_loaded=predictor is not None,
         model_name=predictor.metadata["model_name"] if predictor and predictor.metadata else None,
-        auth_enabled=_auth_enabled,
+        auth_enabled=_deps._auth_enabled,
         websocket_connections=ws_manager.active_connections,
     )
 
@@ -1016,18 +732,6 @@ async def _recorded_history_async(patient_id: str, limit: int = 4) -> list:
     return await asyncio.to_thread(_load)
 
 
-async def _verify_patient_org_async(patient_id: str, user: Dict[str, Any]) -> None:
-    """Run :func:`verify_patient_org` in a worker thread with its own session."""
-    def _check_org():
-        from sepsis_vitals.db import SessionLocal
-        db = SessionLocal()
-        try:
-            verify_patient_org(patient_id, user, db)
-        finally:
-            db.close()
-    await asyncio.to_thread(_check_org)
-
-
 @app.get("/patient/{patient_id}/trend", dependencies=[Depends(check_rate_limit)])
 async def patient_trend(patient_id: str, request: Request, user: Dict = Depends(verify_auth)):
     """Get risk trend for a monitored patient."""
@@ -1082,16 +786,27 @@ _routers_included = False
 
 
 def _include_routers():
-    """Include sub-routers with graceful handling if optional deps are missing.
+    """Include every router once, in a fixed order.
 
-    Idempotent: the lifespan runs on every startup of the same app object
-    (e.g. several TestClients in one process), and include_router would
-    otherwise append duplicate routes each time.
+    Called when this module is imported, so ``app.routes`` and the OpenAPI
+    schema are complete without running the lifespan (e.g. a TestClient used
+    without ``with``, or schema export). Routers never import this module;
+    their shared dependencies come from :mod:`sepsis_vitals.dependencies`.
+    The billing and bundle routers are included only when their feature flag
+    is set in the environment at import time. Idempotent.
     """
     global _routers_included
     if _routers_included:
         return
     _routers_included = True
+
+    # Endpoint modules split out of this file, after this file's own routes
+    # (the order routes were registered in before the split).
+    from sepsis_vitals.routes import copilot, metrics, monitor, realtime, simulator, status
+
+    for module in (monitor, simulator, status, copilot, realtime, metrics):
+        app.include_router(module.router)
+
     routers = [
         ("sepsis_vitals.auth.router", "auth", [Depends(check_auth_rate_limit)]),
         ("sepsis_vitals.patients.router", "patients", [Depends(check_rate_limit)]),
@@ -1114,21 +829,30 @@ def _include_routers():
         except Exception as exc:
             logger.error("Failed to load %s router: %s", tag, exc, exc_info=True)
 
-# Database init and router wiring now happen via the lifespan context
-# manager (see _lifespan above) instead of at module import time.
+
+_include_routers()
 
 
 # ---------------------------------------------------------------------------
-# Endpoint modules (moved out of this file; imported last so they can use
-# everything above). Re-exported names keep `from sepsis_vitals.api import X`
-# working.
+# Compatibility re-exports: endpoint functions that used to live here, so
+# `from sepsis_vitals.api import X` keeps working.
 # ---------------------------------------------------------------------------
 
+from sepsis_vitals.routes.copilot import (  # noqa: E402,F401
+    _anthropic_copilot,
+    _copilot_enabled,
+    _deidentify_vitals,
+    _enterprise_llm_enabled,
+    _rule_based_copilot,
+    clinical_copilot,
+)
+from sepsis_vitals.routes.metrics import prometheus_metrics  # noqa: E402,F401
 from sepsis_vitals.routes.monitor import (  # noqa: E402,F401
     monitor_register,
     monitor_status,
     monitor_unregister,
 )
+from sepsis_vitals.routes.realtime import websocket_alerts  # noqa: E402,F401
 from sepsis_vitals.routes.simulator import (  # noqa: E402,F401
     simulator_cases,
     simulator_sessions,
@@ -1141,18 +865,4 @@ from sepsis_vitals.routes.status import (  # noqa: E402,F401
     model_info,
     model_status,
     readiness,
-)
-from sepsis_vitals.routes.copilot import (  # noqa: E402,F401
-    _anthropic_copilot,
-    _copilot_enabled,
-    _deidentify_vitals,
-    _enterprise_llm_enabled,
-    _rule_based_copilot,
-    clinical_copilot,
-)
-from sepsis_vitals.routes.realtime import (  # noqa: E402,F401
-    websocket_alerts,
-)
-from sepsis_vitals.routes.metrics import (  # noqa: E402,F401
-    prometheus_metrics,
 )

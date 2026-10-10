@@ -1,32 +1,50 @@
 """
 sepsis_vitals.routes.realtime
 
-Endpoints moved out of sepsis_vitals.api (behaviour unchanged). They
-register on the shared ``app`` and reach shared state through ``core`` at
-call time, so tests and callers that patch ``sepsis_vitals.api`` still work.
+Endpoints moved out of sepsis_vitals.api (behaviour unchanged). They are
+declared on this module's ``router``, which ``sepsis_vitals.api`` includes;
+shared state is read from the api module per request, so patching
+``sepsis_vitals.api`` in tests still works.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from typing import Optional
+
 from fastapi import (
+    APIRouter,
     WebSocket,
     WebSocketDisconnect,
     status,
 )
-from sepsis_vitals.scores import compute_scores
-from sepsis_vitals.realtime.websocket import manager as ws_manager
 
-from sepsis_vitals import api as core
+from sepsis_vitals import dependencies as _deps
+from sepsis_vitals.realtime.websocket import manager as ws_manager
+from sepsis_vitals.scores import compute_scores
+
+router = APIRouter()
+logger = logging.getLogger("sepsis_vitals.api")
+
+
+def _core():
+    """The application module, for runtime state (model, monitor, metrics).
+
+    Looked up per request, never at import: this module does not import
+    ``sepsis_vitals.api``, so it can be imported first, alone or in any order.
+    """
+    from sepsis_vitals import api
+
+    return api
 
 # ---------------------------------------------------------------------------
 # WebSocket endpoint for real-time alerts
 # ---------------------------------------------------------------------------
 
-@core.app.websocket("/ws/alerts")
+@router.websocket("/ws/alerts")
 async def websocket_alerts(websocket: WebSocket):
     """Real-time sepsis alert stream via WebSocket.
 
@@ -38,7 +56,7 @@ async def websocket_alerts(websocket: WebSocket):
     ws_org_id = None  # org_id for filtering broadcasts
     ws_expires_at: Optional[float] = None  # close when the access token expires
     selected_subprotocol = None
-    if core._auth_enabled:
+    if _deps._auth_enabled:
         offered = [
             value.strip()
             for value in websocket.headers.get("sec-websocket-protocol", "").split(",")

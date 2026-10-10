@@ -1,25 +1,44 @@
 """
 sepsis_vitals.routes.copilot
 
-Endpoints moved out of sepsis_vitals.api (behaviour unchanged). They
-register on the shared ``app`` and reach shared state through ``core`` at
-call time, so tests and callers that patch ``sepsis_vitals.api`` still work.
+Endpoints moved out of sepsis_vitals.api (behaviour unchanged). They are
+declared on this module's ``router``, which ``sepsis_vitals.api`` includes;
+shared state is read from the api module per request, so patching
+``sepsis_vitals.api`` in tests still works.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from typing import Dict, List, Optional
+
 from fastapi import (
+    APIRouter,
     Depends,
     HTTPException,
 )
+
+from sepsis_vitals.dependencies import _copilot_limiter, check_rate_limit, verify_auth
+from sepsis_vitals.schemas import CopilotRequest, CopilotResponse
 from sepsis_vitals.scores import compute_scores
 from sepsis_vitals.security import sanitise_string
 
-from sepsis_vitals import api as core
+router = APIRouter()
+logger = logging.getLogger("sepsis_vitals.api")
+
+
+def _core():
+    """The application module, for runtime state (model, monitor, metrics).
+
+    Looked up per request, never at import: this module does not import
+    ``sepsis_vitals.api``, so it can be imported first, alone or in any order.
+    """
+    from sepsis_vitals import api
+
+    return api
 
 # ---------------------------------------------------------------------------
 # AI Clinical Copilot (Anthropic-powered)
@@ -45,8 +64,8 @@ def _deidentify_vitals(vitals: dict) -> dict:
     return {k: v for k, v in vitals.items() if k in safe_keys}
 
 
-@core.app.post("/copilot", response_model=core.CopilotResponse, dependencies=[Depends(core.check_rate_limit)])
-async def clinical_copilot(body: core.CopilotRequest, user: Dict = Depends(core.verify_auth)):
+@router.post("/copilot", response_model=CopilotResponse, dependencies=[Depends(check_rate_limit)])
+async def clinical_copilot(body: CopilotRequest, user: Dict = Depends(verify_auth)):
     """Research-only observation summary.
 
     Disabled by default. Enabling it requires an explicit feature flag; enabling
@@ -62,10 +81,10 @@ async def clinical_copilot(body: core.CopilotRequest, user: Dict = Depends(core.
         )
 
     copilot_key = f"copilot:{user.get('user', user.get('email', 'anon'))}"
-    if not core._copilot_limiter.allow(copilot_key):
+    if not _copilot_limiter.allow(copilot_key):
         raise HTTPException(status_code=429, detail="Copilot rate limit exceeded. Max 1 request per 2 seconds.")
 
-    core._metrics["copilot_calls_total"] += 1
+    _core()._metrics["copilot_calls_total"] += 1
 
     vitals_dict = {k: v for k, v in body.vitals.model_dump().items() if v is not None}
     scores = compute_scores(vitals_dict)
@@ -73,7 +92,7 @@ async def clinical_copilot(body: core.CopilotRequest, user: Dict = Depends(core.
 
     # Get ML prediction if model loaded
     ml_risk = None
-    predictor = await asyncio.to_thread(core._get_predictor)
+    predictor = await asyncio.to_thread(_core()._get_predictor)
     if predictor:
         comorbidities = body.comorbidities.model_dump() if body.comorbidities else None
         pred = await asyncio.to_thread(
@@ -93,7 +112,7 @@ async def clinical_copilot(body: core.CopilotRequest, user: Dict = Depends(core.
                 # Sanitise and check for prompt injection before LLM call
                 safe_question = None
                 if body.question:
-                    from sepsis_vitals.security import check_prompt_injection, PromptInjectionError
+                    from sepsis_vitals.security import PromptInjectionError, check_prompt_injection
                     try:
                         check_prompt_injection(body.question)
                     except PromptInjectionError:
@@ -108,7 +127,7 @@ async def clinical_copilot(body: core.CopilotRequest, user: Dict = Depends(core.
                 )
                 return analysis
             except Exception:
-                core.logger.warning("LLM copilot failed, falling back to rule-based", exc_info=True)
+                logger.warning("LLM copilot failed, falling back to rule-based", exc_info=True)
 
     # Default: deterministic rule-based analysis (legally safe, no hallucination risk)
     return _rule_based_copilot(vitals_dict, scores_dict, ml_risk, body.age_years)
@@ -117,7 +136,7 @@ async def clinical_copilot(body: core.CopilotRequest, user: Dict = Depends(core.
 async def _anthropic_copilot(
     vitals: dict, scores: dict, ml_risk: Optional[dict],
     age: Optional[int], question: Optional[str],
-) -> core.CopilotResponse:
+) -> CopilotResponse:
     """Call Anthropic Claude for clinical analysis."""
     import anthropic
 
@@ -170,7 +189,7 @@ documentation, or review under the study protocol."""
 
     parsed = json.loads(response_text)
 
-    return core.CopilotResponse(
+    return CopilotResponse(
         analysis=parsed.get("analysis", "Analysis unavailable."),
         risk_level=parsed.get("risk_level", scores.get("risk_level", "unknown")),
         key_concerns=parsed.get("key_concerns", []),
@@ -184,7 +203,7 @@ documentation, or review under the study protocol."""
 
 def _rule_based_copilot(
     vitals: dict, scores: dict, ml_risk: Optional[dict], age: Optional[int],
-) -> core.CopilotResponse:
+) -> CopilotResponse:
     """Produce a non-treatment research summary when external LLM use is off."""
     concerns: List[str] = []
     risk_level = scores.get("risk_level", "low")
@@ -235,7 +254,7 @@ def _rule_based_copilot(
         f"The encoded risk category is {risk_level}; this is not a diagnosis."
     )
 
-    return core.CopilotResponse(
+    return CopilotResponse(
         analysis=analysis,
         risk_level=risk_level,
         key_concerns=concerns[:5],

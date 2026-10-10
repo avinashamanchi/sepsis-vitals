@@ -29,7 +29,7 @@ def two_sites(monkeypatch):
     from sepsis_vitals.patients import service
 
     monkeypatch.setenv("SEPSIS_JWT_SECRET", "tenant-isolation-test-secret-0123456789")
-    monkeypatch.setattr(api, "_auth_enabled", True)
+    monkeypatch.setattr("sepsis_vitals.dependencies._auth_enabled", True)
     for dep in (api.check_rate_limit, api.check_auth_rate_limit, api.check_ml_rate_limit):
         api.app.dependency_overrides[dep] = lambda: None
 

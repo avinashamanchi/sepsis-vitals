@@ -351,7 +351,7 @@ class TestAPI:
         from fastapi.testclient import TestClient
         import sepsis_vitals.api as api
 
-        monkeypatch.setattr(api, "_auth_enabled", False)
+        monkeypatch.setattr("sepsis_vitals.dependencies._auth_enabled", False)
 
         client = TestClient(api.app)
         vitals = {"temperature": 39.0, "heart_rate": 120, "resp_rate": 24, "sbp": 85, "gcs": 13}
@@ -365,7 +365,7 @@ class TestAPI:
         from fastapi.testclient import TestClient
         import sepsis_vitals.api as api
 
-        monkeypatch.setattr(api, "_auth_enabled", False)
+        monkeypatch.setattr("sepsis_vitals.dependencies._auth_enabled", False)
         client = TestClient(api.app)
         # Reset predictor
         api._predictor = None

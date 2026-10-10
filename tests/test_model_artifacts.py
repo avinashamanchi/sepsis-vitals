@@ -102,7 +102,7 @@ def client_with_models(monkeypatch, tmp_path):
         monkeypatch.setenv("SEPSIS_MODEL_DIR", str(model_dir))
         monkeypatch.setenv("SEPSIS_STATE_DIR", str(tmp_path / "state"))
         monkeypatch.setattr(api, "_predictor", None)
-        monkeypatch.setattr(api, "_auth_enabled", False)
+        monkeypatch.setattr("sepsis_vitals.dependencies._auth_enabled", False)
         for dep in (api.check_rate_limit, api.check_ml_rate_limit):
             api.app.dependency_overrides[dep] = lambda: None
         return TestClient(api.app)

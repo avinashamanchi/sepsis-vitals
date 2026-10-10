@@ -1,7 +1,9 @@
 """
 SQLAlchemy ORM models for the sepsis-vitals database.
 
-Maps to the schema defined in docker/postgres/init.sql.
+The production schema is owned by the Alembic migrations in ``alembic/``;
+``init_db`` creates tables directly only for development databases and for
+feature tables that are not migrated yet (see ``init_db``).
 """
 
 from __future__ import annotations
@@ -558,27 +560,95 @@ def get_db() -> Generator[Session, None, None]:
 # ---------------------------------------------------------------------------
 
 
-def init_db() -> None:
-    """Create all tables defined by the ORM models.
+class SchemaMismatchError(RuntimeError):
+    """An existing table lacks columns the ORM needs (the schema is out of date)."""
 
-    Safe to call multiple times; existing tables are not modified. Several
-    uvicorn workers run this concurrently at startup: when another worker
-    creates a table between our existence check and our CREATE, the database
-    reports "already exists" (or a duplicate pg_type key on PostgreSQL), and
-    that used to abort startup of the whole server. Such races are retried;
-    any other error propagates. Production schemas are created by Alembic
-    before the workers start (docker/entrypoint.sh).
+
+def _is_concurrent_create(exc: BaseException) -> bool:
+    """True only for the error another worker's identical CREATE produces.
+
+    SQLite: "table users already exists" / "index ... already exists".
+    PostgreSQL: DuplicateTable ('relation "users" already exists') or, when
+    two CREATE TABLE statements race in the catalog, a unique violation on
+    ``pg_type_typname_nsp_index``. Permission, connection and other unique
+    errors do not match and propagate.
     """
+    message = str(getattr(exc, "orig", exc)).lower()
+    return "already exists" in message or ("duplicate key" in message and "pg_type" in message)
+
+
+def schema_drift(bind: Any = None) -> list[str]:
+    """``table.column`` names the ORM defines but existing tables lack.
+
+    Tables that do not exist yet are not reported (``create_all`` adds them).
+    Only names are returned, never data.
+    """
+    from sqlalchemy import inspect
+
+    inspector = inspect(bind if bind is not None else engine)
+    missing: list[str] = []
+    for table in Base.metadata.sorted_tables:
+        if not inspector.has_table(table.name):
+            continue
+        present = {col["name"] for col in inspector.get_columns(table.name)}
+        missing += [f"{table.name}.{col.name}" for col in table.columns if col.name not in present]
+    return missing
+
+
+def init_db(production: Optional[bool] = None, attempts: int = 5) -> None:
+    """Create missing ORM tables, within the limits of who owns the schema.
+
+    * **Production** (``SEPSIS_ENV=production``): Alembic owns the schema. If
+      the database is not Alembic-managed yet, nothing is created: creating
+      the tables here would make a later ``alembic upgrade head`` fail on
+      "already exists" (for example API replicas starting before a separate
+      migration task). ``/ready`` reports the database as not ready until it
+      is migrated. On a migrated database only tables that have no migration
+      yet (frozen billing and bundle features, when enabled) are created.
+    * **Development**: all missing tables are created.
+
+    Several uvicorn workers run this at the same time. When another worker
+    creates the same table first, the "already exists" error is retried, at
+    most ``attempts`` times; every other error propagates. Afterwards the
+    existing tables must have every ORM column, otherwise
+    :class:`SchemaMismatchError` stops startup instead of failing requests
+    later.
+    """
+    import logging
     import time as _time
 
+    from sqlalchemy import inspect
     from sqlalchemy.exc import DBAPIError
 
-    for attempt in range(5):
+    log = logging.getLogger(__name__)
+    if production is None:
+        production = os.getenv("SEPSIS_ENV", "development") == "production"
+
+    if production:
+        with engine.connect() as conn:
+            managed = inspect(conn).has_table("alembic_version")
+        if not managed:
+            log.error(
+                "Database is not managed by Alembic; not creating tables in production. "
+                "Run `alembic upgrade head` (docker/entrypoint.sh does this by default)."
+            )
+            return
+
+    for attempt in range(1, attempts + 1):
         try:
             Base.metadata.create_all(bind=engine)
-            return
+            break
         except DBAPIError as exc:
-            message = str(exc).lower()
-            if attempt == 4 or not ("already exists" in message or "duplicate key" in message):
+            if attempt == attempts or not _is_concurrent_create(exc):
                 raise
-            _time.sleep(0.1 * (attempt + 1))
+            # Another worker is creating the same schema; its tables are
+            # visible on the next pass, which then has nothing left to create.
+            _time.sleep(0.1 * attempt)
+
+    missing = schema_drift()
+    if missing:
+        raise SchemaMismatchError(
+            "Database schema is out of date; missing columns: "
+            + ", ".join(missing)
+            + ". Run `alembic upgrade head` (or recreate a development database)."
+        )

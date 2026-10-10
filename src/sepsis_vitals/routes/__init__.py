@@ -1,10 +1,7 @@
 """HTTP and WebSocket endpoint modules split out of sepsis_vitals.api.
 
-Each module registers its endpoints on ``sepsis_vitals.api.app`` at import
-time, and ``sepsis_vitals.api`` imports them at the end of its own module.
-Importing ``sepsis_vitals.api`` here first means a direct import of a route
-module (``import sepsis_vitals.routes.status``) completes the app module
-before the route module runs, instead of meeting it half-initialised.
+Each module declares its endpoints on its own ``router`` and takes shared
+dependencies from :mod:`sepsis_vitals.dependencies` and models from
+:mod:`sepsis_vitals.schemas`. None of them imports ``sepsis_vitals.api`` at
+import time; ``sepsis_vitals.api`` includes their routers.
 """
-
-import sepsis_vitals.api  # noqa: F401
