@@ -57,21 +57,6 @@ def calibration(y: np.ndarray, p: np.ndarray) -> Dict[str, float]:
     }
 
 
-def _bootstrap_auc(frame: pd.DataFrame, n: int, seed: int) -> List[float]:
-    rng = np.random.default_rng(seed)
-    pids = frame["patient_id"].unique()
-    groups = frame.groupby("patient_id").indices
-    y, p = frame["y"].to_numpy(), frame["p"].to_numpy()
-    out = []
-    for _ in range(n):
-        idx = np.concatenate([groups[pid] for pid in rng.choice(pids, len(pids))])
-        value = _auc(y[idx], p[idx])
-        if value is not None:
-            out.append(value)
-    lo, hi = np.percentile(out, [2.5, 97.5]) if out else (float("nan"), float("nan"))
-    return [round(float(lo), 3), round(float(hi), 3)]
-
-
 def _fit(train: pd.DataFrame, cols: List[str]):
     from sklearn.ensemble import HistGradientBoostingClassifier
 
@@ -86,7 +71,7 @@ def evaluate_profile(
     seed: int = 7,
     label_mode: str = "current_state",
     horizon_hours: Optional[float] = None,
-    n_bootstrap: int = 100,
+    n_bootstrap: int = 1000,
     **generator_options: Any,
 ) -> Dict[str, Any]:
     from sepsis_vitals.ml.synthetic_data import generate_dataset
@@ -134,7 +119,15 @@ def evaluate_profile(
     demo_cols = [c for c in DEMOGRAPHIC_COLS if c in cols]
     p_demo = _fit(train, demo_cols).predict_proba(test[demo_cols].astype(float))[:, 1]
 
-    scored = pd.DataFrame({"patient_id": test["patient_id"].to_numpy(), "y": y_test, "p": p_test})
+    # Paired patient-level bootstrap: the model, its no-labs evaluation and the
+    # demographics-only probe are scored on the same resampled patients.
+    from sepsis_vitals.ml.uncertainty import paired_cluster_bootstrap
+
+    uncertainty = paired_cluster_bootstrap(
+        test["patient_id"].to_numpy(), y_test,
+        {"model": p_test, "no_labs": p_nolabs, "demographics_only": p_demo},
+        reference="model", metrics=("auroc",), n_boot=n_bootstrap, seed=seed,
+    )
     age_band = pd.cut(test["age_years"], [0, 44, 64, 200], labels=["18-44", "45-64", "65+"])
     sex = df.groupby("patient_id")["sex"].first() if "sex" in df else None
     subgroups: Dict[str, Any] = {}
@@ -154,7 +147,7 @@ def evaluate_profile(
         "rows": {"train": len(train), "val": len(val), "test": len(test)},
         "positive_rate_test": round(float(y_test.mean()), 4),
         "auroc": _round(_auc(y_test, p_test)),
-        "auroc_95ci": _bootstrap_auc(scored, n_bootstrap, seed),
+        "auroc_95ci": uncertainty["arms"]["model"]["auroc"]["ci"],
         "auprc": _round(_average_precision(y_test, p_test)),
         "brier": round(float(np.mean((p_test - y_test) ** 2)), 4),
         "calibration": calibration(y_test, p_test),
@@ -166,7 +159,10 @@ def evaluate_profile(
             "flag_rate": round(float(flagged.mean()), 4),
         },
         "auroc_without_labs": _round(_auc(y_test, p_nolabs)),
+        "auroc_without_labs_95ci": uncertainty["arms"]["no_labs"]["auroc"]["ci"],
         "auroc_demographics_only": _round(_auc(y_test, p_demo)),
+        "auroc_demographics_only_95ci": uncertainty["arms"]["demographics_only"]["auroc"]["ci"],
+        "uncertainty": uncertainty,
         "subgroups": subgroups,
         "split": "patient-level, temporal by admission time (60/15/25)",
     }

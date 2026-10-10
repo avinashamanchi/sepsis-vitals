@@ -24,6 +24,9 @@ def _md(results: list, horizon: float, n: int, seed: int) -> str:
     def fmt(v):
         return "n/a" if v is None else f"{v:.3f}"
 
+    def ci(interval):
+        return "" if not interval else f"({interval[0]:.3f}-{interval[1]:.3f})"
+
     lines = [
         "# Synthetic generator profiles: evaluation",
         "",
@@ -36,7 +39,7 @@ def _md(results: list, horizon: float, n: int, seed: int) -> str:
         "(earliest 60% of admissions train, next 15% validate, latest 25% test). Operating point:",
         f"specificity {TARGET_SPECIFICITY:.2f} on validation (an engineering convention, not a clinical threshold).",
         "",
-        "| Profile | Label | AUROC (95% CI) | AUPRC | Brier | Cal. slope | Cal. intercept | Sens @ op. | PPV @ op. | AUROC no labs | AUROC demographics only |",
+        "| Profile | Label | AUROC (95% CI) | AUPRC | Brier | Cal. slope | Cal. intercept | Sens @ op. | PPV @ op. | AUROC no labs (95% CI) | AUROC demographics only (95% CI) |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for r in results:
@@ -46,8 +49,9 @@ def _md(results: list, horizon: float, n: int, seed: int) -> str:
         lines.append(
             f"| {r['profile']} | {label} | {fmt(r['auroc'])} ({lo:.3f}-{hi:.3f}) | {fmt(r['auprc'])} | "
             f"{r['brier']:.3f} | {r['calibration']['slope']:.2f} | {r['calibration']['intercept']:.2f} | "
-            f"{fmt(op['sensitivity'])} | {fmt(op['ppv'])} | {fmt(r['auroc_without_labs'])} | "
-            f"{fmt(r['auroc_demographics_only'])} |"
+            f"{fmt(op['sensitivity'])} | {fmt(op['ppv'])} | "
+            f"{fmt(r['auroc_without_labs'])} {ci(r['auroc_without_labs_95ci'])} | "
+            f"{fmt(r['auroc_demographics_only'])} {ci(r['auroc_demographics_only_95ci'])} |"
         )
     lines += ["", "## Subgroup AUROC (test split)", "", "| Profile | " + " | ".join(results[0]["subgroups"]) + " |",
               "| --- |" + " ---: |" * len(results[0]["subgroups"])]
@@ -58,6 +62,11 @@ def _md(results: list, horizon: float, n: int, seed: int) -> str:
         "",
         "## Reading the table",
         "",
+        "- Intervals: paired patient-level bootstrap (percentile, 95%, "
+        f"{results[0]['uncertainty']['n_boot']} replicates, seed {seed}); the model, its no-labs "
+        "evaluation and the demographics-only probe are scored on the same resampled test patients. "
+        "They cover sampling variability of this synthetic test split given the fitted models, "
+        "not training variability, and are not evidence about patients.",
         "- *Demographics only* measures how much of the label the generator ties to age and",
         "  comorbidity. In the decoupled profile it should fall towards 0.5.",
         "- *Onset within horizon* scores only pre-onset rows: the early-warning question.",

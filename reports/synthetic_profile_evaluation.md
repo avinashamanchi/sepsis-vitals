@@ -9,11 +9,11 @@ clinical decision for the study team.
 (earliest 60% of admissions train, next 15% validate, latest 25% test). Operating point:
 specificity 0.90 on validation (an engineering convention, not a clinical threshold).
 
-| Profile | Label | AUROC (95% CI) | AUPRC | Brier | Cal. slope | Cal. intercept | Sens @ op. | PPV @ op. | AUROC no labs | AUROC demographics only |
+| Profile | Label | AUROC (95% CI) | AUPRC | Brier | Cal. slope | Cal. intercept | Sens @ op. | PPV @ op. | AUROC no labs (95% CI) | AUROC demographics only (95% CI) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| legacy | current_state | 0.911 (0.902-0.919) | 0.761 | 0.089 | 0.99 | 0.04 | 0.761 | 0.671 | 0.821 | 0.730 |
-| decoupled | current_state | 0.879 (0.865-0.889) | 0.633 | 0.075 | 0.97 | 0.07 | 0.700 | 0.545 | 0.631 | 0.507 |
-| decoupled | onset within 12 h | 0.734 (0.715-0.750) | 0.198 | 0.040 | 0.97 | -0.04 | 0.412 | 0.166 | 0.574 | 0.490 |
+| legacy | current_state | 0.911 (0.901-0.919) | 0.761 | 0.089 | 0.99 | 0.04 | 0.761 | 0.671 | 0.821 (0.800-0.841) | 0.730 (0.703-0.756) |
+| decoupled | current_state | 0.879 (0.865-0.891) | 0.633 | 0.075 | 0.97 | 0.07 | 0.700 | 0.545 | 0.631 (0.615-0.649) | 0.507 (0.462-0.548) |
+| decoupled | onset within 12 h | 0.734 (0.711-0.759) | 0.198 | 0.040 | 0.97 | -0.04 | 0.412 | 0.166 | 0.574 (0.546-0.603) | 0.490 (0.453-0.528) |
 
 ## Subgroup AUROC (test split)
 
@@ -25,6 +25,7 @@ specificity 0.90 on validation (an engineering convention, not a clinical thresh
 
 ## Reading the table
 
+- Intervals: paired patient-level bootstrap (percentile, 95%, 1000 replicates, seed 7); the model, its no-labs evaluation and the demographics-only probe are scored on the same resampled test patients. They cover sampling variability of this synthetic test split given the fitted models, not training variability, and are not evidence about patients.
 - *Demographics only* measures how much of the label the generator ties to age and
   comorbidity. In the decoupled profile it should fall towards 0.5.
 - *Onset within horizon* scores only pre-onset rows: the early-warning question.

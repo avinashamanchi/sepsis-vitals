@@ -55,3 +55,44 @@ def build_comparison_report(
             "External retrospective and prospective validation remain required.",
         ],
     }
+
+
+def add_uncertainty(
+    report: Dict[str, Any],
+    full_result: Dict[str, Any],
+    no_labs_result: Dict[str, Any],
+    n_boot: int = 1000,
+    seed: int = 0,
+    level: float = 0.95,
+) -> Dict[str, Any]:
+    """Attach paired patient-level bootstrap CIs to a comparison report.
+
+    Both arms must have been scored on the same held-out rows (same patients,
+    order and labels); otherwise the comparison is not paired and this raises.
+    The bootstrap's point estimates must reproduce the reported held-out
+    metrics, which guards against attaching intervals for different data.
+    """
+    from sepsis_vitals.ml.uncertainty import paired_cluster_bootstrap
+
+    full, no_labs = full_result.get("test_predictions"), no_labs_result.get("test_predictions")
+    if not full or not no_labs:
+        raise ValueError("both results need test_predictions (run_pipeline returns them)")
+    if full["patient_id"] != no_labs["patient_id"] or full["y_true"] != no_labs["y_true"]:
+        raise ValueError("the arms were not evaluated on the same held-out rows")
+
+    uncertainty = paired_cluster_bootstrap(
+        full["patient_id"], full["y_true"],
+        {"full": full["y_prob"], "no_labs": no_labs["y_prob"]},
+        reference="full", n_boot=n_boot, seed=seed, level=level,
+    )
+    for arm in ("full", "no_labs"):
+        reported = report["comparison"][arm]["held_out_test_auroc"]
+        recomputed = uncertainty["arms"][arm]["auroc"]["estimate"]
+        if abs(reported - recomputed) > 5e-4:
+            raise ValueError(f"{arm}: bootstrap AUROC {recomputed} does not match reported {reported:.4f}")
+    report["uncertainty"] = uncertainty
+    report["limitations"] = list(report["limitations"]) + [
+        "Confidence intervals cover sampling variability of the synthetic held-out set given "
+        "the trained models; they exclude training variability and say nothing about patients.",
+    ]
+    return report
