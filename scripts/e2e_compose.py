@@ -52,6 +52,18 @@ def check(condition: bool, message: str) -> None:
 
 def call(method: str, path: str, body: Any = None, token: Optional[str] = None,
          content_type: str = "application/json") -> Tuple[int, Any]:
+    """One API request. The general per-IP limit (10/s, burst 20) is honoured by
+    backing off up to 5 times on 429; login throttling is never retried."""
+    for _ in range(5):
+        status, payload = _call_once(method, path, body, token, content_type)
+        if status != 429 or path.startswith("/auth/login"):
+            return status, payload
+        time.sleep(1.0)  # the limiter refills 10 tokens per second
+    return status, payload
+
+
+def _call_once(method: str, path: str, body: Any, token: Optional[str],
+               content_type: str) -> Tuple[int, Any]:
     data = json.dumps(body).encode() if body is not None else None
     headers = {"Content-Type": content_type}
     if token:
@@ -193,6 +205,8 @@ def browser_checks() -> None:
             page.get_by_role("button", name="Sign in").click()
             agree = page.get_by_role("button", name="I Agree — Enter Application")
             agree.wait_for()
+            # The agreement must be scrolled to the end before it can be accepted.
+            page.locator("[data-eula-body]").evaluate("el => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')) }")
             page.locator("input[type=checkbox]").first.check()
             agree.click()
             page.wait_for_url("**/dashboard")

@@ -48,14 +48,16 @@ def load_synthetic_data(
     n_patients: int,
     prevalence: float,
     seed: int,
+    **generator_options: Any,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Dict[str, Any]]:
-    """Generate synthetic training data."""
+    """Generate synthetic training data (legacy generator unless options are given)."""
     from sepsis_vitals.ml.synthetic_data import generate_train_val_test
 
     train_df, val_df, test_df = generate_train_val_test(
         n_patients=n_patients,
         sepsis_prevalence=prevalence,
         seed=seed,
+        **generator_options,
     )
 
     provenance = {
@@ -64,6 +66,7 @@ def load_synthetic_data(
         "n_patients": n_patients,
         "sepsis_prevalence": prevalence,
         "seed": seed,
+        "generator_options": generator_options,
         "clinical_validation": "NONE — synthetic data only. Requires MIMIC-IV or institutional EHR validation.",
         "regulatory_note": "NOT suitable for clinical claims. Research use only.",
     }
@@ -258,12 +261,12 @@ def run_pipeline(
     # ── Step 6: Evaluation report ───────────────────────────────────────
     _banner("STEP 6: Generating evaluation report")
 
-    X_test_final = best.scaler.transform(X_test) if best.scaler else X_test
-
+    # generate_evaluation_report applies best.scaler itself: pass unscaled
+    # features (passing scaled ones scaled them twice for scaler-based models).
     report_path = generate_evaluation_report(
         results=results,
         best=best,
-        X_test=X_test_final,
+        X_test=X_test,
         y_test=y_test,
         feature_names=feature_cols,
         shap_importance=shap_importance,
@@ -399,10 +402,37 @@ def run_pipeline(
         "feature_cols": feature_cols,
         "shap_importance": shap_importance,
         "total_time": total_time,
+        # Held-out predictions of the final (calibrated) model, row-aligned with
+        # test_df, for paired uncertainty estimates (sepsis_vitals.ml.uncertainty).
+        "test_predictions": {
+            "patient_id": test_features["patient_id"].tolist(),
+            "y_true": y_test.tolist(),
+            "y_prob": best.model.predict_proba(
+                best.scaler.transform(X_test) if best.scaler else X_test
+            )[:, 1].tolist(),
+        },
     }
 
 
-def main():
+def archive_existing_model(output_dir: Path) -> Path:
+    """Copy the model in *output_dir* (per its manifest) to archive/<sha>/.
+
+    Restoring means copying the archived files back; the manifest pins every
+    file's SHA-256, so a partial or mixed restore is refused at load time.
+    """
+    import shutil
+
+    manifest = json.loads((output_dir / "manifest.json").read_text())
+    sha = manifest["artifacts"]["sepsis_model.joblib"]["sha256"][:12]
+    dest = output_dir / "archive" / sha
+    dest.mkdir(parents=True, exist_ok=True)
+    for name in list(manifest["artifacts"]) + ["manifest.json"]:
+        if (output_dir / name).exists() and not (dest / name).exists():
+            shutil.copy2(output_dir / name, dest / name)
+    return dest
+
+
+def main(argv: list | None = None):
     parser = argparse.ArgumentParser(
         description="Retrain sepsis identification model (synthetic or MIMIC-IV)"
     )
@@ -446,8 +476,30 @@ def main():
         "--feature-set", choices=["full", "no_labs"], default="full",
         help="Feature set: 'full' or 'no_labs' ablation (default: full)"
     )
+    parser.add_argument(
+        "--generator-profile", choices=["legacy", "decoupled"], default="legacy",
+        help="Synthetic generator profile (sepsis_vitals.ml.profile_evaluation.PROFILES)",
+    )
+    parser.add_argument(
+        "--label-mode", choices=["current_state", "onset_within_horizon"], default="current_state",
+        help="Training label; onset_within_horizon needs --horizon-hours (a clinical choice, no default)",
+    )
+    parser.add_argument("--horizon-hours", type=float, default=None)
+    parser.add_argument(
+        "--replace", action="store_true",
+        help="Allow replacing a model already in --output (it is archived to <output>/archive/<sha>/ first)",
+    )
 
-    opts = parser.parse_args()
+    opts = parser.parse_args(argv)
+
+    if opts.label_mode == "onset_within_horizon" and opts.horizon_hours is None:
+        parser.error("--label-mode onset_within_horizon requires --horizon-hours (a clinical decision)")
+    output = Path(opts.output)
+    if (output / "manifest.json").exists():
+        if not opts.replace:
+            parser.error(f"{output} already holds a model (manifest.json); "
+                         "pass --replace to archive it and write a new one")
+        print(f"Archived the current model to {archive_existing_model(output)}")
 
     if opts.source == "mimic":
         if opts.mimic_path is None:
@@ -458,10 +510,16 @@ def main():
             seed=opts.seed,
         )
     else:
+        from sepsis_vitals.ml.profile_evaluation import PROFILES
+
+        options = dict(PROFILES[opts.generator_profile])
+        if opts.label_mode != "current_state":
+            options.update(label_mode=opts.label_mode, horizon_hours=opts.horizon_hours)
         train_df, val_df, test_df, provenance = load_synthetic_data(
             n_patients=opts.patients,
             prevalence=opts.prevalence,
             seed=opts.seed,
+            **options,
         )
 
     result = run_pipeline(

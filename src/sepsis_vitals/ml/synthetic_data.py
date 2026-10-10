@@ -27,7 +27,7 @@ scenarios. Data from this module is not suitable for clinical validation.
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -960,10 +960,14 @@ def generate_train_val_test(
     seed: int = 42,
     train_frac: float = 0.7,
     val_frac: float = 0.15,
+    **generator_options: Any,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Generate train/validation/test splits at the patient level.
 
     Splits are done by patient_id to prevent data leakage.
+    ``generator_options`` are passed to :func:`generate_dataset` (age and
+    comorbidity effects, blend ceilings, label mode and horizon); without
+    them the output is the legacy dataset.
 
     Returns
     -------
@@ -974,6 +978,7 @@ def generate_train_val_test(
         sepsis_prevalence=sepsis_prevalence,
         obs_per_patient=obs_per_patient,
         seed=seed,
+        **generator_options,
     )
 
     # Patient-level split to prevent leakage
