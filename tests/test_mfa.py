@@ -187,3 +187,33 @@ def test_wrong_codes_trigger_the_lockout(client):
     _enroll(client, token)
     assert _login(client, email, otp="000000").status_code == 401
     assert _login(client, email, otp="000000").status_code == 403  # backoff in effect
+
+
+def test_mfa_status_reports_counts_without_identities(client, monkeypatch, capsys):
+    """Rollout check: how many accounts in the enforced roles still need to enroll."""
+    from sepsis_vitals.auth import admin_cli
+    from sepsis_vitals.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        before = admin_cli.mfa_status(db, frozenset({"nurse"}))
+    finally:
+        db.close()
+    email = _user()
+    _enroll(client, _login(client, email).json()["access_token"])
+    _user()  # a nurse without MFA
+    db = SessionLocal()
+    try:
+        after = admin_cli.mfa_status(db, frozenset({"nurse"}))
+    finally:
+        db.close()
+    nurses_before = before["roles"].get("nurse", {"accounts": 0, "mfa_enabled": 0, "with_recovery_codes": 0})
+    assert after["roles"]["nurse"]["accounts"] == nurses_before["accounts"] + 2
+    assert after["roles"]["nurse"]["mfa_enabled"] == nurses_before["mfa_enabled"] + 1
+    assert after["roles"]["nurse"]["with_recovery_codes"] == nurses_before["with_recovery_codes"] + 1
+    assert after["would_need_enrollment"] == before["would_need_enrollment"] + 1
+    assert after["ready_to_enforce"] is False
+
+    assert admin_cli.main(["mfa-status", "--roles", "nurse"]) == 0
+    out = capsys.readouterr().out
+    assert "@" not in out and email not in out

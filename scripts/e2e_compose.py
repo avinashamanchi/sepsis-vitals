@@ -34,8 +34,12 @@ API = BASE + "/api"
 RUN = secrets.token_hex(3)
 PASSWORD = f"E2e-{secrets.token_urlsafe(12)}-9!"
 NEW_PASSWORD = f"E2e-new-{secrets.token_urlsafe(12)}-7!"
+# One account per flow, so no account trips the per-email login throttle
+# (5 attempts a minute), which is a security control the test must not fight.
 USERS = {"a": (f"e2e-nurse-a-{RUN}@example.org", f"E2E-A-{RUN}"),
-         "b": (f"e2e-nurse-b-{RUN}@example.org", f"E2E-B-{RUN}")}
+         "b": (f"e2e-nurse-b-{RUN}@example.org", f"E2E-B-{RUN}"),
+         "refresh": (f"e2e-refresh-{RUN}@example.org", f"E2E-A-{RUN}"),
+         "logout": (f"e2e-logout-{RUN}@example.org", f"E2E-A-{RUN}")}
 MRN = f"MRN-E2E-{RUN}"
 FAILURES: list[str] = []
 
@@ -98,8 +102,8 @@ def seed() -> None:
 
 def login(key: str, password: str = PASSWORD) -> Dict[str, str]:
     status, body = call("POST", "/auth/login", {"email": USERS[key][0], "password": password})
-    check(status == 200, f"API login for nurse {key.upper()} (HTTP {status})")
-    return body or {}
+    check(status == 200, f"API login as '{key}' (HTTP {status}{'' if status == 200 else f': {body}'})")
+    return body if status == 200 and isinstance(body, dict) else {}
 
 
 def bundle() -> Dict[str, Any]:
@@ -153,17 +157,18 @@ def api_checks(tokens: Dict[str, Dict[str, str]]) -> None:
     code = call("POST", "/alerts/test", {"channel": "websocket"}, a)[0]
     check(code == 403, f"test alerts are admin-only (nurse got HTTP {code})")
 
-    # Refresh rotation and replay, then logout revocation.
-    fresh = login("a")
-    code, rotated = call("POST", "/auth/refresh", {"refresh_token": fresh["refresh_token"]})
-    check(code == 200 and rotated.get("access_token"), "refresh token rotates")
-    replayed = call("POST", "/auth/refresh", {"refresh_token": fresh["refresh_token"]})[0]
+    # Refresh rotation and replay, then logout revocation (own accounts each).
+    fresh = tokens["refresh"]
+    code, rotated = call("POST", "/auth/refresh", {"refresh_token": fresh.get("refresh_token", "")})
+    rotated = rotated if isinstance(rotated, dict) else {}
+    check(code == 200 and bool(rotated.get("access_token")), f"refresh token rotates (HTTP {code})")
+    replayed = call("POST", "/auth/refresh", {"refresh_token": fresh.get("refresh_token", "")})[0]
     check(replayed == 401, f"replayed refresh token is rejected (HTTP {replayed})")
-    after_replay = call("GET", "/patients", token=rotated["access_token"])[0]
+    after_replay = call("GET", "/patients", token=rotated.get("access_token"))[0]
     check(after_replay == 401, f"replay revokes the whole session family (HTTP {after_replay})")
-    session = login("a")
-    check(call("POST", "/auth/logout", None, session["access_token"])[0] == 200, "logout")
-    revoked = call("GET", "/patients", token=session["access_token"])[0]
+    session = tokens["logout"]
+    check(call("POST", "/auth/logout", None, session.get("access_token"))[0] == 200, "logout")
+    revoked = call("GET", "/patients", token=session.get("access_token"))[0]
     check(revoked == 401, f"access token is rejected after logout (HTTP {revoked})")
 
 
@@ -235,10 +240,11 @@ def browser_checks() -> None:
         check("reset_token" not in reset_page.url, "reset token removed from the address bar")
         reuse = call("POST", "/auth/password-reset/confirm", {"token": token, "new_password": PASSWORD})[0]
         check(reuse in (400, 401), f"reset token cannot be reused (HTTP {reuse})")
-        check(call("POST", "/auth/login", {"email": USERS["b"][0], "password": PASSWORD})[0] == 401,
-              "old password no longer works")
         sign_in(new_page(), "b", NEW_PASSWORD)
         check(True, "sign-in with the new password")
+        # Last, because a failed attempt starts the login backoff for this account.
+        check(call("POST", "/auth/login", {"email": USERS["b"][0], "password": PASSWORD})[0] == 401,
+              "old password no longer works")
         browser.close()
 
 
@@ -254,6 +260,9 @@ def outage_checks() -> None:
 def main() -> int:
     seed()
     tokens = {key: login(key) for key in USERS}
+    if not all(tokens.values()):
+        print("\nlogin failed; stopping")
+        return 1
     api_checks(tokens)
     browser_checks()
     outage_checks()

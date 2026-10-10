@@ -304,6 +304,18 @@ jobs:
       - name: Build dashboard image
         run: docker build -f docker/Dockerfile.frontend -t sepsis-vitals-web:ci .
 
+  terraform-validate:
+    # Syntax and provider-schema check of terraform/ only: no backend, no AWS
+    # credentials, no plan or apply against any account.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: terraform fmt and validate (offline)
+        run: |
+          docker run --rm -v "$PWD/terraform:/w" -w /w hashicorp/terraform:1.9.8 fmt -check -diff
+          docker run --rm -v "$PWD/terraform:/w" -w /w hashicorp/terraform:1.9.8 init -backend=false -input=false
+          docker run --rm -v "$PWD/terraform:/w" -w /w hashicorp/terraform:1.9.8 validate
+
   compose-smoke:
     # The real stack: Postgres + Redis + API (migrations on start) + nginx dashboard.
     # Exercises login and /api routing through nginx, readiness, model status

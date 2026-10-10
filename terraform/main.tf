@@ -546,8 +546,12 @@ resource "aws_lb_target_group" "api" {
   vpc_id      = aws_vpc.main.id
   target_type = "ip"
 
+  # Route traffic only to tasks that are ready (database reachable, migrations
+  # at head). The container health check below keeps using /health
+  # (liveness), so ECS does not restart tasks while they wait for migrations.
   health_check {
-    path                = "/health"
+    path                = "/ready"
+    matcher             = "200"
     healthy_threshold   = 2
     unhealthy_threshold = 3
     interval            = 15

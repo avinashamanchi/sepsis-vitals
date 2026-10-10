@@ -141,6 +141,7 @@ def test_migration_writes_protected_copies_and_never_touches_sources(tmp_path, p
     assert mod.migrate(source, output, dry_run=True) == {
         "patient_state": {"patients": 1, "predictions": 1},
         "alert_escalation": {"alerts": 1, "audit_entries": 1},
+        "sources_unchanged": True,
     }
     assert not output.exists()
 
@@ -159,3 +160,68 @@ def test_migration_writes_protected_copies_and_never_touches_sources(tmp_path, p
 
     with pytest.raises(SystemExit):
         mod.migrate(source, source)  # in-place rewrites are refused
+
+
+
+def _migration_module():
+    spec = importlib.util.spec_from_file_location(
+        "migrate_state_stores", ROOT / "scripts" / "migrate_state_stores.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_migration_refuses_to_write_unprotected_copies(tmp_path, monkeypatch):
+    from sepsis_vitals.security import FieldEncryptor
+
+    mod = _migration_module()
+    _legacy_stores(tmp_path / "legacy")
+    monkeypatch.delenv("SEPSIS_PII_KEY", raising=False)
+    for attr in ("_instance", "_key", "_keyring"):
+        monkeypatch.setattr(FieldEncryptor, attr, None, raising=False)
+    with pytest.raises(SystemExit, match="not be protected"):
+        mod.migrate(tmp_path / "legacy", tmp_path / "state")
+    assert not (tmp_path / "state").exists()
+
+
+def test_interrupted_migration_leaves_no_final_file_and_resumes(tmp_path, pii_key, monkeypatch):
+    mod = _migration_module()
+    source, output = tmp_path / "legacy", tmp_path / "state"
+    _legacy_stores(source)
+    real_verify = mod._verify_escalation
+
+    def crash(*args, **kwargs):
+        raise RuntimeError("simulated crash while writing the escalation copy")
+
+    monkeypatch.setattr(mod, "_verify_escalation", crash)
+    with pytest.raises(RuntimeError):
+        mod.migrate(source, output)
+    assert (output / "patient_state.v1.db").exists()
+    assert not (output / "alert_escalation.v1.db").exists()  # only a .partial was left
+    assert (output / "alert_escalation.v1.db.partial").exists()
+
+    monkeypatch.setattr(mod, "_verify_escalation", real_verify)
+    summary = mod.migrate(source, output)
+    assert summary["patient_state"]["status"] == "already migrated and verified"
+    assert summary["alert_escalation"]["status"] == "migrated and verified"
+    assert not (output / "alert_escalation.v1.db.partial").exists()
+    assert summary["sources_unchanged"] is True
+    for name in ("patient_state", "alert_escalation"):
+        assert summary[name]["mode"] == "0o600"
+    assert oct(output.stat().st_mode & 0o777) == "0o700"
+
+
+def test_a_copy_that_does_not_match_the_source_is_refused(tmp_path, pii_key):
+    import sqlite3
+
+    mod = _migration_module()
+    source, output = tmp_path / "legacy", tmp_path / "state"
+    _legacy_stores(source)
+    mod.migrate(source, output)
+    conn = sqlite3.connect(output / "patient_state.v1.db")
+    conn.execute("UPDATE predictions SET risk_probability = 0.99")
+    conn.commit()
+    conn.close()
+    with pytest.raises(SystemExit, match="does not match"):
+        mod.migrate(source, output)
