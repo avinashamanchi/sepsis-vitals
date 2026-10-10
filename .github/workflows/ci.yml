@@ -59,6 +59,10 @@ jobs:
           pip install --require-hashes -r requirements/dev.txt
           pip install --no-deps -e .
       - run: bandit -r src/ -c pyproject.toml -ll
+      - name: Known vulnerabilities in the deployed set (what the API image installs)
+        run: pip-audit -r requirements/deploy.txt --require-hashes --disable-pip --progress-spinner off
+      - name: Known vulnerabilities in the CI and development set
+        run: pip-audit -r requirements/dev.txt --require-hashes --disable-pip --progress-spinner off
 
   test:
     runs-on: ubuntu-latest
@@ -76,6 +80,8 @@ jobs:
         run: |
           pip install --require-hashes -r requirements/dev.txt
           pip install --no-deps -e .
+      - name: Known vulnerabilities in the pins for this Python version
+        run: pip-audit -r requirements/dev.txt --require-hashes --disable-pip --progress-spinner off
       - run: pytest --tb=short -q --durations=15
         if: matrix.python-version != '3.11'
       - run: pytest --cov=sepsis_vitals --cov-report=term-missing --tb=short -q --durations=15
@@ -126,7 +132,8 @@ jobs:
       - run: npm run build
       - name: Publish guard (what Pages would deploy)
         run: ../scripts/check_published_site.sh dist
-      - run: npm audit --audit-level=high
+      - name: Known vulnerabilities in dashboard dependencies (all severities)
+        run: npm audit
 
   postgres-migrations:
     # Alembic upgrade/downgrade, blind-index backfill and an application smoke
