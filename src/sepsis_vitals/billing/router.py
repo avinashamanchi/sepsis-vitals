@@ -272,7 +272,7 @@ async def list_plans() -> List[PlanInfo]:
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(_check_billing_rate)],
 )
-async def create_checkout(
+def create_checkout(
     body: CheckoutRequest,
     user: Dict[str, str] = Depends(_require_billing_admin),
     db: Session = Depends(get_db),
@@ -324,7 +324,7 @@ async def create_checkout(
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(_check_billing_rate)],
 )
-async def create_portal(
+def create_portal(
     body: PortalRequest,
     user: Dict[str, str] = Depends(_require_billing_admin),
     db: Session = Depends(get_db),
@@ -423,7 +423,7 @@ async def stripe_webhook(
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(_check_billing_rate)],
 )
-async def get_subscription(
+def get_subscription(
     org_id: str,
     user: Dict[str, str] = Depends(_require_billing_admin),
     db: Session = Depends(get_db),
@@ -512,7 +512,7 @@ async def get_subscription(
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(_check_billing_rate)],
 )
-async def update_beds(
+def update_beds(
     body: UpdateBedsRequest,
     user: Dict[str, str] = Depends(_require_billing_admin),
     db: Session = Depends(get_db),

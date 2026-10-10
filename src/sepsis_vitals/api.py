@@ -212,17 +212,22 @@ async def verify_auth(request: Request) -> Dict[str, Any]:
         from sepsis_vitals.auth.middleware import get_current_user
         from sepsis_vitals.db import get_db
 
-        # Resolve the DB session dependency manually since we're not in
-        # a standard Depends() chain for this legacy shim.
-        db_gen = get_db()
-        db = next(db_gen)
-        try:
-            return get_current_user(request, db)
-        finally:
+        def _resolve() -> Dict[str, Any]:
+            # Resolve the DB session dependency manually since we're not in
+            # a standard Depends() chain for this legacy shim.
+            db_gen = get_db()
+            db = next(db_gen)
             try:
-                next(db_gen)
-            except StopIteration:
-                pass
+                return get_current_user(request, db)
+            finally:
+                try:
+                    next(db_gen)
+                except StopIteration:
+                    pass
+
+        # The user lookup is a blocking database query; keep it off the event
+        # loop, which also serves WebSockets and every other request.
+        return await asyncio.to_thread(_resolve)
     except ImportError:
         if _is_production:
             logger.critical("Auth middleware not available in production — rejecting request")

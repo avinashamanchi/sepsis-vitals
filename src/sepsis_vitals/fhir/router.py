@@ -369,7 +369,7 @@ async def create_bundle(
 
 
 @router.get("/Patient/{patient_id}")
-async def get_patient(
+def get_patient(
     patient_id: str,
     db: Session = Depends(get_db),
     current_user: Dict[str, Any] = Depends(verify_auth),
@@ -390,7 +390,7 @@ async def get_patient(
 
 
 @router.get("/Patient/{patient_id}/observations")
-async def get_observations(
+def get_observations(
     patient_id: str,
     db: Session = Depends(get_db),
     current_user: Dict[str, Any] = Depends(verify_auth),
@@ -437,7 +437,7 @@ async def get_observations(
 
 
 @router.get("/RiskAssessment/{patient_id}")
-async def get_risk_assessment(
+def get_risk_assessment(
     patient_id: str,
     db: Session = Depends(get_db),
     current_user: Dict[str, Any] = Depends(verify_auth),

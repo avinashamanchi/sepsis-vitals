@@ -59,3 +59,41 @@ def test_listener_facade_reexports_the_split_modules():
     for name, module in owners.items():
         real = getattr(importlib.import_module(f"sepsis_vitals.fhir.{module}"), name)
         assert getattr(listener, name) is real, name
+
+
+def test_handlers_with_blocking_database_work_do_not_run_on_the_event_loop():
+    """Old audit check 2.1: an ``async def`` handler that queries the database
+    synchronously blocks every other request and WebSocket while it waits."""
+    import inspect
+
+    from sepsis_vitals.billing import router as billing
+    from sepsis_vitals.fhir import router as fhir
+
+    for fn in (fhir.get_patient, fhir.get_observations, fhir.get_risk_assessment,
+               billing.create_checkout, billing.create_portal, billing.get_subscription,
+               billing.update_beds):
+        assert not inspect.iscoroutinefunction(fn), fn.__name__
+
+
+def test_verify_auth_looks_up_the_user_in_a_worker_thread(monkeypatch):
+    import asyncio
+
+    from fastapi import HTTPException
+    from starlette.requests import Request
+
+    import sepsis_vitals.api as api
+
+    used = []
+    real = asyncio.to_thread
+
+    async def spy(fn, *args, **kwargs):
+        used.append(fn.__name__)
+        return await real(fn, *args, **kwargs)
+
+    monkeypatch.setattr(api, "_auth_enabled", True)
+    monkeypatch.setattr(api.asyncio, "to_thread", spy)
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b""})
+    with pytest.raises(HTTPException) as err:
+        asyncio.run(api.verify_auth(request))
+    assert err.value.status_code == 401  # no token
+    assert used == ["_resolve"]
