@@ -471,3 +471,14 @@ def test_fhir_access_is_audited_without_logging_mrns(env, caplog):
     assert ("fhir_read", pid) in actions
     assert all(e["user_id"] == env["user"]["a"]["id"] for e in events)
     assert f"MRN-AUDIT-{env['run']}" not in caplog.text
+
+
+def test_patient_list_merges_observations_recorded_together(env):
+    """N43: heart rate and respiratory rate sent in one bundle are two rows with
+    the same time; the patient list used to show only one of them."""
+    mrn = f"MRN-MERGE-{env['run']}"
+    bundle = bundle_res(patient_res(mrn, rid="pm"), obs_res("pm", 112), obs_res("pm", 26, code="9279-1"))
+    assert _post(env, "/fhir/Bundle", bundle).status_code == 200
+    listed = env["client"].get("/patients", headers=env["h"]["a"]).json()
+    entry = next(p for p in listed if p["external_id"] == mrn)
+    assert entry["latest_vitals"] == {"heart_rate": 112.0, "resp_rate": 26.0}

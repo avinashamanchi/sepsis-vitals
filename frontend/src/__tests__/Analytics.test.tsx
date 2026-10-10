@@ -7,6 +7,7 @@ const m = vi.hoisted(() => ({
   riskDistribution: vi.fn(),
   dashboardStats: vi.fn(),
   modelInfo: vi.fn(),
+  getPatients: vi.fn(),
 }))
 vi.mock('../lib/api', () => ({ api: m, isDemo: false }))
 
@@ -42,6 +43,8 @@ describe('Dashboard (live mode)', () => {
   it('never shows placeholder counts or a default AUROC before data loads', () => {
     m.modelInfo.mockReturnValue(pending())
     m.dashboardStats.mockReturnValue(pending())
+    m.getPatients.mockReturnValue(pending())
+    m.weeklyTrends.mockReturnValue(pending())
     render(<MemoryRouter><Dashboard /></MemoryRouter>)
     expect(screen.queryByText('147')).toBeNull()
     expect(screen.queryByText('0.92')).toBeNull()
@@ -51,6 +54,8 @@ describe('Dashboard (live mode)', () => {
   it('shows the backend 24-hour prediction count', async () => {
     m.modelInfo.mockReturnValue(pending())
     m.dashboardStats.mockResolvedValue({ patient_count: 3, active_alerts: 1, recent_predictions: 57 })
+    m.getPatients.mockResolvedValue([])
+    m.weeklyTrends.mockResolvedValue([])
     render(<MemoryRouter><Dashboard /></MemoryRouter>)
     expect(await screen.findByText('57')).toBeInTheDocument()
   })

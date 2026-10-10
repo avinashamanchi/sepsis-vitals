@@ -130,22 +130,29 @@ def latest_observations(
         .outerjoin(Score, Score.vital_id == VitalReading.id)
         .all()
     )
+    # Several readings can share the latest timestamp: FHIR stores each
+    # Observation as its own row, so heart rate and respiratory rate measured
+    # together arrive as two rows. Merge them; if more than one is scored,
+    # report the most severe level recorded at that time.
+    severity = {"low": 0, "moderate": 1, "high": 2, "critical": 3}
     out: dict[str, dict[str, Any]] = {}
-    for reading, score in rows:
-        if reading.patient_id in out:
-            continue  # identical timestamps: keep the first
-        vitals = {
-            name: getattr(reading, name)
-            for name in _SUMMARY_VITALS
-            if getattr(reading, name) is not None
-        }
-        if reading.map_pressure is not None:
-            vitals["map"] = reading.map_pressure
-        out[reading.patient_id] = {
-            "latest_vitals": vitals,
-            "latest_risk_level": score.risk_level if score is not None else None,
+    for reading, score in sorted(rows, key=lambda r: str(r[0].id)):
+        entry = out.setdefault(reading.patient_id, {
+            "latest_vitals": {},
+            "latest_risk_level": None,
             "latest_recorded_at": reading.recorded_at,
-        }
+        })
+        vitals = entry["latest_vitals"]
+        for name in _SUMMARY_VITALS:
+            value = getattr(reading, name)
+            if value is not None and name not in vitals:
+                vitals[name] = value
+        if reading.map_pressure is not None and "map" not in vitals:
+            vitals["map"] = reading.map_pressure
+        level = score.risk_level if score is not None else None
+        current = entry["latest_risk_level"]
+        if level is not None and (current is None or severity.get(level, -1) > severity.get(current, -1)):
+            entry["latest_risk_level"] = level
     return out
 
 

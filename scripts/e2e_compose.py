@@ -135,8 +135,9 @@ def api_checks(tokens: Dict[str, Dict[str, str]]) -> None:
 
     patients = call("GET", "/patients", token=a)[1]
     mine = [p for p in patients if p["external_id"] == MRN]
-    check(len(mine) == 1 and mine[0]["latest_vitals"]["heart_rate"] == 112,
-          "ingested patient listed with its latest vitals")
+    vitals = (mine[0].get("latest_vitals") or {}) if len(mine) == 1 else {}
+    check(vitals.get("heart_rate") == 112 and vitals.get("resp_rate") == 26,
+          f"ingested patient listed with both vitals recorded together ({vitals})")
     b_patients = call("GET", "/patients", token=tokens["b"]["access_token"])[1]
     check(all(p["external_id"] != MRN for p in b_patients), "site B cannot see site A's patient (API)")
 
