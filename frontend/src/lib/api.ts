@@ -1,4 +1,7 @@
-const BASE = import.meta.env.VITE_API_URL ?? ''
+// Default '/api': the Vite dev proxy and the nginx container both strip this
+// prefix before forwarding to the FastAPI backend, which has no /api routes.
+// `||` (not `??`) so a blank VITE_API_URL in .env also falls back.
+const BASE = import.meta.env.VITE_API_URL || '/api'
 
 /** Session-scoped tokens reduce exposure if a shared clinical workstation is left behind. */
 function safeGetItem(key: string): string | null {
@@ -15,6 +18,41 @@ let onUnauthorized: (() => void) | null = null
 /** Register a callback invoked on 401 responses. */
 export function setOnUnauthorized(cb: () => void) {
   onUnauthorized = cb
+}
+
+/** An HTTP error from the API, with a message a person can read. */
+export class ApiError extends Error {
+  readonly status: number
+  readonly detail: unknown
+
+  constructor(status: number, detail: unknown) {
+    super(describeDetail(status, detail))
+    this.name = 'ApiError'
+    this.status = status
+    this.detail = detail
+  }
+}
+
+/**
+ * FastAPI returns `detail` as a string, an object (for example the 503 when no
+ * usable model is installed) or a list of validation errors. Never show
+ * "[object Object]".
+ */
+export function describeDetail(status: number, detail: unknown): string {
+  if (typeof detail === 'string' && detail) return detail
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((d) => (d && typeof d === 'object' && 'msg' in d ? String((d as { msg: unknown }).msg) : ''))
+      .filter(Boolean)
+    if (messages.length) return `Invalid input: ${messages.join('; ')}`
+  }
+  if (detail && typeof detail === 'object') {
+    const d = detail as { message?: unknown; model_state?: unknown }
+    if (typeof d.message === 'string') {
+      return typeof d.model_state === 'string' ? `${d.message} (model state: ${d.model_state})` : d.message
+    }
+  }
+  return `Request failed (HTTP ${status})`
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -39,7 +77,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       onUnauthorized()
     }
     const body = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(body.detail ?? `HTTP ${res.status}`)
+    throw new ApiError(res.status, body?.detail)
   }
 
   // Handle empty responses (204 No Content, etc.)
@@ -50,6 +88,22 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   } catch {
     throw new Error('Invalid JSON response from server')
   }
+}
+
+export type LoginResult =
+  | { kind: 'session'; access_token: string; refresh_token?: string; user?: { email: string; role: string } }
+  | { kind: 'mfa_required' }
+  | { kind: 'mfa_enrollment_required'; enrollmentToken: string }
+
+/** For the MFA enrollment endpoints, which take a short-lived enrollment token. */
+async function requestWithToken<T>(path: string, token: string, options: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new ApiError(res.status, body?.detail)
+  return body as T
 }
 
 /** Explicit public-demo mode; GitHub Pages remains the default demo host. */
@@ -120,15 +174,51 @@ function simulateDemoPrediction(body: {
 export const api = {
   health: () => request<{ status: string; version: string }>('/health'),
 
-  login: (email: string, password: string) =>
-    request<{
-      access_token: string
-      refresh_token: string
-      user?: { email: string; role: string }
-    }>(
-      '/auth/login',
-      { method: 'POST', body: JSON.stringify({ email, password }) },
+  /**
+   * Sign in. MFA outcomes are returned, not thrown: the backend answers 401
+   * "mfa_required" when a code is needed and 403 "mfa_enrollment_required"
+   * (with an enrollment-only token) when the user's role requires MFA.
+   */
+  login: async (email: string, password: string, otp?: string): Promise<LoginResult> => {
+    const res = await fetch(`${BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(otp ? { email, password, otp } : { email, password }),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (res.ok) return { kind: 'session', ...body }
+    if (res.status === 401 && body.detail === 'mfa_required') return { kind: 'mfa_required' }
+    if (res.status === 403 && body.detail === 'mfa_enrollment_required') {
+      return { kind: 'mfa_enrollment_required', enrollmentToken: body.enrollment_token }
+    }
+    throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`)
+  },
+
+  mfaEnroll: (enrollmentToken: string) =>
+    requestWithToken<{ secret: string; otpauth_uri: string }>(
+      '/auth/mfa/enroll', enrollmentToken, { method: 'POST' },
     ),
+
+  mfaConfirm: (enrollmentToken: string, code: string) =>
+    requestWithToken<{ recovery_codes: string[] }>(
+      '/auth/mfa/confirm', enrollmentToken, { method: 'POST', body: JSON.stringify({ code }) },
+    ),
+
+  weeklyTrends: (days = 7) =>
+    request<Array<{ date: string | null; predictions: number; alerts: number }>>(
+      `/patients/dashboard/weekly-trends?days=${days}`,
+    ),
+
+  riskDistribution: (hoursBack = 24) =>
+    request<Array<{ risk_level: string; count: number; percentage: number }>>(
+      `/patients/dashboard/risk-distribution?hours_back=${hoursBack}`,
+    ),
+
+  confirmPasswordReset: (token: string, newPassword: string) =>
+    request<{ detail: string }>('/auth/password-reset/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ token, new_password: newPassword }),
+    }),
 
   requestPasswordReset: (email: string) =>
     request<{ detail: string }>('/auth/password-reset/request', {
@@ -156,16 +246,19 @@ export const api = {
   copilot: (body: { vitals: Record<string, number>; patient_id: string; question?: string }) =>
     request('/copilot', { method: 'POST', body: JSON.stringify(body) }),
 
+  // Mirrors PatientSummaryOut. latest_* are null until a patient is observed:
+  // render that as "not yet observed", never as low risk or 0.
   getPatients: (siteId?: string) =>
     request<Array<{
       id: string
-      name?: string
-      bed?: string
-      vitals: Record<string, number>
-      riskLevel: string
-      riskProbability: number
-      lastUpdated: string
-    }>>(`/patients/${siteId ? `?site_id=${siteId}` : ''}`),
+      external_id: string
+      site_id: string
+      age_years: number | null
+      sex: string | null
+      latest_vitals: Record<string, number> | null
+      latest_risk_level: string | null
+      latest_recorded_at: string | null
+    }>>(`/patients${siteId ? `?site_id=${encodeURIComponent(siteId)}` : ''}`),
 
   patientTrend: (patientId: string) =>
     request<{
@@ -187,13 +280,14 @@ export const api = {
       feature_importance: Record<string, number>
     }>('/model/info'),
 
-  dashboardStats: (siteId: string = 'default') =>
+  // The backend scopes stats to the signed-in user's site; only
+  // administrators may pass an explicit site.
+  dashboardStats: (siteId?: string) =>
     request<{
       patient_count: number
       active_alerts: number
-      predictions_today: number
-      avg_response_min: number | null
-    }>(`/patients/dashboard/stats?site_id=${siteId}`),
+      recent_predictions: number
+    }>(`/patients/dashboard/stats${siteId ? `?site_id=${encodeURIComponent(siteId)}` : ''}`),
 
   systemHealth: () =>
     request<{

@@ -104,11 +104,10 @@ class TestMIMICLoaderDemo:
         # Should have a mix of 0s and 1s
         assert set(labels["sepsis_label"].unique()) == {0, 1}
 
-    def test_build_training_dataset_small(self):
-        from sepsis_vitals.ml.mimic_loader import MIMICLoader
+    def test_build_training_dataset_small(self, mimic_demo_dataset):
+        from tests.conftest import first_patients
 
-        loader = MIMICLoader.from_demo()
-        df = loader.build_training_dataset(max_patients=5)
+        df = first_patients(mimic_demo_dataset, 5)
 
         assert "patient_id" in df.columns
         assert "sepsis_label" in df.columns
@@ -120,18 +119,12 @@ class TestMIMICLoaderDemo:
         has_any_vital = any(c in df.columns for c in vital_cols)
         assert has_any_vital
 
-    def test_build_training_dataset_has_epoch_column(self):
-        from sepsis_vitals.ml.mimic_loader import MIMICLoader
-
-        loader = MIMICLoader.from_demo()
-        df = loader.build_training_dataset(max_patients=5)
+    def test_build_training_dataset_has_epoch_column(self, mimic_demo_dataset):
+        df = mimic_demo_dataset
         assert "timestamp" in df.columns or "epoch" in df.columns
 
-    def test_build_training_dataset_no_duplicate_epochs(self):
-        from sepsis_vitals.ml.mimic_loader import MIMICLoader
-
-        loader = MIMICLoader.from_demo()
-        df = loader.build_training_dataset(max_patients=5)
+    def test_build_training_dataset_no_duplicate_epochs(self, mimic_demo_dataset):
+        df = mimic_demo_dataset
         time_col = "timestamp" if "timestamp" in df.columns else "epoch"
         dupes = df.duplicated(subset=["patient_id", time_col])
         assert not dupes.any(), f"Found {dupes.sum()} duplicate (patient_id, time) pairs"

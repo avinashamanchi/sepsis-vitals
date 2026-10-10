@@ -7,6 +7,7 @@ email verification.
 from __future__ import annotations
 
 import hashlib
+import json
 import hmac
 import os
 import re
@@ -29,7 +30,7 @@ from sepsis_vitals.auth.tokens import (
     decode_token,
 )
 from sepsis_vitals.db import User
-from sepsis_vitals.security import compute_blind_index
+from sepsis_vitals.security import blind_index_candidates, compute_blind_index
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -181,14 +182,18 @@ def _get_token_secret() -> str:
     return _TOKEN_SECRET
 
 
-def _make_hmac_token(user_id: str, purpose: str, expires_seconds: int) -> str:
+def _make_hmac_token(
+    user_id: str, purpose: str, expires_seconds: int, binding: str = ""
+) -> str:
     """Build a compact HMAC token of the form ``user_id:expiry:signature``.
 
     The token is not stored in the database; it is self-validating via the
-    HMAC signature.
+    HMAC signature. *binding* is mixed into the signature but not the token,
+    so a token stops verifying once the bound state changes (e.g. the
+    password hash after a reset), which makes it single-use.
     """
     expiry = int(time.time()) + expires_seconds
-    message = f"{user_id}:{purpose}:{expiry}"
+    message = f"{user_id}:{purpose}:{expiry}:{binding}"
     sig = hmac.new(
         _get_token_secret().encode(),
         message.encode(),
@@ -197,7 +202,7 @@ def _make_hmac_token(user_id: str, purpose: str, expires_seconds: int) -> str:
     return f"{user_id}:{expiry}:{sig}"
 
 
-def _verify_hmac_token(token: str, purpose: str) -> str:
+def _verify_hmac_token(token: str, purpose: str, binding: str = "") -> str:
     """Validate an HMAC token and return the embedded ``user_id``.
 
     Raises :class:`InvalidTokenError` on any failure (bad format, expired,
@@ -217,7 +222,7 @@ def _verify_hmac_token(token: str, purpose: str) -> str:
     if time.time() > expiry:
         raise InvalidTokenError("Token has expired")
 
-    message = f"{user_id}:{purpose}:{expiry}"
+    message = f"{user_id}:{purpose}:{expiry}:{binding}"
     expected_sig = hmac.new(
         _get_token_secret().encode(),
         message.encode(),
@@ -235,8 +240,135 @@ def _verify_hmac_token(token: str, purpose: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+class MFARequiredError(AuthServiceError):
+    """Password accepted; a TOTP or recovery code is also required."""
+
+
+class MFAEnrollmentRequired(AuthServiceError):
+    """The user's role requires MFA and the user has not enrolled yet."""
+
+    def __init__(self, enrollment_token: str) -> None:
+        super().__init__("MFA enrollment required")
+        self.enrollment_token = enrollment_token
+
+
+def mfa_required_roles() -> frozenset:
+    """Roles that must use MFA (SEPSIS_MFA_REQUIRED_ROLES, comma-separated).
+
+    Empty by default, so enabling enforcement is an explicit operator
+    decision; see docs in PROJECT_REVIEW.md for the staged rollout.
+    """
+    raw = os.getenv("SEPSIS_MFA_REQUIRED_ROLES", "")
+    return frozenset(r.strip() for r in raw.split(",") if r.strip())
+
+
+def _normalise_code(code: str) -> str:
+    return code.strip().replace(" ", "").replace("-", "").upper()
+
+
+def lock_user_row(db_session: Session, user_id: str) -> User:
+    """Re-read *user_id* holding its row lock until the transaction ends.
+
+    Serialises MFA state changes for one account across workers
+    (``SELECT ... FOR UPDATE`` on PostgreSQL; SQLite takes a database write
+    lock at the first write and ignores FOR UPDATE).
+    """
+    return (
+        db_session.query(User)
+        .filter(User.id == user_id)
+        .with_for_update()
+        .populate_existing()
+        .one()
+    )
+
+
+def _rowcount(result: Any) -> int:
+    """Rows matched by an UPDATE (a CursorResult attribute)."""
+    return int(getattr(result, "rowcount", 0))
+
+
+def consume_totp_step(user: User, step: int, db_session: Session) -> bool:
+    """Record *step* as used for *user*'s current TOTP secret, exactly once.
+
+    A single conditional UPDATE (``totp_last_step`` NULL or earlier than
+    *step*) decides: of two concurrent requests with the same code, in any
+    number of workers, exactly one matches a row. The change is not
+    committed here. It commits with the caller's successful authentication,
+    and rolls back with it. Database errors propagate, so a failure denies
+    access instead of skipping the check.
+    """
+    from sqlalchemy import or_, update
+    from sqlalchemy.orm.attributes import set_committed_value
+
+    result = db_session.execute(
+        update(User)
+        .where(User.id == user.id)
+        .where(or_(User.totp_last_step.is_(None), User.totp_last_step < step))
+        .values(totp_last_step=step)
+        .execution_options(synchronize_session=False)
+    )
+    if _rowcount(result) != 1:
+        return False
+    set_committed_value(user, "totp_last_step", step)
+    return True
+
+
+def _consume_recovery_code(user: User, normalised: str, db_session: Session) -> bool:
+    """Remove one unused recovery code, exactly once (compare-and-set)."""
+    from sqlalchemy import update
+    from sqlalchemy.orm.attributes import set_committed_value
+
+    stored = user.mfa_recovery_hashes
+    hashes = json.loads(stored or "[]")
+    # Codes hashed under a previous PII key still match during a key rotation.
+    digest = next((d for d in blind_index_candidates(normalised) if d in hashes), None)
+    if digest is None:
+        return False
+    hashes.remove(digest)
+    remaining = json.dumps(hashes)
+    result = db_session.execute(
+        update(User)
+        .where(User.id == user.id, User.mfa_recovery_hashes == stored)
+        .values(mfa_recovery_hashes=remaining)
+        .execution_options(synchronize_session=False)
+    )
+    if _rowcount(result) != 1:
+        return False  # used concurrently: the other request won
+    set_committed_value(user, "mfa_recovery_hashes", remaining)
+    return True
+
+
+def verify_second_factor(user: User, code: str, db_session: Session) -> bool:
+    """Check and consume a TOTP code (once per time step) or a recovery code.
+
+    Nothing is committed here: the caller commits the consumption together
+    with the successful authentication. Malformed or wrong codes consume
+    nothing.
+    """
+    from sepsis_vitals.auth.jwt import match_totp_step
+
+    normalised = _normalise_code(code or "")
+    if not normalised:
+        return False
+    if normalised.isdigit() and len(normalised) == 6:
+        secret = user.totp_secret
+        if secret is None:
+            return False
+        step = match_totp_step(secret, normalised)
+        return step is not None and consume_totp_step(user, step, db_session)
+    return _consume_recovery_code(user, normalised, db_session)
+
+
 def _issue_tokens(user: User) -> dict[str, str]:
-    """Return a dict with ``access_token`` and ``refresh_token`` for *user*."""
+    """Return a dict with ``access_token`` and ``refresh_token`` for *user*.
+
+    Single choke point for session issuance: a user whose role requires MFA
+    but who has not enrolled gets an enrollment-only token instead.
+    """
+    if user.role in mfa_required_roles() and not user.mfa_enabled:
+        from sepsis_vitals.auth.tokens import create_mfa_enrollment_token
+
+        raise MFAEnrollmentRequired(create_mfa_enrollment_token(user.id))
     return {
         "access_token": create_access_token(
             user_id=user.id,
@@ -292,7 +424,7 @@ def register_user(
     _validate_password_strength(password)
 
     email_hash = compute_blind_index(email)
-    existing = db_session.query(User).filter(User.email_hash == email_hash).first()
+    existing = db_session.query(User).filter(User.email_hash.in_(blind_index_candidates(email))).first()
     if existing is not None:
         raise DuplicateEmailError(f"Email {email!r} is already registered")
 
@@ -327,6 +459,7 @@ def login_user(
     email: str,
     password: str,
     db_session: Session,
+    otp: str | None = None,
 ) -> dict[str, Any]:
     """Authenticate a user by email and password.
 
@@ -355,8 +488,7 @@ def login_user(
     """
     _check_login_rate_limit(email)
 
-    email_hash = compute_blind_index(email)
-    user = db_session.query(User).filter(User.email_hash == email_hash).first()
+    user = db_session.query(User).filter(User.email_hash.in_(blind_index_candidates(email))).first()
     if user is None:
         raise InvalidCredentialsError("Invalid email or password")
 
@@ -369,7 +501,8 @@ def login_user(
 
     if not verify_password(password, user.password_hash):
         # Increment failed attempts and set lockout window.
-        user.failed_attempts = (user.failed_attempts or 0) + 1
+        # Bounded so the SMALLINT column cannot overflow under attack.
+        user.failed_attempts = min((user.failed_attempts or 0) + 1, 1000)
         lock_secs = lockout_duration(user.failed_attempts)
         if lock_secs > 0:
             user.locked_until = datetime.now(timezone.utc) + timedelta(
@@ -377,6 +510,19 @@ def login_user(
             )
         db_session.commit()
         raise InvalidCredentialsError("Invalid email or password")
+
+    # Second factor for enrolled users, checked only after the password so it
+    # reveals nothing about unknown accounts. A wrong code counts as a failure.
+    if user.mfa_enabled:
+        if not otp:
+            raise MFARequiredError("A verification code is required")
+        if not verify_second_factor(user, otp, db_session):
+            user.failed_attempts = min((user.failed_attempts or 0) + 1, 1000)
+            lock_secs = lockout_duration(user.failed_attempts)
+            if lock_secs > 0:
+                user.locked_until = datetime.now(timezone.utc) + timedelta(seconds=lock_secs)
+            db_session.commit()
+            raise InvalidCredentialsError("Invalid email, password or verification code")
 
     # Successful login — reset failure counters and update last_login.
     user.failed_attempts = 0
@@ -419,7 +565,7 @@ def refresh_access_token(
     from sepsis_vitals.auth.tokens import get_blacklist
 
     try:
-        payload = decode_token(refresh_token)
+        payload = decode_token(refresh_token, check_revocation=False)
     except TokenError as exc:
         raise InvalidTokenError(str(exc))
 
@@ -427,14 +573,26 @@ def refresh_access_token(
         raise InvalidTokenError("Token is not a refresh token")
 
     user_id = payload["sub"]
+    blacklist = get_blacklist()
+    if blacklist.is_revoked(
+        payload.get("jti", ""), user_id=user_id, issued_at=payload.get("iat"),
+        issued_at_ms=payload.get("iat_ms"),
+    ):
+        # A rotated (already used) refresh token was presented again: assume
+        # theft and end every session for this user.
+        blacklist.revoke_all_for_user(user_id)
+        raise InvalidTokenError("Refresh token reuse detected; all sessions revoked")
     user = db_session.query(User).filter(User.id == user_id).first()
     if user is None:
         raise InvalidTokenError("User no longer exists")
+    if user.role in mfa_required_roles() and not user.mfa_enabled:
+        # Sessions from before MFA enforcement must not be extended.
+        raise InvalidTokenError("MFA enrollment required; sign in again")
 
     # Revoke the old refresh token (single-use enforcement)
     old_jti = payload.get("jti")
     if old_jti:
-        get_blacklist().revoke(old_jti, ttl_seconds=7 * 86400)
+        blacklist.revoke(old_jti, ttl_seconds=7 * 86400)
 
     # Issue new token pair in the same family
     family_id = payload.get("fid")
@@ -483,13 +641,18 @@ def request_password_reset(
     str or None
         An HMAC-based reset token if the user exists, otherwise ``None``.
     """
-    email_hash = compute_blind_index(email)
-    user = db_session.query(User).filter(User.email_hash == email_hash).first()
+    user = db_session.query(User).filter(User.email_hash.in_(blind_index_candidates(email))).first()
     if user is None:
         return None
     return _make_hmac_token(
-        user.id, "password_reset", _PASSWORD_RESET_EXPIRY_SECONDS
+        user.id, "password_reset", _PASSWORD_RESET_EXPIRY_SECONDS,
+        binding=_reset_binding(user),
     )
+
+
+def _reset_binding(user: User) -> str:
+    """Fingerprint of the current password hash; changes after every reset."""
+    return hashlib.sha256((user.password_hash or "").encode()).hexdigest()[:32]
 
 
 def reset_password(
@@ -520,12 +683,13 @@ def reset_password(
     WeakPasswordError
         If the new password does not meet complexity requirements.
     """
-    user_id = _verify_hmac_token(token, "password_reset")
-    _validate_password_strength(new_password)
-
+    user_id = token.split(":", 1)[0]
     user = db_session.query(User).filter(User.id == user_id).first()
     if user is None:
-        raise InvalidTokenError("User no longer exists")
+        raise InvalidTokenError("Invalid or expired token")
+    # Bound to the current password hash, so a used token no longer verifies.
+    _verify_hmac_token(token, "password_reset", binding=_reset_binding(user))
+    _validate_password_strength(new_password)
 
     user.password_hash = hash_password(new_password)
     user.failed_attempts = 0

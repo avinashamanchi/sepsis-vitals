@@ -417,3 +417,45 @@ class TestObservationLabeling:
         # All observations in ICD fallback hadms should be labeled 1
         assert list(result["sepsis_label"]) == [1, 1, 1, 1]
         assert all(result["label_source"] == "icd_fallback")
+
+
+# ---------------------------------------------------------------------------
+# Seymour et al. 2016 timing windows
+# ---------------------------------------------------------------------------
+class TestSeymourWindows:
+    """Asymmetric suspected-infection windows and the -48h/+24h SOFA window."""
+
+    @staticmethod
+    def _pair(abx_time: str, culture_time: str) -> pd.DataFrame:
+        abx = pd.DataFrame({"subject_id": [1], "hadm_id": [100],
+                            "starttime": pd.to_datetime([abx_time]), "drug": ["vancomycin"]})
+        cul = pd.DataFrame({"subject_id": [1], "hadm_id": [100],
+                            "charttime": pd.to_datetime([culture_time]),
+                            "spec_type_desc": ["BLOOD CULTURE"]})
+        return find_suspected_infections(abx, cul)
+
+    def test_culture_more_than_24h_after_abx_is_not_infection(self) -> None:
+        assert len(self._pair("2024-01-01 10:00", "2024-01-02 12:00")) == 0
+
+    def test_abx_up_to_72h_after_culture_is_infection(self) -> None:
+        result = self._pair("2024-01-04 09:00", "2024-01-01 10:00")
+        assert len(result) == 1
+        assert result["t_suspected_infection"].iloc[0] == pd.Timestamp("2024-01-01 10:00")
+
+    def test_legacy_symmetric_window_still_available(self) -> None:
+        abx = pd.DataFrame({"subject_id": [1], "hadm_id": [100],
+                            "starttime": pd.to_datetime(["2024-01-01 10:00"]), "drug": ["x"]})
+        cul = pd.DataFrame({"subject_id": [1], "hadm_id": [100],
+                            "charttime": pd.to_datetime(["2024-01-02 12:00"]),
+                            "spec_type_desc": ["BLOOD CULTURE"]})
+        assert len(find_suspected_infections(abx, cul, window_hours=72)) == 1
+
+    def test_sofa_rise_more_than_24h_after_infection_is_not_onset(self) -> None:
+        sofa = pd.DataFrame({
+            "subject_id": [1, 1], "hadm_id": [100, 100],
+            "charttime": pd.to_datetime(["2024-01-01 06:00", "2024-01-02 16:00"]),
+            "sofa_total": [0, 4],
+        })
+        infections = pd.DataFrame({"subject_id": [1], "hadm_id": [100],
+                                   "t_suspected_infection": pd.to_datetime(["2024-01-01 10:00"])})
+        assert len(derive_sepsis_onset(sofa, infections)) == 0

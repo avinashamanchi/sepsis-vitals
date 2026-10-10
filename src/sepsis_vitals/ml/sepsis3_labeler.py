@@ -302,9 +302,17 @@ def compute_sofa_scores(df: pd.DataFrame) -> pd.DataFrame:
 def find_suspected_infections(
     antibiotics: pd.DataFrame,
     cultures: pd.DataFrame,
-    window_hours: int = 72,
+    window_hours: int | None = None,
+    abx_first_hours: int = 24,
+    culture_first_hours: int = 72,
 ) -> pd.DataFrame:
     """Identify suspected infections from antibiotic + culture proximity.
+
+    Follows Seymour et al. (JAMA 2016): if antibiotics come first, a culture
+    must follow within ``abx_first_hours`` (24 h); if the culture comes
+    first, antibiotics must follow within ``culture_first_hours`` (72 h).
+    Passing ``window_hours`` restores the older symmetric window and is
+    kept only for sensitivity analyses.
 
     Parameters
     ----------
@@ -312,9 +320,13 @@ def find_suspected_infections(
         Columns: subject_id, hadm_id, starttime, drug.
     cultures : pd.DataFrame
         Columns: subject_id, hadm_id, charttime, spec_type_desc.
-    window_hours : int
-        Maximum hours between antibiotic and culture to count as
-        suspected infection. Default 72.
+    window_hours : int, optional
+        Legacy symmetric window (hours, either order). Overrides the
+        asymmetric windows when given.
+    abx_first_hours : int
+        Antibiotic-then-culture window in hours. Default 24.
+    culture_first_hours : int
+        Culture-then-antibiotic window in hours. Default 72.
 
     Returns
     -------
@@ -329,8 +341,6 @@ def find_suspected_infections(
             columns=["subject_id", "hadm_id", "t_suspected_infection"]
         )
 
-    window = pd.Timedelta(hours=window_hours)
-
     # Merge on admission
     merged = antibiotics.merge(
         cultures, on=["subject_id", "hadm_id"], how="inner"
@@ -341,13 +351,17 @@ def find_suspected_infections(
             columns=["subject_id", "hadm_id", "t_suspected_infection"]
         )
 
-    # Calculate time difference
-    merged["time_diff"] = (
-        merged["starttime"] - merged["charttime"]
-    ).abs()
-
-    # Filter to within window
-    merged = merged[merged["time_diff"] <= window]
+    # Signed gap: positive when the culture follows the antibiotic
+    gap = merged["charttime"] - merged["starttime"]
+    if window_hours is not None:
+        in_window = gap.abs() <= pd.Timedelta(hours=window_hours)
+    else:
+        abx_first = (gap >= pd.Timedelta(0)) & (gap <= pd.Timedelta(hours=abx_first_hours))
+        culture_first = (gap < pd.Timedelta(0)) & (
+            -gap <= pd.Timedelta(hours=culture_first_hours)
+        )
+        in_window = abx_first | culture_first
+    merged = merged[in_window]
 
     if merged.empty:
         return pd.DataFrame(
@@ -378,13 +392,17 @@ def derive_sepsis_onset(
     sofa_series: pd.DataFrame,
     infections: pd.DataFrame,
     sofa_increase_threshold: int = 2,
-    window_hours: int = 48,
+    window_hours: int | None = None,
+    hours_before: int = 48,
+    hours_after: int = 24,
 ) -> pd.DataFrame:
     """Derive Sepsis-3 onset times.
 
     For each admission with a suspected infection, check if SOFA increased
-    by >= `sofa_increase_threshold` from baseline within +/- `window_hours`
-    of the infection time. Baseline = minimum SOFA before infection.
+    by >= `sofa_increase_threshold` from baseline between `hours_before`
+    hours before and `hours_after` hours after the infection time
+    (-48 h / +24 h per Seymour et al., JAMA 2016). Baseline = minimum SOFA
+    before infection.
 
     Parameters
     ----------
@@ -394,8 +412,10 @@ def derive_sepsis_onset(
         Columns: subject_id, hadm_id, t_suspected_infection.
     sofa_increase_threshold : int
         Minimum SOFA increase to qualify as sepsis. Default 2.
-    window_hours : int
-        Window around infection time. Default 48.
+    window_hours : int, optional
+        Legacy symmetric window; overrides `hours_before`/`hours_after`.
+    hours_before, hours_after : int
+        Window around the infection time. Defaults 48 and 24.
 
     Returns
     -------
@@ -405,7 +425,8 @@ def derive_sepsis_onset(
     if infections.empty or sofa_series.empty:
         return pd.DataFrame(columns=["subject_id", "hadm_id", "t_sepsis_onset"])
 
-    window = pd.Timedelta(hours=window_hours)
+    before = pd.Timedelta(hours=window_hours if window_hours is not None else hours_before)
+    after = pd.Timedelta(hours=window_hours if window_hours is not None else hours_after)
     results = []
 
     for _, inf_row in infections.iterrows():
@@ -433,8 +454,8 @@ def derive_sepsis_onset(
 
         # Check for SOFA increase within window of infection
         window_sofa = adm_sofa[
-            (adm_sofa["charttime"] >= t_inf - window)
-            & (adm_sofa["charttime"] <= t_inf + window)
+            (adm_sofa["charttime"] >= t_inf - before)
+            & (adm_sofa["charttime"] <= t_inf + after)
         ]
 
         if window_sofa.empty:

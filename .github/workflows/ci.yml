@@ -4,41 +4,65 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install ruff
-      - run: ruff check src/ tests/
+          cache: pip
+          cache-dependency-path: requirements/dev.txt
+      - name: Install locked dependencies
+        run: |
+          pip install --require-hashes -r requirements/dev.txt
+          pip install --no-deps -e .
+      - run: ruff check src/ tests/ scripts/
+      - name: Locks satisfy pyproject.toml
+        run: python scripts/check_lock.py
 
   typecheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -e ".[dev]"
+          cache: pip
+          cache-dependency-path: requirements/dev.txt
+      - name: Install locked dependencies
+        run: |
+          pip install --require-hashes -r requirements/dev.txt
+          pip install --no-deps -e .
       - run: mypy src/sepsis_vitals --ignore-missing-imports
 
   security:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install bandit[toml]
+          cache: pip
+          cache-dependency-path: requirements/dev.txt
+      - name: Install locked dependencies
+        run: |
+          pip install --require-hashes -r requirements/dev.txt
+          pip install --no-deps -e .
       - run: bandit -r src/ -c pyproject.toml -ll
+      - name: Known vulnerabilities in the deployed set (what the API image installs)
+        run: pip-audit -r requirements/deploy.txt --require-hashes --disable-pip --progress-spinner off
+      - name: Known vulnerabilities in the CI and development set
+        run: pip-audit -r requirements/dev.txt --require-hashes --disable-pip --progress-spinner off
 
   test:
     runs-on: ubuntu-latest
@@ -46,15 +70,49 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -e ".[dev,api,ml]"
-      - run: pytest --tb=short -q
+          cache: pip
+          cache-dependency-path: requirements/dev.txt
+      - name: Install locked dependencies
+        run: |
+          pip install --require-hashes -r requirements/dev.txt
+          pip install --no-deps -e .
+      - name: Known vulnerabilities in the pins for this Python version
+        run: pip-audit -r requirements/dev.txt --require-hashes --disable-pip --progress-spinner off
+      - run: pytest --tb=short -q --durations=15
         if: matrix.python-version != '3.11'
-      - run: pytest --cov=sepsis_vitals --cov-report=term-missing --tb=short -q
+      - run: pytest --cov=sepsis_vitals --cov-report=term-missing --tb=short -q --durations=15
         if: matrix.python-version == '3.11'
+
+  extras:
+    # Each installation set alone, resolved fresh from pyproject.toml into a
+    # clean environment: catches code that relies on a package only another
+    # extra installs, and extras metadata that no longer resolves.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+        extras: ["", "api", "ml", "api,ml", "ml,train", "copilot", "integrations"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install the set into a clean environment
+        env:
+          EXTRAS: ${{ matrix.extras }}
+        run: |
+          python -m venv /tmp/set
+          if [ -n "$EXTRAS" ]; then /tmp/set/bin/pip install ".[$EXTRAS]"; else /tmp/set/bin/pip install .; fi
+          /tmp/set/bin/pip check
+      - name: Smoke test the set
+        env:
+          EXTRAS: ${{ matrix.extras }}
+        run: /tmp/set/bin/python scripts/smoke_extras.py "$EXTRAS"
 
   frontend:
     runs-on: ubuntu-latest
@@ -62,7 +120,7 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -72,4 +130,280 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
-      - run: npm audit --audit-level=high
+      - name: Publish guard (what Pages would deploy)
+        run: ../scripts/check_published_site.sh dist
+      - name: Known vulnerabilities in dashboard dependencies (all severities)
+        run: npm audit
+
+  postgres-migrations:
+    # Alembic upgrade/downgrade, blind-index backfill and an application smoke
+    # test against real PostgreSQL (SQLite cannot run the Postgres-only DDL).
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sepsis
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+          POSTGRES_DB: sepsis_vitals
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sepsis -d sepsis_vitals"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DATABASE_URL: postgresql://sepsis:ci-only-not-a-secret@localhost:5432/sepsis_vitals
+      SEPSIS_JWT_SECRET: ci-only-jwt-secret-not-used-outside-ci-0123456789
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements/dev.txt
+      - name: Install locked dependencies
+        run: |
+          pip install --require-hashes -r requirements/dev.txt
+          pip install --no-deps -e .
+      - name: Bootstrap extensions (as the compose Postgres container does)
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f docker/postgres/init.sql
+      - name: Generate a throwaway PII key for this job
+        run: echo "SEPSIS_PII_KEY=$(python -c 'import base64, os; print(base64.b64encode(os.urandom(32)).decode())')" >> "$GITHUB_ENV"
+      - name: Concurrent upgrades from an empty database (advisory lock)
+        run: |
+          python -m alembic upgrade head & first=$!
+          python -m alembic upgrade head & second=$!
+          wait "$first" && wait "$second"
+          test "$(psql "$DATABASE_URL" -tAc 'SELECT version_num FROM alembic_version')" = "$(python -m alembic heads | cut -d' ' -f1)"
+      - name: Migrations and application smoke test
+        run: python scripts/ci_postgres_smoke.py
+      - name: API, auth, tenant-isolation and parity tests on PostgreSQL
+        run: >-
+          SEPSIS_TEST_DATABASE_URL="$DATABASE_URL" pytest -q -p no:cacheprovider
+          tests/test_tenant_isolation.py tests/test_auth_hardening.py tests/test_inference_parity.py
+          tests/test_mfa.py tests/test_mfa_replay.py tests/test_fhir_ingest.py
+      - name: PII key rotation on PostgreSQL (throwaway keys)
+        # Re-key everything the smoke test and the tests above wrote, then
+        # read it all back with only the new key configured.
+        run: |
+          NEW_KEY=$(python -c 'import base64, os; print(base64.b64encode(os.urandom(32)).decode())')
+          export SEPSIS_PII_PREVIOUS_KEYS="legacy:$SEPSIS_PII_KEY" SEPSIS_PII_KEY="$NEW_KEY" SEPSIS_PII_KEY_ID=ci2
+          python -m sepsis_vitals.pii_rotation inventory
+          python -m sepsis_vitals.pii_rotation rotate --apply --batch-size 3
+          python -m sepsis_vitals.pii_rotation verify
+          SEPSIS_PII_PREVIOUS_KEYS= python - <<'PY'
+          from sepsis_vitals.db import Patient, SessionLocal, User
+          from sepsis_vitals.patients.service import get_patient_by_external_id
+          db = SessionLocal()
+          users = [u.email for u in db.query(User)]
+          patients = db.query(Patient).all()
+          assert users and patients
+          for p in patients:
+              assert get_patient_by_external_id(p.external_id, db, site_id=p.site_id).id == p.id
+          print(f"readable with only the new key: {len(users)} users, {len(patients)} patients")
+          PY
+      - name: API replicas start before the migration task (production)
+        # init_db must not create an unmanaged schema, or the later
+        # `alembic upgrade head` fails on "already exists".
+        env:
+          ORDER_DB: postgresql://sepsis:ci-only-not-a-secret@localhost:5432/sepsis_order_check
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE sepsis_order_check"
+          psql "$ORDER_DB" -v ON_ERROR_STOP=1 -f docker/postgres/init.sql
+          DATABASE_URL="$ORDER_DB" SEPSIS_ENV=production python -c "from sepsis_vitals.db import init_db; init_db()"
+          test "$(psql "$ORDER_DB" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'")" = "0"
+          DATABASE_URL="$ORDER_DB" python -m alembic upgrade head
+          DATABASE_URL="$ORDER_DB" SEPSIS_ENV=production python -c "from sepsis_vitals.db import init_db; init_db()"
+          test "$(psql "$ORDER_DB" -tAc 'SELECT version_num FROM alembic_version')" = "$(python -m alembic heads | cut -d' ' -f1)"
+      - name: Concurrent worker startup on PostgreSQL
+        env:
+          RACE_DB: postgresql://sepsis:ci-only-not-a-secret@localhost:5432/sepsis_startup_race
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE sepsis_startup_race"
+          echo "Without the retry (shows whether this runner reproduces the race; not a gate):"
+          python scripts/ci_concurrent_startup.py --database-url "$RACE_DB" --workers 8 --rounds 3 --attempts 1 || true
+          echo "With the retry (gate):"
+          python scripts/ci_concurrent_startup.py --database-url "$RACE_DB" --workers 8 --rounds 10
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build API image
+        run: docker build -f docker/Dockerfile -t sepsis-vitals-api:ci .
+      - name: API image has the app, ML stack, Postgres driver and Alembic
+        run: >-
+          docker run --rm -e SEPSIS_ENV=development --entrypoint python sepsis-vitals-api:ci
+          -c "import sepsis_vitals.api, sklearn, psycopg, alembic; print('imports ok')"
+      - name: Runs as non-root, ships no model and no .env
+        run: |
+          test "$(docker run --rm --entrypoint id sepsis-vitals-api:ci -u)" != "0"
+          docker run --rm --entrypoint sh sepsis-vitals-api:ci -c 'test ! -e /app/.env && test -z "$(ls -A /models)"'
+      - name: Model absent - API live, predictions explicitly unavailable
+        run: |
+          docker run -d --name api-nomodel -p 18080:8080 -e SEPSIS_ENV=development \
+            -e SEPSIS_AUTH_ENABLED=false -e SEPSIS_RUN_MIGRATIONS=false sepsis-vitals-api:ci
+          for i in $(seq 1 30); do curl -fs localhost:18080/health >/dev/null && break; sleep 2; done
+          curl -fs localhost:18080/model/status | tee /dev/stderr | python -c "import json,sys; s=json.load(sys.stdin); assert s['state']=='absent' and not s['prediction_ready'], s"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:18080/predict -H 'Content-Type: application/json' \
+            -d '{"patient_id":"x","vitals":{"heart_rate":90,"resp_rate":18,"sbp":120}}')
+          test "$code" = "503"
+          docker stop -t 20 api-nomodel
+          test "$(docker inspect -f '{{.State.ExitCode}}' api-nomodel)" = "0"   # clean SIGTERM shutdown
+      - name: Tampered model is refused in the container (integrity failure)
+        run: |
+          cp -r models /tmp/tampered && printf '\0' >> /tmp/tampered/sepsis_model.joblib
+          docker run -d --name api-tampered -p 18082:8080 -e SEPSIS_ENV=development \
+            -e SEPSIS_AUTH_ENABLED=false -e SEPSIS_RUN_MIGRATIONS=false \
+            -v /tmp/tampered:/models:ro sepsis-vitals-api:ci
+          for i in $(seq 1 30); do curl -fs localhost:18082/health >/dev/null && break; sleep 2; done
+          curl -fs localhost:18082/model/status | tee /dev/stderr | python3 -c "import json,sys; s=json.load(sys.stdin); assert s['state']=='invalid' and not s['prediction_ready'] and s['clinical_use']=='not-permitted', s"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:18082/predict -H 'Content-Type: application/json' \
+            -d '{"patient_id":"x","vitals":{"heart_rate":90,"resp_rate":18,"sbp":120}}')
+          test "$code" = "503"
+          docker rm -f api-tampered >/dev/null
+      - name: Four workers start together on a fresh database, five times
+        # Regression for N31: concurrent create_all aborted the whole server.
+        # One green start does not prove a race is gone, so repeat it.
+        run: |
+          for n in 1 2 3 4 5; do
+            docker run -d --name "api-race-$n" -e SEPSIS_ENV=development -e SEPSIS_AUTH_ENABLED=false \
+              -e SEPSIS_RUN_MIGRATIONS=false sepsis-vitals-api:ci >/dev/null
+            ready=0
+            for i in $(seq 1 90); do
+              ready=$(docker logs "api-race-$n" 2>&1 | grep -c "Application startup complete" || true)
+              [ "$ready" -ge 4 ] && break
+              [ "$(docker inspect -f '{{.State.Running}}' "api-race-$n")" = "true" ] || break
+              sleep 1
+            done
+            if docker logs "api-race-$n" 2>&1 | grep -E "startup failed|already exists"; then
+              echo "start $n: a worker failed"; exit 1
+            fi
+            [ "$ready" -ge 4 ] || { echo "start $n: $ready/4 workers up"; docker logs "api-race-$n" 2>&1 | tail -40; exit 1; }
+            echo "start $n: 4/4 workers up"
+            docker rm -f "api-race-$n" >/dev/null
+          done
+      - name: Model mounted read-only - verified, provenance returned, never clinically ready
+        run: |
+          docker run -d --name api-model -p 18081:8080 -e SEPSIS_ENV=development \
+            -e SEPSIS_AUTH_ENABLED=false -e SEPSIS_RUN_MIGRATIONS=false \
+            -v "$PWD/models:/models:ro" sepsis-vitals-api:ci
+          for i in $(seq 1 30); do curl -fs localhost:18081/health >/dev/null && break; sleep 2; done
+          code=$(curl -s -o /tmp/status.json -w '%{http_code}' localhost:18081/model/status)
+          echo "model/status HTTP $code"; cat /tmp/status.json; echo
+          test "$code" = "200"
+          python -c "import json; s=json.load(open('/tmp/status.json')); assert s['state']=='ready' and s['validation_status']=='synthetic-development' and s['clinically_ready'] is False, s"
+          code=$(curl -s -o /tmp/predict.json -w '%{http_code}' -X POST localhost:18081/predict -H 'Content-Type: application/json' \
+            -d '{"patient_id":"probe","age_years":70,"vitals":{"heart_rate":118,"resp_rate":24,"sbp":96,"temperature":38.6,"lactate":2.4}}')
+          echo "predict HTTP $code"; head -c 600 /tmp/predict.json; echo
+          test "$code" = "200"
+          python -c "import json; r=json.load(open('/tmp/predict.json')); assert r['clinical_use']=='not-permitted' and r['provenance']['artifact_sha256'] and r['alert'] is True, r"
+      - name: Container logs on failure
+        if: failure()
+        run: |
+          for c in api-nomodel api-model; do echo "== $c"; docker logs "$c" 2>&1 | tail -80 || true; done
+          docker run --rm --entrypoint pip sepsis-vitals-api:ci list 2>/dev/null | grep -iE "^(numpy|pandas|scipy|scikit-learn|joblib) " || true
+      - name: Build dashboard image
+        run: docker build -f docker/Dockerfile.frontend -t sepsis-vitals-web:ci .
+
+  terraform-validate:
+    # Syntax and provider-schema check of terraform/ only: no backend, no AWS
+    # credentials, no plan or apply against any account.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: terraform fmt and validate (offline)
+        run: |
+          # Formatting is reported, not gated; validate is the gate.
+          docker run --rm -v "$PWD/terraform:/w" -w /w hashicorp/terraform:1.9.8 fmt -check -diff || echo "terraform fmt: differences above (not a gate)"
+          docker run --rm -v "$PWD/terraform:/w" -w /w hashicorp/terraform:1.9.8 init -backend=false -input=false
+          docker run --rm -v "$PWD/terraform:/w" -w /w hashicorp/terraform:1.9.8 validate
+
+  compose-smoke:
+    # The real stack: Postgres + Redis + API (migrations on start) + nginx dashboard.
+    # Exercises login and /api routing through nginx, readiness, model status
+    # and loopback-only infrastructure ports. Throwaway secrets, generated here.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docker
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate throwaway .env
+        run: |
+          openssl genrsa -out /tmp/jwt.pem 2048 2>/dev/null
+          openssl rsa -in /tmp/jwt.pem -pubout -out /tmp/jwt.pub 2>/dev/null
+          rand() { python3 -c 'import secrets; print(secrets.token_hex(24))'; }
+          {
+            echo "POSTGRES_PASSWORD=$(rand)"
+            echo "REDIS_PASSWORD=$(rand)"
+            echo "GRAFANA_PASSWORD=$(rand)"
+            echo "SEPSIS_WEBHOOK_SECRET=$(rand)"
+            echo "SEPSIS_TOKEN_SECRET=$(rand)"
+            echo "SEPSIS_PII_KEY=$(python3 -c 'import base64, os; print(base64.b64encode(os.urandom(32)).decode())')"
+            echo "JWT_PRIVATE_KEY=$(awk '{printf "%s\\n", $0}' /tmp/jwt.pem)"
+            echo "JWT_PUBLIC_KEY=$(awk '{printf "%s\\n", $0}' /tmp/jwt.pub)"
+          } > .env
+      - name: Start db, redis, api, dashboard
+        run: docker compose up -d --build --wait --wait-timeout 300 db redis api dashboard
+      - name: Infrastructure ports are loopback-only
+        run: |
+          for svc in "db 5432" "redis 6379" "api 8080"; do
+            set -- $svc
+            docker compose port "$1" "$2" | grep -q '^127.0.0.1:' || { echo "$1 exposed beyond loopback"; exit 1; }
+          done
+      - name: Login and API routing through nginx (/api)
+        run: |
+          docker compose exec -T api python - <<'PY'
+          from sepsis_vitals.auth.service import register_user
+          from sepsis_vitals.db import SessionLocal
+          db = SessionLocal()
+          register_user("compose.smoke@example.org", "Correct-Horse-Battery-9!", "nurse", "SITE-SMOKE", db)
+          db.close()
+          PY
+          call() {  # call METHOD PATH [BODY] -> prints status, saves body to /tmp/body.json
+            if [ -n "${3:-}" ]; then
+              code=$(curl -s -o /tmp/body.json -w '%{http_code}' -X "$1" "localhost:8000$2" -H 'Content-Type: application/json' ${AUTH:+-H "$AUTH"} -d "$3")
+            else
+              code=$(curl -s -o /tmp/body.json -w '%{http_code}' -X "$1" "localhost:8000$2" ${AUTH:+-H "$AUTH"})
+            fi
+            echo "$1 $2 -> HTTP $code"; head -c 400 /tmp/body.json; echo
+          }
+          call POST /api/auth/login '{"email":"compose.smoke@example.org","password":"Correct-Horse-Battery-9!"}'
+          test "$code" = "200"
+          AUTH="Authorization: Bearer $(python3 -c "import json; print(json.load(open('/tmp/body.json'))['access_token'])")"
+          call GET /api/patients
+          test "$code" = "200" && python3 -c "import json; assert json.load(open('/tmp/body.json')) == []"
+          AUTH= call GET /api/patients
+          test "$code" = "401"
+          call GET /api/ready
+          python3 -c "import json; r=json.load(open('/tmp/body.json')); assert r['ready'] and r['migrations']=='at-head', r"
+          call GET /api/model/status
+          python3 -c "import json; s=json.load(open('/tmp/body.json')); assert s['state']=='ready' and s['clinically_ready'] is False, s"
+          curl -fs localhost:8000/ | grep -q '<div id="root">'
+      - name: End-to-end browser and API checks
+        # SPA at "/", login and EULA, FHIR ingestion to the patient list, tenant
+        # boundaries in the UI, Predict shows rule vs model levels and clinical
+        # use not permitted, password-reset lifecycle, refresh/logout revocation,
+        # admin-only alerts, and liveness vs readiness during a database outage.
+        run: |
+          python -m pip install --require-hashes -r ../requirements/e2e.txt
+          python -m playwright install --with-deps chromium
+          python ../scripts/e2e_compose.py
+      - name: Audit trail reaches the log stream and the database
+        run: |
+          docker compose logs --no-color api | grep -q HIPAA_AUDIT || { echo "no HIPAA_AUDIT lines in the API logs"; exit 1; }
+          if docker compose logs --no-color api | grep -q "@example.org"; then
+            echo "an account email appears in the API logs"; exit 1
+          fi
+          rows=$(docker compose exec -T db psql -U sepsis -d sepsis_vitals -tAc "SELECT count(*) FROM audit_log")
+          echo "audit_log rows: $rows"
+          test "$rows" -ge 1
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --no-color api dashboard | grep -vE "alembic.runtime|Started server|Waiting for app|DB_SSL" | tail -120
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

@@ -10,20 +10,22 @@ import logging
 import os
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
-from sepsis_vitals.auth.middleware import get_current_user
+from sepsis_vitals.auth.mailer import send_password_reset
+from sepsis_vitals.auth.middleware import get_current_user, require_role
 from sepsis_vitals.auth.service import (
     AccountLockedError,
     AuthServiceError,
-    BreakGlassError,
     DuplicateEmailError,
     InvalidCredentialsError,
     InvalidTokenError,
+    MFAEnrollmentRequired,
+    MFARequiredError,
     WeakPasswordError,
-    break_glass_login,
     login_user,
     refresh_access_token,
     register_user,
@@ -59,6 +61,9 @@ class LoginRequest(BaseModel):
 
     email: EmailStr
     password: str = Field(..., min_length=1, max_length=128)
+    otp: Optional[str] = Field(
+        None, max_length=32, description="TOTP or recovery code (required once MFA is enabled)"
+    )
 
 
 class RefreshRequest(BaseModel):
@@ -114,10 +119,22 @@ class BreakGlassResponse(BaseModel):
 
 
 class ProfileUpdateRequest(BaseModel):
-    """Payload for updating the current user's profile."""
+    """Payload for updating the current user's profile.
+
+    ``site_id`` is accepted only from ``system_admin`` users. Tenant
+    assignment for everyone else goes through ``PUT /auth/users/{id}/site``.
+    """
 
     site_id: Optional[str] = Field(
-        None, max_length=32, description="Organisation / site identifier"
+        None, max_length=32, description="Organisation / site identifier (admins only)"
+    )
+
+
+class SiteAssignmentRequest(BaseModel):
+    """Payload for an administrator assigning a user to a site."""
+
+    site_id: Optional[str] = Field(
+        ..., max_length=32, description="Site identifier, or null to remove access"
     )
 
 
@@ -169,6 +186,14 @@ class MessageResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _enrollment_required(exc: MFAEnrollmentRequired) -> JSONResponse:
+    """403 carrying a token that only the /auth/mfa endpoints accept."""
+    return JSONResponse(
+        status_code=status.HTTP_403_FORBIDDEN,
+        content={"detail": "mfa_enrollment_required", "enrollment_token": exc.enrollment_token},
+    )
+
+
 def _user_to_response(user: User) -> UserResponse:
     """Convert a SQLAlchemy ``User`` instance to a ``UserResponse``."""
     return UserResponse(
@@ -196,7 +221,7 @@ def _user_to_response(user: User) -> UserResponse:
 def auth_register(
     body: RegisterRequest,
     db: Session = Depends(get_db),
-) -> RegisterResponse:
+) -> RegisterResponse | JSONResponse:
     """Create a new user account and return JWT tokens."""
     if (
         os.getenv("SEPSIS_ENV", "development") == "production"
@@ -217,6 +242,8 @@ def auth_register(
             org_id=None,
             db_session=db,
         )
+    except MFAEnrollmentRequired as exc:
+        return _enrollment_required(exc)
     except DuplicateEmailError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -250,14 +277,23 @@ def auth_register(
 def auth_login(
     body: LoginRequest,
     db: Session = Depends(get_db),
-) -> TokenResponse:
+) -> TokenResponse | JSONResponse:
     """Authenticate and return access + refresh tokens."""
     try:
         result = login_user(
             email=body.email,
             password=body.password,
             db_session=db,
+            otp=body.otp,
         )
+    except MFARequiredError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="mfa_required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except MFAEnrollmentRequired as exc:
+        return _enrollment_required(exc)
     except AccountLockedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -363,25 +399,17 @@ def auth_logout(
 )
 def auth_password_reset_request(
     body: PasswordResetRequestBody,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> MessageResponse:
-    """Generate a password-reset token.
+    """Email a single-use password-reset link.
 
-    Always returns 200 regardless of whether the email exists, to prevent
-    account enumeration.  In production the token would be sent via email.
+    Always returns the same 200 response, and sends mail after the response,
+    so neither content nor timing reveals whether the account exists.
     """
     token = request_password_reset(email=body.email, db_session=db)
     if token is not None:
-        smtp_configured = bool(os.getenv("SMTP_HOST"))
-        if smtp_configured:
-            # TODO: send email via SMTP when configured
-            logger.info("Password-reset token generated for %s", body.email)
-        else:
-            logger.warning(
-                "Password-reset token generated for %s but SMTP is not configured — "
-                "token cannot be delivered. Set SMTP_HOST to enable email delivery.",
-                body.email,
-            )
+        background_tasks.add_task(send_password_reset, body.email, token)
     return MessageResponse(
         detail="If an account with that email exists, a password-reset link has been sent."
     )
@@ -440,41 +468,27 @@ def auth_verify_email(
 
 @router.post(
     "/break-glass",
-    response_model=BreakGlassResponse,
-    summary="Emergency access — HIPAA § 164.312(a)(2)(ii)",
+    summary="Emergency access (disabled pending an approved policy)",
+    status_code=status.HTTP_403_FORBIDDEN,
 )
-def auth_break_glass(
-    body: BreakGlassRequest,
-    request: Request,
-) -> BreakGlassResponse:
-    """Activate break-glass emergency access.
+def auth_break_glass(body: BreakGlassRequest, request: Request) -> None:
+    """Reject every emergency-access request.
 
-    This endpoint grants 1-hour read-only access for clinical emergencies
-    when normal authentication is unavailable. All usage is heavily audited
-    and triggers immediate compliance alerts.
-
-    The emergency token is a pre-shared secret kept in a sealed envelope
-    in the ward. Its SHA-256 hash is stored in BREAK_GLASS_TOKEN_HASH.
+    The previous implementation issued a token for a user that does not
+    exist and with no site, so every endpoint rejected it: the feature looked
+    available but could not work. Emergency access needs an approved policy
+    (who may invoke it, for which site, with what scope, duration, review and
+    notification) before it is rebuilt; see PROJECT_REVIEW.md (N18). The
+    attempt is still logged for security monitoring, without the token.
     """
     ip = request.client.host if request.client else "unknown"
-    try:
-        result = break_glass_login(
-            emergency_token=body.emergency_token,
-            reason=body.reason,
-            ip_address=ip,
-        )
-    except BreakGlassError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(exc),
-        )
-
-    return BreakGlassResponse(
-        access_token=result["access_token"],
-        token_type=result["token_type"],
-        expires_minutes=result["expires_minutes"],
-        role=result["role"],
-        warning=result["warning"],
+    logger.warning("BREAK-GLASS attempt rejected (feature disabled) | ip=%s", ip)
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=(
+            "Emergency access is disabled: no approved emergency-access policy is "
+            "configured. Contact your system administrator."
+        ),
     )
 
 
@@ -524,9 +538,78 @@ def auth_update_me(
         )
 
     if body.site_id is not None:
+        # Users must not choose their own tenant: that would let anyone read
+        # another hospital's patients by switching site_id.
+        if user.role != "system_admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Site assignment is managed by an administrator",
+            )
         user.site_id = body.site_id
 
     db.commit()
     db.refresh(user)
 
     return _user_to_response(user)
+
+
+@router.put(
+    "/users/{user_id}/site",
+    response_model=UserResponse,
+    summary="Assign a user to a site (system_admin only)",
+)
+def auth_assign_site(
+    user_id: str,
+    body: SiteAssignmentRequest,
+    admin: dict[str, Any] = Depends(require_role("system_admin")),
+    db: Session = Depends(get_db),
+) -> UserResponse:
+    """Set or clear the site a user is scoped to. Every change is logged."""
+    target = db.query(User).filter(User.id == user_id).first()
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    previous = target.site_id
+    target.site_id = body.site_id
+    db.commit()
+    db.refresh(target)
+    logger.warning(
+        "AUDIT site_assignment admin=%s user=%s from=%s to=%s",
+        admin.get("id"), target.id, previous, target.site_id,
+    )
+    return _user_to_response(target)
+
+
+@router.put(
+    "/users/{user_id}/mfa/reset",
+    response_model=UserResponse,
+    summary="Reset another user's MFA after device loss (system_admin only)",
+)
+def auth_reset_mfa(
+    user_id: str,
+    admin: dict[str, Any] = Depends(require_role("system_admin")),
+    db: Session = Depends(get_db),
+) -> UserResponse:
+    """Clear a user's MFA so they can re-enroll; ends all of their sessions.
+
+    Administrators cannot reset their own MFA here: a second administrator
+    (or the operator CLI, sepsis_vitals.auth.admin_cli) must do it, so one
+    compromised admin session cannot strip its own second factor.
+    """
+    from sepsis_vitals.auth.mfa import reset_mfa
+
+    if str(admin.get("id")) == str(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Ask another administrator to reset your MFA",
+        )
+    target = db.query(User).filter(User.id == user_id).first()
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    reset_mfa(target, db)
+    logger.warning("AUDIT mfa_reset admin=%s user=%s", admin.get("id"), target.id)
+    return _user_to_response(target)
+
+
+from sepsis_vitals.auth import mfa as _mfa  # noqa: E402  (mounted under /auth/mfa)
+
+router.include_router(_mfa.router)

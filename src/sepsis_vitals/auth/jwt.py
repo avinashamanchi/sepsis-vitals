@@ -96,11 +96,51 @@ def generate_totp_secret() -> str:
     return pyotp.random_base32()
 
 
-def verify_totp(secret: str, code: str) -> bool:
-    """Return True if *code* is a valid TOTP token for *secret*."""
+#: RFC 6238 time step and the drift tolerated either side of the server's step.
+TOTP_INTERVAL_S = 30
+TOTP_DRIFT_STEPS = 1
+
+
+def _now() -> float:
+    """Wall clock for TOTP checks (tests replace it with a controlled clock)."""
+    return time.time()
+
+
+def current_totp_step(now: Optional[float] = None) -> int:
+    return int((now if now is not None else _now()) // TOTP_INTERVAL_S)
+
+
+def match_totp_step(secret: str, code: str, now: Optional[float] = None) -> Optional[int]:
+    """The time step whose code is *code*, within the tolerated drift, or None.
+
+    Accepted steps are the server's current step and one step either side
+    (RFC 6238 section 5.2: clock drift and transmission delay). Steps are
+    tried newest first, so a code that is valid for two steps (rare
+    collision) resolves to the later one. Anything other than six digits
+    matches nothing. This function is stateless: callers that authenticate
+    must also *consume* the step (``auth.service.consume_totp_step``) so a
+    code cannot be used twice.
+    """
     import pyotp
-    totp = pyotp.TOTP(secret)
-    return totp.verify(code)
+
+    # ASCII only: str.isdigit() also accepts e.g. full-width digits.
+    if not (isinstance(code, str) and len(code) == 6 and code.isascii() and code.isdigit()):
+        return None
+    totp = pyotp.TOTP(secret, interval=TOTP_INTERVAL_S)
+    current = current_totp_step(now)
+    for step in range(current + TOTP_DRIFT_STEPS, current - TOTP_DRIFT_STEPS - 1, -1):
+        if hmac.compare_digest(totp.at(step * TOTP_INTERVAL_S), code):
+            return step
+    return None
+
+
+def verify_totp(secret: str, code: str) -> bool:
+    """Stateless check that *code* is valid for *secret* now (with drift).
+
+    Does **not** prevent reuse. Authentication paths use
+    ``auth.service.verify_second_factor``/``consume_totp_step`` instead.
+    """
+    return match_totp_step(secret, code) is not None
 
 
 def get_totp_uri(secret: str, email: str) -> str:
@@ -115,21 +155,29 @@ def get_totp_uri(secret: str, email: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+MAX_LOCKOUT_SECONDS = 900.0
+
+
 def lockout_duration(failures: int) -> float:
     """Return lockout duration in seconds using exponential backoff.
 
-    0 failures -> 0 seconds.  Each subsequent failure doubles the duration
-    starting from a 1-second base.
+    0 failures -> 0 seconds. Each subsequent failure doubles the duration
+    starting from a 1-second base, capped at 15 minutes so that anyone who
+    knows a clinician's email cannot lock the account out indefinitely (an
+    uncapped 2**n also overflows float after ~1,025 failures).
     """
     if failures <= 0:
         return 0.0
-    return float(2 ** (failures - 1))
+    return float(min(2 ** min(failures - 1, 20), MAX_LOCKOUT_SECONDS))
 
 
 def is_locked_out(lockout_until: Optional[datetime]) -> bool:
     """Return True if the account is currently locked out."""
     if lockout_until is None:
         return False
+    if lockout_until.tzinfo is None:
+        # SQLite drops tzinfo from DateTime(timezone=True); values are UTC.
+        lockout_until = lockout_until.replace(tzinfo=timezone.utc)
     return datetime.now(timezone.utc) < lockout_until
 
 

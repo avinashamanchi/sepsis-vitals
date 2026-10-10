@@ -61,21 +61,23 @@ CHART_VITALS: dict[int, str] = {
     220051: "dbp",   # Arterial DBP
     # SpO2
     220277: "spo2",
-    # GCS components -> we sum them
-    223901: "gcs_eye",
-    223900: "gcs_verbal",
-    220739: "gcs_motor",
+    # GCS components -> summed only when all three are charted together
+    220739: "gcs_eye",     # "GCS - Eye Opening"
+    223900: "gcs_verbal",  # "GCS - Verbal Response"
+    223901: "gcs_motor",   # "GCS - Motor Response"
     # MAP
     220052: "map",   # Arterial MAP
     220181: "map",   # Non-invasive MAP
 }
 
 LAB_ITEMS: dict[int, str] = {
-    50813: "lactate",        # Lactate (blood gas)
-    51265: "wbc",            # White blood cells
-    # Procalcitonin -- MIMIC-IV does not consistently include PCT;
-    # when present it uses the following itemid.
-    50889: "procalcitonin",
+    50813: "lactate",  # "Lactate" (Blood Gas)
+    52442: "lactate",  # "Lactate" (Blood Gas)
+    51301: "wbc",      # "White Blood Cells" (Hematology), K/uL
+    51300: "wbc",      # "WBC Count" (Hematology), K/uL
+    # MIMIC-IV has no procalcitonin item; procalcitonin stays missing.
+    # Do not substitute 50889 ("C-Reactive Protein", mg/L) or 51265
+    # ("Platelet Count") -- both were previously mis-mapped here.
 }
 
 # Fahrenheit itemids that need conversion
@@ -205,13 +207,16 @@ class MIMICLoader:
         gcs_mask = df["vital_name"].isin({"gcs_eye", "gcs_verbal", "gcs_motor"})
         if gcs_mask.any():
             gcs = df[gcs_mask].copy()
+            components = gcs.pivot_table(
+                index=["stay_id", "charttime"],
+                columns="vital_name",
+                values="valuenum",
+                aggfunc="first",
+            ).reindex(columns=["gcs_eye", "gcs_verbal", "gcs_motor"])
+            # A partial sum (e.g. verbal not charted in intubated patients) would
+            # read as a falsely low total GCS, so require all three components.
             gcs_total = (
-                gcs.pivot_table(
-                    index=["stay_id", "charttime"],
-                    columns="vital_name",
-                    values="valuenum",
-                    aggfunc="first",
-                )
+                components.dropna()
                 .sum(axis=1)
                 .reset_index(name="valuenum")
             )
@@ -605,6 +610,13 @@ class MIMICLoader:
         neither_mask = ~s3_mask & ~fb_mask
         stays.loc[neither_mask, "label_source"] = "sepsis3"
 
+        # Onset times from the real SOFA series, for per-observation labels
+        onset_by_hadm = (
+            onsets.groupby("hadm_id")["t_sepsis_onset"].min().to_dict()
+            if not onsets.empty else {}
+        )
+        stays["t_sepsis_onset"] = pd.to_datetime(stays["hadm_id"].map(onset_by_hadm))
+
         n_positive = stays["sepsis_label"].sum()
         n_total = len(stays)
         n_s3 = s3_mask.sum()
@@ -645,11 +657,6 @@ class MIMICLoader:
             Training-ready DataFrame with vitals, labs, scores, demographics,
             comorbidities, and sepsis labels.
         """
-        from sepsis_vitals.ml.sepsis3_labeler import (
-            derive_sepsis_onset,
-            find_suspected_infections,
-        )
-
         # 1. Get ICU stays with sepsis labels
         stays = self.derive_sepsis_labels()
         if max_patients:
@@ -676,41 +683,15 @@ class MIMICLoader:
         # 5. Load comorbidities
         comorbidities = self.load_comorbidities()
 
-        # 6. Get sepsis onset times for per-observation labeling
-        antibiotics = self.load_antibiotics()
-        cultures = self.load_cultures()
-        infections = find_suspected_infections(antibiotics, cultures)
-
-        # Build onset map: hadm_id -> t_sepsis_onset by re-deriving onsets
-        # from the same suspected-infection pairs.
-        onset_map: dict = {}
-        if not infections.empty:
-            # Build lightweight SOFA series for onset derivation
-            sofa_rows_for_onset = []
-            stay_hadm = stays.set_index("stay_id")["hadm_id"].to_dict()
-            stay_subject = stays.set_index("stay_id")["subject_id"].to_dict()
-            for sid in stay_id_set:
-                hadm = stay_hadm.get(sid)
-                subject = stay_subject.get(sid)
-                if hadm is None or subject is None:
-                    continue
-                sv = vitals[vitals["stay_id"] == sid]
-                if sv.empty:
-                    continue
-                for ct in sv["charttime"].dropna().unique():
-                    sofa_rows_for_onset.append({
-                        "subject_id": subject,
-                        "hadm_id": hadm,
-                        "charttime": ct,
-                    })
-            if sofa_rows_for_onset:
-                sofa_df = pd.DataFrame(sofa_rows_for_onset)
-                sofa_df["charttime"] = pd.to_datetime(sofa_df["charttime"])
-                # Add minimal SOFA columns (GCS, MAP from vitals)
-                sofa_df["sofa_total"] = 0  # Placeholder — onset already derived
-                onsets = derive_sepsis_onset(sofa_df, infections)
-                if not onsets.empty:
-                    onset_map = onsets.set_index("hadm_id")["t_sepsis_onset"].to_dict()
+        # 6. Sepsis onset times for per-observation labels. They come from
+        # derive_sepsis_labels, which computes SOFA from labs, vitals and
+        # vasopressors. (This step used to re-derive onsets from a placeholder
+        # SOFA of 0, which never rose, so every Sepsis-3 stay was labelled 0.)
+        onset_map: dict = (
+            stays.dropna(subset=["t_sepsis_onset"])
+            .set_index("hadm_id")["t_sepsis_onset"]
+            .to_dict()
+        )
 
         # ICD fallback hadms (for admissions without Sepsis-3 onset)
         diag = self._read_csv(

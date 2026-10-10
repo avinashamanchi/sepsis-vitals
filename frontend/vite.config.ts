@@ -37,9 +37,9 @@ export default defineConfig({
     }),
   ],
   base: '/sepsis-vitals/',
+  // Built in CI (pages.yml, Dockerfile.frontend); the output is not committed.
   build: {
-    outDir: '../docs',
-    emptyOutDir: true,
+    outDir: 'dist',
   },
   server: {
     port: 3000,
@@ -47,6 +47,8 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,
+        // The backend serves routes at the root (e.g. /patients), like nginx's /api/ proxy.
+        rewrite: (path) => path.replace(/^\/api/, ''),
       },
       '/ws': {
         target: 'ws://localhost:8080',

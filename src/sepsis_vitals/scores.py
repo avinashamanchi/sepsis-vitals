@@ -26,7 +26,9 @@ def qsofa(vitals: dict) -> tuple[int, dict]:
     else:
         flags["qsofa_rr"] = False
 
-    # GCS <= 13
+    # Altered mentation, operationalised as GCS <= 13 (as in the qSOFA
+    # derivation, Seymour et al. JAMA 2016). Many bedside tools use GCS < 15;
+    # the stricter cut-off lowers sensitivity and is a deliberate choice.
     if _has(vitals, "gcs"):
         fired = vitals["gcs"] <= 13
         flags["qsofa_gcs"] = fired
@@ -54,10 +56,10 @@ def partial_sirs(vitals: dict) -> tuple[int, dict]:
     count = 0
     flags: dict[str, bool] = {}
 
-    # Temperature > 38.3 or < 36
+    # Temperature > 38.0 or < 36.0 (ACCP/SCCM 1992 consensus)
     if _has(vitals, "temperature"):
         temp = vitals["temperature"]
-        fired = temp > 38.3 or temp < 36.0
+        fired = temp > 38.0 or temp < 36.0
         flags["sirs_temp"] = fired
         if fired:
             count += 1
@@ -99,14 +101,23 @@ def shock_index(vitals: dict) -> float | None:
 
 
 def news2_style(vitals: dict) -> int:
-    """NEWS2-style aggregate score. Returns total score.
+    """NEWS2-style aggregate score (Royal College of Physicians, 2017). Returns total.
 
-    Supports both Scale 1 (default) and Scale 2 (for patients on
-    supplemental oxygen or with hypercapnic respiratory failure).
-    Pass ``on_supplemental_o2=True`` in vitals to use Scale 2.
+    Oxygen handling follows the NEWS2 chart:
+
+    * ``on_supplemental_o2=True`` adds 2 points ("Air or oxygen?" parameter).
+      It does **not** change the SpO2 scale.
+    * ``spo2_scale2=True`` selects SpO2 Scale 2, which is only for patients
+      with a prescribed 88-92% target (e.g. confirmed hypercapnic
+      respiratory failure). On Scale 2, saturations of 93% or more score
+      0 on air and 1/2/3 only while on oxygen.
+
+    Consciousness is approximated from GCS (< 15 scores 3); a full ACVPU
+    assessment, including new confusion, is not modelled.
     """
     total = 0
-    use_scale2 = bool(vitals.get("on_supplemental_o2"))
+    on_oxygen = bool(vitals.get("on_supplemental_o2"))
+    use_scale2 = bool(vitals.get("spo2_scale2"))
 
     # Respiratory rate
     if _has(vitals, "resp_rate"):
@@ -126,23 +137,22 @@ def news2_style(vitals: dict) -> int:
     if _has(vitals, "spo2"):
         spo2 = vitals["spo2"]
         if use_scale2:
-            # Scale 2: target 88-92% for hypercapnic patients
             if spo2 <= 83:
                 total += 3
             elif spo2 <= 85:
                 total += 2
             elif spo2 <= 87:
                 total += 1
-            elif spo2 <= 92:
-                total += 0  # target range
+            elif spo2 <= 92 or not on_oxygen:
+                total += 0  # target range, or >= 93 on air
             elif spo2 <= 94:
-                total += 1
+                total += 1  # 93-94 on oxygen
             elif spo2 <= 96:
-                total += 2
-            else:  # >= 97
-                total += 3
+                total += 2  # 95-96 on oxygen
+            else:
+                total += 3  # >= 97 on oxygen
         else:
-            # Scale 1: standard (room air / non-hypercapnic)
+            # Scale 1: standard
             if spo2 <= 91:
                 total += 3
             elif spo2 <= 93:
@@ -151,6 +161,10 @@ def news2_style(vitals: dict) -> int:
                 total += 1
             else:  # >= 96
                 total += 0
+
+    # Air or oxygen?
+    if on_oxygen:
+        total += 2
 
     # SBP
     if _has(vitals, "sbp"):

@@ -4,8 +4,8 @@ sepsis_vitals.patients.router
 FastAPI router for patient data management, vitals persistence, alert
 lifecycle, and site-level dashboard statistics.
 
-All endpoints accept an auth/user dependency parameter for downstream
-integration with whichever authentication middleware is active.
+Every endpoint is tenant-scoped through :mod:`sepsis_vitals.auth.scope`:
+non-admin users only see and modify patients at their own site.
 """
 
 from __future__ import annotations
@@ -17,8 +17,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from sepsis_vitals.api import verify_auth
-from sepsis_vitals.db import get_db
+from sepsis_vitals.dependencies import verify_auth
+from sepsis_vitals.auth.scope import (
+    ensure_site_write,
+    is_unscoped,
+    load_patient_for_user,
+    require_site,
+    resolve_site_filter,
+)
+from sepsis_vitals.db import Alert, get_db
 from sepsis_vitals.patients import service
 
 # ---------------------------------------------------------------------------
@@ -68,6 +75,18 @@ class PatientOut(BaseModel):
     updated_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+
+class PatientSummaryOut(PatientOut):
+    """Patient with their latest observation, for list views.
+
+    The ``latest_*`` fields are null until the patient has a recorded
+    observation; clients must show that as "not yet observed", not as low risk.
+    """
+
+    latest_vitals: Optional[Dict[str, float]] = None
+    latest_risk_level: Optional[str] = None
+    latest_recorded_at: Optional[datetime] = None
 
 
 class VitalsRecord(BaseModel):
@@ -154,14 +173,18 @@ class AlertOut(BaseModel):
 class AlertAcknowledge(BaseModel):
     """Body for acknowledging an alert."""
 
-    user_id: str = Field(..., min_length=1, description="ID of the user acknowledging")
+    user_id: Optional[str] = Field(
+        None, description="Deprecated and ignored; the authenticated user is recorded"
+    )
     reason: str = Field(..., min_length=1, max_length=1000, description="Reason for acknowledgement")
 
 
 class AlertEscalate(BaseModel):
     """Body for escalating an alert."""
 
-    user_id: str = Field(..., min_length=1, description="ID of the user escalating")
+    user_id: Optional[str] = Field(
+        None, description="Deprecated and ignored; the authenticated user is recorded"
+    )
     escalated_to: str = Field(..., min_length=1, max_length=200, description="Recipient (name, role, or pager ID)")
     reason: str = Field(..., min_length=1, max_length=1000, description="Reason for escalation")
 
@@ -214,7 +237,8 @@ def create_patient(
     db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(verify_auth),
 ) -> PatientOut:
-    """Register a new patient."""
+    """Register a new patient at the caller's own site."""
+    ensure_site_write(user, body.site_id)
     try:
         patient = service.create_patient(
             external_id=body.external_id,
@@ -223,17 +247,17 @@ def create_patient(
             sex=body.sex,
             db=db,
         )
-    except ValueError as exc:
+    except ValueError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
+            detail="Patient could not be created",
         )
     return PatientOut.model_validate(patient)
 
 
 @router.get(
     "",
-    response_model=List[PatientOut],
+    response_model=List[PatientSummaryOut],
     summary="List patients",
 )
 def list_patients(
@@ -242,10 +266,17 @@ def list_patients(
     limit: int = Query(50, ge=1, le=200, description="Max records to return"),
     db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(verify_auth),
-) -> List[PatientOut]:
-    """Return a paginated list of patients, optionally filtered by site."""
-    patients = service.list_patients(site_id=site_id, db=db, skip=skip, limit=limit)
-    return [PatientOut.model_validate(p) for p in patients]
+) -> List[PatientSummaryOut]:
+    """Return a paginated list of patients at the caller's site, with latest observations."""
+    site_filter = resolve_site_filter(user, site_id)
+    patients = service.list_patients(site_id=site_filter, db=db, skip=skip, limit=limit)
+    latest = service.latest_observations([p.id for p in patients], db)
+    return [
+        PatientSummaryOut(
+            **PatientOut.model_validate(p).model_dump(), **latest.get(p.id, {})
+        )
+        for p in patients
+    ]
 
 
 @router.get(
@@ -259,12 +290,7 @@ def get_patient(
     user: Dict[str, Any] = Depends(verify_auth),
 ) -> PatientOut:
     """Retrieve a single patient by ID."""
-    patient = service.get_patient(patient_id, db)
-    if patient is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Patient '{patient_id}' not found",
-        )
+    patient = load_patient_for_user(patient_id, user, db)
     return PatientOut.model_validate(patient)
 
 
@@ -280,7 +306,13 @@ def update_patient(
     user: Dict[str, Any] = Depends(verify_auth),
 ) -> PatientOut:
     """Update mutable fields on a patient record."""
+    load_patient_for_user(patient_id, user, db)
     updates = body.model_dump(exclude_unset=True)
+    if "site_id" in updates and not is_unscoped(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only an administrator can move a patient between sites",
+        )
     if not updates:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -318,6 +350,7 @@ def record_vitals(
     Automatically computes clinical scores (qSOFA, SIRS, NEWS2, Shock Index,
     UVA) and creates an alert if the risk level is high or critical.
     """
+    load_patient_for_user(patient_id, user, db)
     vitals_dict = body.model_dump(exclude={"recorded_at"}, exclude_none=True)
     if not vitals_dict:
         raise HTTPException(
@@ -356,12 +389,7 @@ def get_patient_vitals(
     user: Dict[str, Any] = Depends(verify_auth),
 ) -> List[VitalReadingOut]:
     """Return vital-sign readings for a patient within the look-back window."""
-    patient = service.get_patient(patient_id, db)
-    if patient is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Patient '{patient_id}' not found",
-        )
+    load_patient_for_user(patient_id, user, db)
     readings = service.get_patient_vitals(patient_id, db, hours_back=hours_back)
     return [VitalReadingOut.model_validate(r) for r in readings]
 
@@ -382,12 +410,7 @@ def get_patient_history(
     user: Dict[str, Any] = Depends(verify_auth),
 ) -> PatientHistoryOut:
     """Return the full clinical history (vitals, scores, alerts) for a patient."""
-    patient = service.get_patient(patient_id, db)
-    if patient is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Patient '{patient_id}' not found",
-        )
+    load_patient_for_user(patient_id, user, db)
     history = service.get_patient_history(patient_id, db)
     return PatientHistoryOut(**history)
 
@@ -397,6 +420,19 @@ def get_patient_history(
 # ---------------------------------------------------------------------------
 
 alerts_router = APIRouter(prefix="/alerts", tags=["alerts"])
+
+
+def _ensure_alert_access(alert_id: str, user: Dict[str, Any], db: Session) -> None:
+    """404 unless the alert's patient is at the caller's site."""
+    alert = db.query(Alert).filter(Alert.id == alert_id).first()
+    if alert is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
+    try:
+        load_patient_for_user(alert.patient_id, user, db)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_404_NOT_FOUND:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
+        raise
 
 
 @alerts_router.get(
@@ -409,8 +445,8 @@ def list_active_alerts(
     db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(verify_auth),
 ) -> List[AlertOut]:
-    """Return all currently active (unacknowledged) alerts."""
-    alerts = service.get_active_alerts(site_id=site_id, db=db)
+    """Return currently active (unacknowledged) alerts at the caller's site."""
+    alerts = service.get_active_alerts(site_id=resolve_site_filter(user, site_id), db=db)
     return [AlertOut.model_validate(a) for a in alerts]
 
 
@@ -426,10 +462,11 @@ def acknowledge_alert(
     user: Dict[str, Any] = Depends(verify_auth),
 ) -> AlertOut:
     """Acknowledge an active alert with a reason."""
+    _ensure_alert_access(alert_id, user, db)
     try:
         alert = service.acknowledge_alert(
             alert_id=alert_id,
-            user_id=body.user_id,
+            user_id=str(user.get("id") or "unknown"),
             reason=body.reason,
             db=db,
         )
@@ -459,10 +496,11 @@ def escalate_alert(
     user: Dict[str, Any] = Depends(verify_auth),
 ) -> AlertOut:
     """Escalate an active or acknowledged alert to a specified recipient."""
+    _ensure_alert_access(alert_id, user, db)
     try:
         alert = service.escalate_alert(
             alert_id=alert_id,
-            user_id=body.user_id,
+            user_id=str(user.get("id") or "unknown"),
             escalated_to=body.escalated_to,
             reason=body.reason,
             db=db,
@@ -494,12 +532,14 @@ dashboard_router = APIRouter(prefix="/dashboard", tags=["dashboard"])
     summary="Site dashboard statistics",
 )
 def get_dashboard_stats(
-    site_id: str = Query(..., min_length=1, description="Site to query"),
+    site_id: Optional[str] = Query(
+        None, min_length=1, description="Site to query (administrators only; defaults to own site, or all sites for administrators)"
+    ),
     db: Session = Depends(get_db),
     user: Dict[str, Any] = Depends(verify_auth),
 ) -> DashboardStats:
-    """Return aggregate statistics for the site dashboard."""
-    stats = service.get_site_dashboard_stats(site_id=site_id, db=db)
+    """Return aggregate statistics for the caller's site (admins: any or all sites)."""
+    stats = service.get_site_dashboard_stats(site_id=resolve_site_filter(user, site_id), db=db)
     return DashboardStats(**stats)
 
 
@@ -514,7 +554,7 @@ def get_weekly_trends(
     user: Dict[str, Any] = Depends(verify_auth),
 ) -> List[WeeklyTrendItem]:
     """Return daily prediction and alert counts for the specified period."""
-    trends = service.get_weekly_trends(db=db, days=days)
+    trends = service.get_weekly_trends(db=db, days=days, site_id=require_site(user))
     return [WeeklyTrendItem(**t) for t in trends]
 
 
@@ -529,7 +569,7 @@ def get_risk_distribution(
     user: Dict[str, Any] = Depends(verify_auth),
 ) -> List[RiskDistItem]:
     """Return risk level breakdown from recent predictions."""
-    dist = service.get_risk_distribution(db=db, hours_back=hours_back)
+    dist = service.get_risk_distribution(db=db, hours_back=hours_back, site_id=require_site(user))
     return [RiskDistItem(**d) for d in dist]
 
 
@@ -539,3 +579,8 @@ def get_risk_distribution(
 
 router.include_router(alerts_router)
 router.include_router(dashboard_router)
+
+# Included routes are appended after "/{patient_id}", which would capture
+# GET /patients/alerts as patient_id="alerts" (the endpoint was unreachable).
+# Keep fixed paths ahead of the patient-id patterns; the sort is stable.
+router.routes[:] = sorted(router.routes, key=lambda r: "{patient_id}" in getattr(r, "path", ""))

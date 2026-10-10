@@ -14,8 +14,12 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+from sepsis_vitals.security import log_ref  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -361,6 +365,9 @@ class VitalsIngester:
         self.registry = registry
         self.tracker = tracker
         self.ws_manager = ws_manager
+        # Recent observations per patient, so predictions use the same
+        # deltas / rolling statistics / observation gap as training.
+        self._recent: Dict[str, deque] = {}
 
     async def ingest_single(
         self,
@@ -389,10 +396,16 @@ class VitalsIngester:
         }
         self.registry.update_vitals(patient_id, numeric_vitals)
 
+        # Keep every observation (debounced or not) as history for later predictions
+        observed_at = datetime.now(timezone.utc)
+        recent = self._recent.setdefault(patient_id, deque(maxlen=4))
+        history = list(recent)
+        recent.append({**numeric_vitals, "timestamp": observed_at})
+
         # Check debounce
         now = time.time()
         if self.registry.should_debounce(patient_id, now):
-            logger.debug("Debounced prediction for patient %s", patient_id)
+            logger.debug("Debounced prediction for patient %s", log_ref(patient_id))
             return None
 
         # Run prediction
@@ -405,6 +418,8 @@ class VitalsIngester:
             patient_id=patient_id,
             age_years=age_years,
             comorbidities=comorbidities,
+            history=history,
+            observed_at=observed_at,
         )
 
         # Record prediction time

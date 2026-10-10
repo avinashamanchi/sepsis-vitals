@@ -23,9 +23,66 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
 
+_PUSH_SERVICE_HOSTS = (
+    "fcm.googleapis.com",
+    "updates.push.services.mozilla.com",
+    ".push.apple.com",
+    ".notify.windows.com",
+)
+
+
+def _user_id(user: Any) -> str:
+    """Return the authenticated user's id for audit attribution."""
+    if isinstance(user, dict):
+        return str(user.get("id") or "unknown")
+    return str(getattr(user, "id", "unknown"))
+
+
+def _is_admin(user: Any) -> bool:
+    return isinstance(user, dict) and user.get("role") == "system_admin"
+
+
+def _ensure_tracked_alert_access(alert_id: str, user: Any) -> None:
+    """404 unless the tracked alert's patient is at the caller's site."""
+    from sepsis_vitals.auth.scope import load_patient_for_user
+    from sepsis_vitals.db import get_db
+
+    manager = get_escalation_manager()
+    try:
+        patient_id = manager.get_alert_status(alert_id)["patient_id"]
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found.")
+    if _is_admin(user):
+        return
+    db_gen = get_db()
+    db = next(db_gen)
+    try:
+        load_patient_for_user(patient_id, user, db)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found.")
+        raise
+    finally:
+        db_gen.close()
+
+
+def _validate_push_endpoint(endpoint: str) -> None:
+    """Accept only https endpoints on known browser push services (prevents SSRF)."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(endpoint)
+    host = (parsed.hostname or "").lower()
+    allowed = any(
+        host == h.lstrip(".") or (h.startswith(".") and host.endswith(h))
+        for h in _PUSH_SERVICE_HOSTS
+    )
+    if parsed.scheme != "https" or not allowed:
+        raise HTTPException(status_code=422, detail="Unsupported push endpoint.")
+
+
 async def _require_auth(request: Request):
     """Require authentication for alerts endpoints."""
-    from sepsis_vitals.api import verify_auth
+    from sepsis_vitals.dependencies import verify_auth
     return await verify_auth(request)
 
 
@@ -37,11 +94,11 @@ async def _require_auth(request: Request):
 class ContactCreate(BaseModel):
     """Register a notification contact."""
 
-    user_id: str = Field(
-        ...,
+    user_id: Optional[str] = Field(
+        None,
         min_length=1,
         max_length=100,
-        description="User or staff identifier.",
+        description="Staff identifier (administrators only; defaults to the caller).",
     )
     channel: str = Field(
         ...,
@@ -221,9 +278,11 @@ async def create_contact(body: ContactCreate, user = Depends(_require_auth)) -> 
             ),
         )
 
+    if body.user_id is not None and body.user_id != _user_id(user) and not _is_admin(user):
+        raise HTTPException(status_code=403, detail="Cannot register contacts for another user.")
     dispatcher = get_dispatcher()
     contact = dispatcher.register_contact(
-        user_id=body.user_id,
+        user_id=body.user_id or _user_id(user),
         channel=body.channel,
         destination=body.destination,
     )
@@ -236,9 +295,11 @@ async def create_contact(body: ContactCreate, user = Depends(_require_auth)) -> 
     summary="List registered contacts",
 )
 async def list_contacts(user = Depends(_require_auth)) -> ContactListResponse:
-    """Return every notification contact currently registered."""
+    """Return the caller's notification contacts (administrators see all)."""
     dispatcher = get_dispatcher()
     contacts = dispatcher.list_contacts()
+    if not _is_admin(user):
+        contacts = [c for c in contacts if c.get("user_id") == _user_id(user)]
     return ContactListResponse(
         contacts=[ContactResponse(**c) for c in contacts],
         count=len(contacts),
@@ -251,8 +312,12 @@ async def list_contacts(user = Depends(_require_auth)) -> ContactListResponse:
     summary="Remove a notification contact",
 )
 async def delete_contact(contact_id: str, user = Depends(_require_auth)) -> MessageResponse:
-    """Unregister a contact so it no longer receives alerts."""
+    """Unregister one of the caller's contacts (administrators may remove any)."""
     dispatcher = get_dispatcher()
+    if not _is_admin(user):
+        owned = {c.get("id") for c in dispatcher.list_contacts() if c.get("user_id") == _user_id(user)}
+        if contact_id not in owned:
+            raise HTTPException(status_code=404, detail="Contact not found.")
     removed = dispatcher.remove_contact(contact_id)
     if not removed:
         raise HTTPException(status_code=404, detail="Contact not found.")
@@ -270,6 +335,9 @@ async def send_test_alert(body: TestAlertRequest, user = Depends(_require_auth))
     Use this after registering a new phone number to confirm SMS
     delivery is working before going live.
     """
+    if not _is_admin(user):
+        # Arbitrary destinations make this an SMS/push relay; keep it admin-only.
+        raise HTTPException(status_code=403, detail="Test alerts are restricted to administrators.")
     if body.channel not in VALID_CHANNELS:
         raise HTTPException(
             status_code=422,
@@ -299,6 +367,9 @@ async def delivery_history(
     Useful for auditing whether SMS messages were actually delivered
     and diagnosing gateway failures.
     """
+    if not _is_admin(user):
+        # Delivery records contain destinations and patient references for every site.
+        raise HTTPException(status_code=403, detail="Delivery history is restricted to administrators.")
     dispatcher = get_dispatcher()
     history = dispatcher.get_history(limit=limit, offset=offset)
     return DeliveryHistoryResponse(
@@ -319,6 +390,7 @@ async def subscribe_push(body: PushSubscriptionRequest, user = Depends(_require_
     The client should call this with the ``PushSubscription`` object
     obtained from ``serviceWorkerRegistration.pushManager.subscribe()``.
     """
+    _validate_push_endpoint(body.endpoint)
     dispatcher = get_dispatcher()
     push_service = dispatcher._push_service
     if push_service is None:
@@ -360,8 +432,9 @@ async def acknowledge_alert(alert_id: str, user=Depends(_require_auth)) -> AckRe
 
     The authenticated user is recorded as the acknowledger.
     """
+    _ensure_tracked_alert_access(alert_id, user)
     manager = get_escalation_manager()
-    user_id = user.get("sub", "unknown") if isinstance(user, dict) else getattr(user, "id", "unknown")
+    user_id = _user_id(user)
     try:
         result = manager.acknowledge_alert(alert_id, user_id=user_id)
     except KeyError:
@@ -380,8 +453,9 @@ async def resolve_alert(
     user=Depends(_require_auth),
 ) -> ResolveResponse:
     """Mark an alert as resolved with an optional reason."""
+    _ensure_tracked_alert_access(alert_id, user)
     manager = get_escalation_manager()
-    user_id = user.get("sub", "unknown") if isinstance(user, dict) else getattr(user, "id", "unknown")
+    user_id = _user_id(user)
     reason = body.reason if body else None
     try:
         result = manager.resolve_alert(alert_id, user_id=user_id, reason=reason)
@@ -401,8 +475,9 @@ async def snooze_alert(
     user=Depends(_require_auth),
 ) -> SnoozeResponse:
     """Delay escalation of an alert for the specified number of minutes."""
+    _ensure_tracked_alert_access(alert_id, user)
     manager = get_escalation_manager()
-    user_id = user.get("sub", "unknown") if isinstance(user, dict) else getattr(user, "id", "unknown")
+    user_id = _user_id(user)
     try:
         result = manager.snooze_alert(
             alert_id, user_id=user_id, snooze_minutes=body.minutes if body else 15
@@ -421,6 +496,7 @@ async def get_alert_lifecycle(
     alert_id: str, user=Depends(_require_auth)
 ) -> LifecycleResponse:
     """Return the full lifecycle audit trail for an alert."""
+    _ensure_tracked_alert_access(alert_id, user)
     manager = get_escalation_manager()
     try:
         trail = manager.get_alert_lifecycle(alert_id)

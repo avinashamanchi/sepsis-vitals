@@ -125,6 +125,30 @@ class TestFeaturePreparation:
         assert "n_vitals_missing" in feature_cols
         assert "temperature_missing" in feature_cols
 
+    def test_no_labs_feature_set_excludes_raw_derived_and_missingness_lab_signals(self):
+        """Catches a no-labs experiment that accidentally retains a lab-derived signal."""
+        from sepsis_vitals.ml.synthetic_data import generate_dataset
+        from sepsis_vitals.ml.trainer import LAB_DERIVED, LAB_FEATURES, prepare_features
+
+        df = generate_dataset(n_patients=20, seed=42)
+        full_features, _ = prepare_features(df, feature_set="full")
+        features, feature_cols = prepare_features(df, feature_set="no_labs")
+
+        assert set(LAB_FEATURES + LAB_DERIVED).isdisjoint(feature_cols)
+        assert "heart_rate" in feature_cols
+        assert "heart_rate_roll_mean" in feature_cols
+        assert features["sepsis_label"].equals(full_features["sepsis_label"])
+
+    def test_unknown_feature_set_is_rejected(self):
+        """Catches silent fallback to the full model after a misspelled ablation name."""
+        from sepsis_vitals.ml.synthetic_data import generate_dataset
+        from sepsis_vitals.ml.trainer import prepare_features
+
+        df = generate_dataset(n_patients=5, seed=42)
+
+        with pytest.raises(ValueError, match="Unknown feature set"):
+            prepare_features(df, feature_set="no_lab_typo")
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Model Training (small scale)
@@ -327,7 +351,7 @@ class TestAPI:
         from fastapi.testclient import TestClient
         import sepsis_vitals.api as api
 
-        monkeypatch.setattr(api, "_auth_enabled", False)
+        monkeypatch.setattr("sepsis_vitals.dependencies._auth_enabled", False)
 
         client = TestClient(api.app)
         vitals = {"temperature": 39.0, "heart_rate": 120, "resp_rate": 24, "sbp": 85, "gcs": 13}
@@ -341,7 +365,7 @@ class TestAPI:
         from fastapi.testclient import TestClient
         import sepsis_vitals.api as api
 
-        monkeypatch.setattr(api, "_auth_enabled", False)
+        monkeypatch.setattr("sepsis_vitals.dependencies._auth_enabled", False)
         client = TestClient(api.app)
         # Reset predictor
         api._predictor = None

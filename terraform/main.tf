@@ -202,14 +202,20 @@ resource "aws_ecs_task_definition" "api" {
     environment = [
       { name = "SEPSIS_ENV",   value = var.environment },
       { name = "LOG_LEVEL",    value = "INFO" },
+      # The ALB sits inside the VPC; trust its X-Forwarded-For only.
+      { name = "TRUSTED_PROXIES", value = var.vpc_cidr },
+      # Several replicas start concurrently: run `alembic upgrade head` as a
+      # one-off task before deploying instead of on every container start.
+      { name = "SEPSIS_RUN_MIGRATIONS", value = "false" },
     ]
     secrets = [
       { name = "DATABASE_URL",          valueFrom = "${aws_secretsmanager_secret.db_url.arn}" },
-      { name = "ANTHROPIC_API_KEY",     valueFrom = "${aws_secretsmanager_secret.anthropic.arn}" },
       { name = "JWT_PRIVATE_KEY",       valueFrom = "${aws_secretsmanager_secret.jwt_private.arn}" },
       { name = "JWT_PUBLIC_KEY",        valueFrom = "${aws_secretsmanager_secret.jwt_public.arn}" },
       { name = "SEPSIS_PII_KEY",        valueFrom = "${aws_secretsmanager_secret.pii_key.arn}" },
       { name = "SEPSIS_WEBHOOK_SECRET", valueFrom = "${aws_secretsmanager_secret.webhook.arn}" },
+      # HMAC key for password-reset and email-verification tokens (JWTs use the RSA keys).
+      { name = "SEPSIS_TOKEN_SECRET",   valueFrom = "${aws_secretsmanager_secret.token_secret.arn}" },
       { name = "REDIS_URL",             valueFrom = "${aws_secretsmanager_secret.redis_url.arn}" },
     ]
     logConfiguration = {
@@ -279,13 +285,17 @@ resource "aws_wafv2_web_acl" "main" {
   name  = "${local.name_prefix}-waf"
   scope = "REGIONAL"
 
-  default_action { allow {} }
+  default_action {
+    allow {}
+  }
 
   # AWS Managed Rules
   rule {
     name     = "AWSManagedRulesCommonRuleSet"
     priority = 1
-    override_action { none {} }
+    override_action {
+      none {}
+    }
     statement {
       managed_rule_group_statement {
         name        = "AWSManagedRulesCommonRuleSet"
@@ -302,7 +312,9 @@ resource "aws_wafv2_web_acl" "main" {
   rule {
     name     = "RateLimitRule"
     priority = 2
-    action { block {} }
+    action {
+      block {}
+    }
     statement {
       rate_based_statement {
         limit              = 2000  # per 5 minutes per IP
@@ -348,6 +360,11 @@ resource "aws_secretsmanager_secret" "pii_key" {
 
 resource "aws_secretsmanager_secret" "webhook" {
   name = "${local.name_prefix}/webhook-secret"
+  kms_key_id = aws_kms_key.secrets.id
+}
+
+resource "aws_secretsmanager_secret" "token_secret" {
+  name       = "${local.name_prefix}/token-secret"
   kms_key_id = aws_kms_key.secrets.id
 }
 
@@ -541,8 +558,12 @@ resource "aws_lb_target_group" "api" {
   vpc_id      = aws_vpc.main.id
   target_type = "ip"
 
+  # Route traffic only to tasks that are ready (database reachable, migrations
+  # at head). The container health check below keeps using /health
+  # (liveness), so ECS does not restart tasks while they wait for migrations.
   health_check {
-    path                = "/health"
+    path                = "/ready"
+    matcher             = "200"
     healthy_threshold   = 2
     unhealthy_threshold = 3
     interval            = 15
@@ -571,6 +592,41 @@ resource "aws_iam_role" "ecs_execution" {
       Effect    = "Allow"
       Principal = { Service = "ecs-tasks.amazonaws.com" }
     }]
+  })
+}
+
+# The execution role pulls the image, writes logs and resolves the task's
+# secrets at start-up. Without these grants no task can start.
+resource "aws_iam_role_policy_attachment" "ecs_execution" {
+  role       = aws_iam_role.ecs_execution.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role_policy" "ecs_execution_secrets" {
+  name = "${local.name_prefix}-read-task-secrets"
+  role = aws_iam_role.ecs_execution.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = ["secretsmanager:GetSecretValue"]
+        Resource = [
+          aws_secretsmanager_secret.db_url.arn,
+          aws_secretsmanager_secret.redis_url.arn,
+          aws_secretsmanager_secret.jwt_private.arn,
+          aws_secretsmanager_secret.jwt_public.arn,
+          aws_secretsmanager_secret.pii_key.arn,
+          aws_secretsmanager_secret.webhook.arn,
+          aws_secretsmanager_secret.token_secret.arn,
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = [aws_kms_key.secrets.arn]
+      },
+    ]
   })
 }
 

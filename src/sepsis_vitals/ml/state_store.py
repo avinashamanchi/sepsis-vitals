@@ -10,6 +10,7 @@ Supports multi-worker deployments via WAL mode.
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 import threading
 import time
@@ -17,7 +18,62 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from sepsis_vitals.security import blind_index_candidates, compute_blind_index, log_ref
+
 logger = logging.getLogger(__name__)
+
+#: Bumped from the legacy ``patient_state.db``, which stored identifiers in
+#: plaintext. Legacy files are never rewritten automatically; see
+#: scripts/migrate_state_stores.py.
+STORE_FILENAME = "patient_state.v1.db"
+LEGACY_FILENAME = "patient_state.db"
+
+
+def _ref(patient_id: str) -> str:
+    """Keyed, irreversible reference stored instead of the patient identifier.
+
+    Lookups only ever need equality, so the store never holds an identifier
+    it could reveal. HMAC-SHA256 with the current PII key (plain SHA-256 in
+    development when no key is configured).
+    """
+    return compute_blind_index(str(patient_id))
+
+
+def _refs(patient_id: str) -> List[str]:
+    """References under every configured PII key, current first.
+
+    During a key rotation a patient's rows may still carry the reference
+    computed with a previous key; reads match all of them, and the next
+    write moves them to the current reference (see ``_rekey``).
+    """
+    return blind_index_candidates(str(patient_id))
+
+
+def _in(refs: List[str]) -> str:
+    return "(" + ",".join("?" * len(refs)) + ")"
+
+
+def default_store_path(state_dir: Optional[str] = None) -> Path:
+    base = Path(state_dir or os.getenv("SEPSIS_STATE_DIR") or "models")
+    return base / STORE_FILENAME
+
+
+def secure_sqlite_file(path: Path) -> None:
+    """Owner-only permissions on the database (SQLite gives WAL/SHM the same mode)."""
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        logger.warning("Could not restrict permissions on %s", path)
+
+
+def warn_if_legacy(path: Path, legacy_name: str) -> None:
+    legacy = path.parent / legacy_name
+    if legacy.exists():
+        logger.warning(
+            "Legacy plaintext state store %s was left untouched and is not read. "
+            "Migrate or delete it deliberately (scripts/migrate_state_stores.py).",
+            legacy,
+        )
 
 
 @dataclass
@@ -38,21 +94,26 @@ class PatientStateStore:
 
     Parameters
     ----------
-    db_path : str
-        Path to the SQLite database file.  Parent directories are
-        created automatically if they don't exist.  Defaults to
-        ``models/patient_state.db``.
+    db_path : str, optional
+        Path to the SQLite database file. Defaults to
+        ``$SEPSIS_STATE_DIR/patient_state.v1.db``. Patient identifiers are
+        stored only as keyed references (:func:`_ref`), and the file is
+        created owner-read/write only. This protects identifiers, not the
+        whole file: risk values and timestamps are stored in clear, so the
+        state directory still belongs on an encrypted volume.
     """
 
-    def __init__(self, db_path: str = "models/patient_state.db") -> None:
-        self._db_path = Path(db_path)
+    def __init__(self, db_path: Optional[str] = None) -> None:
+        self._db_path = Path(db_path) if db_path else default_store_path()
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        warn_if_legacy(self._db_path, LEGACY_FILENAME)
 
         self._conn = sqlite3.connect(
             str(self._db_path),
             check_same_thread=False,
             timeout=10.0,
         )
+        secure_sqlite_file(self._db_path)
         # Enable WAL for concurrent reader/writer access across workers.
         self._conn.execute("PRAGMA journal_mode=WAL")
         # Return rows as sqlite3.Row so we can access columns by name.
@@ -112,13 +173,14 @@ class PatientStateStore:
 
         try:
             with self._lock, self._conn:
+                self._rekey(patient_id)
                 # Ensure the patient row exists.
                 self._conn.execute(
                     """
                     INSERT OR IGNORE INTO patients (patient_id, baseline_risk, created_at)
                     VALUES (?, NULL, ?)
                     """,
-                    (patient_id, now),
+                    (_ref(patient_id), now),
                 )
 
                 # Insert the prediction.
@@ -128,20 +190,20 @@ class PatientStateStore:
                         (patient_id, timestamp, risk_probability, risk_level, created_at)
                     VALUES (?, ?, ?, ?, ?)
                     """,
-                    (patient_id, timestamp, risk_probability, risk_level, now),
+                    (_ref(patient_id), timestamp, risk_probability, risk_level, now),
                 )
 
                 # Set baseline_risk from the 1st prediction once we have >= 2.
                 # Only do this once (when baseline_risk is still NULL).
                 row = self._conn.execute(
                     "SELECT baseline_risk FROM patients WHERE patient_id = ?",
-                    (patient_id,),
+                    (_ref(patient_id),),
                 ).fetchone()
 
                 if row is not None and row["baseline_risk"] is None:
                     count = self._conn.execute(
                         "SELECT COUNT(*) AS cnt FROM predictions WHERE patient_id = ?",
-                        (patient_id,),
+                        (_ref(patient_id),),
                     ).fetchone()["cnt"]
 
                     if count >= 2:
@@ -152,17 +214,49 @@ class PatientStateStore:
                             ORDER BY created_at ASC
                             LIMIT 1
                             """,
-                            (patient_id,),
+                            (_ref(patient_id),),
                         ).fetchone()
 
                         if first is not None:
                             self._conn.execute(
                                 "UPDATE patients SET baseline_risk = ? WHERE patient_id = ?",
-                                (first["risk_probability"], patient_id),
+                                (first["risk_probability"], _ref(patient_id)),
                             )
         except sqlite3.Error:
-            logger.exception("Failed to store prediction for patient %s", patient_id)
+            logger.exception("Failed to store prediction for patient %s", log_ref(patient_id))
             raise
+
+    def _rekey(self, patient_id: str) -> None:
+        """Move a patient's rows from previous-key references to the current one.
+
+        Called inside the write transaction, so after a PII key rotation each
+        patient's history is re-keyed the next time the patient is scored.
+        """
+        current, *old = _refs(patient_id)
+        if not old:
+            return
+        placeholders = _in(old)
+        moved = self._conn.execute(
+            f"UPDATE predictions SET patient_id = ? WHERE patient_id IN {placeholders}",  # nosec B608
+            (current, *old),
+        ).rowcount
+        prior = self._conn.execute(
+            f"SELECT baseline_risk, created_at FROM patients WHERE patient_id IN {placeholders} "  # nosec B608
+            "ORDER BY created_at LIMIT 1",
+            old,
+        ).fetchone()
+        if prior is not None:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO patients (patient_id, baseline_risk, created_at) VALUES (?, ?, ?)",
+                (current, prior["baseline_risk"], prior["created_at"]),
+            )
+            self._conn.execute(
+                "UPDATE patients SET baseline_risk = COALESCE(baseline_risk, ?) WHERE patient_id = ?",
+                (prior["baseline_risk"], current),
+            )
+            self._conn.execute(f"DELETE FROM patients WHERE patient_id IN {placeholders}", old)  # nosec B608
+        if moved or prior is not None:
+            logger.info("Re-keyed stored predictions for patient %s", log_ref(patient_id))
 
     # ------------------------------------------------------------------
     # Read operations
@@ -174,19 +268,20 @@ class PatientStateStore:
         """Return recent predictions for *patient_id*, newest first."""
         try:
             with self._lock:
+                refs = _refs(patient_id)
                 rows = self._conn.execute(
-                    """
+                    f"""
                     SELECT timestamp, risk_probability, risk_level
                     FROM predictions
-                    WHERE patient_id = ?
+                    WHERE patient_id IN {_in(refs)}
                     ORDER BY created_at DESC
                     LIMIT ?
-                    """,
-                    (patient_id, limit),
+                    """,  # nosec B608 - placeholders only
+                    (*refs, limit),
                 ).fetchall()
         except sqlite3.Error:
             logger.exception(
-                "Failed to retrieve predictions for patient %s", patient_id
+                "Failed to retrieve predictions for patient %s", log_ref(patient_id)
             )
             return []
 
@@ -205,13 +300,15 @@ class PatientStateStore:
         """Return the baseline risk for *patient_id*, or ``None``."""
         try:
             with self._lock:
+                refs = _refs(patient_id)
                 row = self._conn.execute(
-                    "SELECT baseline_risk FROM patients WHERE patient_id = ?",
-                    (patient_id,),
+                    f"SELECT baseline_risk FROM patients WHERE patient_id IN {_in(refs)} "  # nosec B608
+                    "ORDER BY baseline_risk IS NULL LIMIT 1",
+                    refs,
                 ).fetchone()
         except sqlite3.Error:
             logger.exception(
-                "Failed to retrieve baseline risk for patient %s", patient_id
+                "Failed to retrieve baseline risk for patient %s", log_ref(patient_id)
             )
             return None
 

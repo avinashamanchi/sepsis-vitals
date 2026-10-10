@@ -1,0 +1,396 @@
+{
+  "claim_scope": "synthetic engineering evidence only",
+  "results": [
+    {
+      "profile": "legacy",
+      "label_mode": "current_state",
+      "horizon_hours": null,
+      "generator_options": {},
+      "rows": {
+        "train": 35853,
+        "val": 9109,
+        "test": 15110
+      },
+      "positive_rate_test": 0.215,
+      "auroc": 0.911,
+      "auroc_95ci": [
+        0.9009,
+        0.9188
+      ],
+      "auprc": 0.761,
+      "brier": 0.0894,
+      "calibration": {
+        "slope": 0.986,
+        "intercept": 0.043,
+        "in_the_large": 0.0048
+      },
+      "operating_point": {
+        "threshold_from_validation": 0.3252,
+        "sensitivity": 0.761,
+        "specificity": 0.898,
+        "ppv": 0.671,
+        "flag_rate": 0.2438
+      },
+      "auroc_without_labs": 0.821,
+      "auroc_without_labs_95ci": [
+        0.8005,
+        0.8405
+      ],
+      "auroc_demographics_only": 0.73,
+      "auroc_demographics_only_95ci": [
+        0.7034,
+        0.756
+      ],
+      "uncertainty": {
+        "method": "paired patient-level (cluster) bootstrap, percentile intervals",
+        "level": 0.95,
+        "n_boot": 1000,
+        "valid_replicates": 1000,
+        "degenerate_replicates": 0,
+        "reliable": true,
+        "seed": 7,
+        "n_patients": 1000,
+        "n_rows": 15110,
+        "n_positive_rows": 3248,
+        "n_patients_with_positive_rows": 430,
+        "reference_arm": "model",
+        "arms": {
+          "model": {
+            "auroc": {
+              "estimate": 0.9105,
+              "ci": [
+                0.9009,
+                0.9188
+              ]
+            }
+          },
+          "no_labs": {
+            "auroc": {
+              "estimate": 0.8213,
+              "ci": [
+                0.8005,
+                0.8405
+              ]
+            }
+          },
+          "demographics_only": {
+            "auroc": {
+              "estimate": 0.7303,
+              "ci": [
+                0.7034,
+                0.756
+              ]
+            }
+          }
+        },
+        "differences_vs_reference": {
+          "no_labs": {
+            "auroc": {
+              "estimate": -0.0892,
+              "ci": [
+                -0.1061,
+                -0.0735
+              ]
+            }
+          },
+          "demographics_only": {
+            "auroc": {
+              "estimate": -0.1802,
+              "ci": [
+                -0.2049,
+                -0.1571
+              ]
+            }
+          }
+        }
+      },
+      "subgroups": {
+        "age 18-44": {
+          "n_rows": 5124,
+          "auroc": 0.801
+        },
+        "age 45-64": {
+          "n_rows": 3990,
+          "auroc": 0.882
+        },
+        "age 65+": {
+          "n_rows": 5996,
+          "auroc": 0.864
+        },
+        "sex F": {
+          "n_rows": 7631,
+          "auroc": 0.912
+        },
+        "sex M": {
+          "n_rows": 7479,
+          "auroc": 0.91
+        }
+      },
+      "split": "patient-level, temporal by admission time (60/15/25)"
+    },
+    {
+      "profile": "decoupled",
+      "label_mode": "current_state",
+      "horizon_hours": null,
+      "generator_options": {
+        "age_effect": 0.0,
+        "comorbidity_effect": 0.0,
+        "septic_blend_ceiling": 1.0,
+        "mimic_blend_ceiling": 0.6
+      },
+      "rows": {
+        "train": 36355,
+        "val": 9139,
+        "test": 14910
+      },
+      "positive_rate_test": 0.1357,
+      "auroc": 0.879,
+      "auroc_95ci": [
+        0.8651,
+        0.8912
+      ],
+      "auprc": 0.633,
+      "brier": 0.0747,
+      "calibration": {
+        "slope": 0.966,
+        "intercept": 0.066,
+        "in_the_large": 0.0081
+      },
+      "operating_point": {
+        "threshold_from_validation": 0.2014,
+        "sensitivity": 0.7,
+        "specificity": 0.908,
+        "ppv": 0.545,
+        "flag_rate": 0.1742
+      },
+      "auroc_without_labs": 0.631,
+      "auroc_without_labs_95ci": [
+        0.615,
+        0.6492
+      ],
+      "auroc_demographics_only": 0.507,
+      "auroc_demographics_only_95ci": [
+        0.4617,
+        0.5483
+      ],
+      "uncertainty": {
+        "method": "paired patient-level (cluster) bootstrap, percentile intervals",
+        "level": 0.95,
+        "n_boot": 1000,
+        "valid_replicates": 1000,
+        "degenerate_replicates": 0,
+        "reliable": true,
+        "seed": 7,
+        "n_patients": 1000,
+        "n_rows": 14910,
+        "n_positive_rows": 2023,
+        "n_patients_with_positive_rows": 308,
+        "reference_arm": "model",
+        "arms": {
+          "model": {
+            "auroc": {
+              "estimate": 0.8788,
+              "ci": [
+                0.8651,
+                0.8912
+              ]
+            }
+          },
+          "no_labs": {
+            "auroc": {
+              "estimate": 0.6313,
+              "ci": [
+                0.615,
+                0.6492
+              ]
+            }
+          },
+          "demographics_only": {
+            "auroc": {
+              "estimate": 0.5065,
+              "ci": [
+                0.4617,
+                0.5483
+              ]
+            }
+          }
+        },
+        "differences_vs_reference": {
+          "no_labs": {
+            "auroc": {
+              "estimate": -0.2475,
+              "ci": [
+                -0.2651,
+                -0.2298
+              ]
+            }
+          },
+          "demographics_only": {
+            "auroc": {
+              "estimate": -0.3723,
+              "ci": [
+                -0.4165,
+                -0.3297
+              ]
+            }
+          }
+        }
+      },
+      "subgroups": {
+        "age 18-44": {
+          "n_rows": 5505,
+          "auroc": 0.886
+        },
+        "age 45-64": {
+          "n_rows": 3424,
+          "auroc": 0.878
+        },
+        "age 65+": {
+          "n_rows": 5981,
+          "auroc": 0.874
+        },
+        "sex F": {
+          "n_rows": 7358,
+          "auroc": 0.882
+        },
+        "sex M": {
+          "n_rows": 7552,
+          "auroc": 0.876
+        }
+      },
+      "split": "patient-level, temporal by admission time (60/15/25)"
+    },
+    {
+      "profile": "decoupled",
+      "label_mode": "onset_within_horizon",
+      "horizon_hours": 12.0,
+      "generator_options": {
+        "age_effect": 0.0,
+        "comorbidity_effect": 0.0,
+        "septic_blend_ceiling": 1.0,
+        "mimic_blend_ceiling": 0.6
+      },
+      "rows": {
+        "train": 31423,
+        "val": 7849,
+        "test": 12916
+      },
+      "positive_rate_test": 0.0453,
+      "auroc": 0.734,
+      "auroc_95ci": [
+        0.7108,
+        0.759
+      ],
+      "auprc": 0.198,
+      "brier": 0.0399,
+      "calibration": {
+        "slope": 0.969,
+        "intercept": -0.041,
+        "in_the_large": 0.0018
+      },
+      "operating_point": {
+        "threshold_from_validation": 0.0657,
+        "sensitivity": 0.412,
+        "specificity": 0.902,
+        "ppv": 0.166,
+        "flag_rate": 0.1125
+      },
+      "auroc_without_labs": 0.574,
+      "auroc_without_labs_95ci": [
+        0.5456,
+        0.6027
+      ],
+      "auroc_demographics_only": 0.49,
+      "auroc_demographics_only_95ci": [
+        0.4528,
+        0.528
+      ],
+      "uncertainty": {
+        "method": "paired patient-level (cluster) bootstrap, percentile intervals",
+        "level": 0.95,
+        "n_boot": 1000,
+        "valid_replicates": 1000,
+        "degenerate_replicates": 0,
+        "reliable": true,
+        "seed": 7,
+        "n_patients": 1000,
+        "n_rows": 12916,
+        "n_positive_rows": 585,
+        "n_patients_with_positive_rows": 321,
+        "reference_arm": "model",
+        "arms": {
+          "model": {
+            "auroc": {
+              "estimate": 0.7339,
+              "ci": [
+                0.7108,
+                0.759
+              ]
+            }
+          },
+          "no_labs": {
+            "auroc": {
+              "estimate": 0.5737,
+              "ci": [
+                0.5456,
+                0.6027
+              ]
+            }
+          },
+          "demographics_only": {
+            "auroc": {
+              "estimate": 0.4903,
+              "ci": [
+                0.4528,
+                0.528
+              ]
+            }
+          }
+        },
+        "differences_vs_reference": {
+          "no_labs": {
+            "auroc": {
+              "estimate": -0.1602,
+              "ci": [
+                -0.1906,
+                -0.1293
+              ]
+            }
+          },
+          "demographics_only": {
+            "auroc": {
+              "estimate": -0.2436,
+              "ci": [
+                -0.2887,
+                -0.2
+              ]
+            }
+          }
+        }
+      },
+      "subgroups": {
+        "age 18-44": {
+          "n_rows": 4901,
+          "auroc": 0.729
+        },
+        "age 45-64": {
+          "n_rows": 2973,
+          "auroc": 0.737
+        },
+        "age 65+": {
+          "n_rows": 5042,
+          "auroc": 0.735
+        },
+        "sex F": {
+          "n_rows": 6451,
+          "auroc": 0.716
+        },
+        "sex M": {
+          "n_rows": 6465,
+          "auroc": 0.75
+        }
+      },
+      "split": "patient-level, temporal by admission time (60/15/25)"
+    }
+  ]
+}

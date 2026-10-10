@@ -199,11 +199,28 @@ export function Predict() {
                   <h2 className="font-heading text-sm font-semibold">{t('predict.predictionResult')}</h2>
                   <RiskBadge level={result.risk_level} size="md" pulse={result.alert} />
                 </div>
+                {/* The badge is the higher of two different signals; keep them apart. */}
+                <dl className="grid grid-cols-2 gap-2 text-xs" aria-label="Risk level sources">
+                  <div className="rounded border border-border p-2">
+                    <dt className="text-text-muted">Rule-based scores</dt>
+                    <dd className="font-semibold text-text-primary">{result.rule_risk_level ?? 'unknown'}</dd>
+                  </div>
+                  <div className="rounded border border-border p-2">
+                    <dt className="text-text-muted">Development model</dt>
+                    <dd className="font-semibold text-text-primary">{result.model_risk_level ?? 'unknown'}</dd>
+                  </div>
+                </dl>
+                <p className="mt-2 text-[11px] leading-4 text-text-muted">
+                  The badge shows the higher of the two levels: the model cannot lower what the
+                  rule-based scores indicate. It is not a probability.
+                </p>
                 <div className="text-center py-4">
                   <p className="text-5xl font-bold font-heading text-text-primary">
                     {(result.risk_probability * 100).toFixed(1)}%
                   </p>
-                  <p className="text-sm text-text-secondary mt-2">Development-model output</p>
+                  <p className="text-sm text-text-secondary mt-2">
+                    Development-model output (not a calibrated probability for patients)
+                  </p>
                   <p className="text-xs text-text-muted mt-1">
                     {t('predict.confidenceInterval', {
                       lower: (result.confidence_interval.lower * 100).toFixed(1),
@@ -219,6 +236,11 @@ export function Predict() {
                 </div>
                 <p className="mt-3 text-[10px] leading-4 text-text-muted">
                   {result.validation_status ?? 'Synthetic development baseline; no clinical validation'}
+                </p>
+                <p className="mt-1 text-[10px] font-semibold leading-4 text-warning" data-testid="clinical-use">
+                  Clinical use: {result.clinical_use === 'not-permitted' || !result.clinical_use
+                    ? 'not permitted'
+                    : result.clinical_use}
                 </p>
               </div>
 

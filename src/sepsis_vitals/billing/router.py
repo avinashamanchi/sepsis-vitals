@@ -36,7 +36,7 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 # ---------------------------------------------------------------------------
 
 try:
-    from sepsis_vitals.api import _billing_limiter, _webhook_limiter, _client_ip
+    from sepsis_vitals.dependencies import _billing_limiter, _client_ip, _webhook_limiter
 except ImportError:
     from sepsis_vitals.security import RateLimiter
     _billing_limiter = RateLimiter(rate=1.0, burst=3)
@@ -103,13 +103,30 @@ async def _require_auth(request: Request) -> Dict[str, str]:
     Mirrors ``verify_auth`` from :mod:`sepsis_vitals.api` so the billing
     router can be mounted independently during tests.
     """
-    from sepsis_vitals.api import verify_auth
+    from sepsis_vitals.dependencies import verify_auth
 
     user = await verify_auth(request)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required.",
+        )
+    return user
+
+
+async def _require_billing_admin(
+    user: Dict[str, str] = Depends(_require_auth),
+) -> Dict[str, str]:
+    """Billing is organisation administration: system_admin only.
+
+    Users carry a site assignment but no link to a billing Organization, so
+    there is no ownership rule that would let a site user act on one
+    organisation without being able to act on all of them.
+    """
+    if user.get("role") != "system_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Billing is restricted to administrators.",
         )
     return user
 
@@ -223,7 +240,7 @@ def _get_org(db: Session, org_id: str) -> Organization:
     if org is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Organization {org_id} not found.",
+            detail="Organization not found.",
         )
     return org
 
@@ -255,9 +272,9 @@ async def list_plans() -> List[PlanInfo]:
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(_check_billing_rate)],
 )
-async def create_checkout(
+def create_checkout(
     body: CheckoutRequest,
-    user: Dict[str, str] = Depends(_require_auth),
+    user: Dict[str, str] = Depends(_require_billing_admin),
     db: Session = Depends(get_db),
 ) -> CheckoutResponse:
     """Create a Stripe Checkout session for a new subscription."""
@@ -307,9 +324,9 @@ async def create_checkout(
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(_check_billing_rate)],
 )
-async def create_portal(
+def create_portal(
     body: PortalRequest,
-    user: Dict[str, str] = Depends(_require_auth),
+    user: Dict[str, str] = Depends(_require_billing_admin),
     db: Session = Depends(get_db),
 ) -> PortalResponse:
     """Create a Stripe Billing Portal session for self-service management."""
@@ -406,9 +423,9 @@ async def stripe_webhook(
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(_check_billing_rate)],
 )
-async def get_subscription(
+def get_subscription(
     org_id: str,
-    user: Dict[str, str] = Depends(_require_auth),
+    user: Dict[str, str] = Depends(_require_billing_admin),
     db: Session = Depends(get_db),
 ) -> SubscriptionStatusResponse:
     """Return the current subscription status for an organization."""
@@ -495,9 +512,9 @@ async def get_subscription(
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(_check_billing_rate)],
 )
-async def update_beds(
+def update_beds(
     body: UpdateBedsRequest,
-    user: Dict[str, str] = Depends(_require_auth),
+    user: Dict[str, str] = Depends(_require_billing_admin),
     db: Session = Depends(get_db),
 ) -> UpdateBedsResponse:
     """Update the bed count on an active subscription.

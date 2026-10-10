@@ -1,7 +1,9 @@
 """
 SQLAlchemy ORM models for the sepsis-vitals database.
 
-Maps to the schema defined in docker/postgres/init.sql.
+The production schema is owned by the Alembic migrations in ``alembic/``;
+``init_db`` creates tables directly only for development databases and for
+feature tables that are not migrated yet (see ``init_db``).
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -26,6 +29,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
     create_engine,
 )
 from sqlalchemy.dialects.postgresql import INET, JSONB, UUID as PG_UUID
@@ -72,17 +76,69 @@ class EncryptedString(sa_types.TypeDecorator):
 # Database URL configuration
 # ---------------------------------------------------------------------------
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./sepsis_vitals.db")
+def sync_database_url(url: str) -> str:
+    """Normalise a database URL to the synchronous psycopg (v3) driver.
 
-# Convert postgres+asyncpg to regular postgresql for sync usage
-if DATABASE_URL.startswith("postgresql+asyncpg"):
-    DATABASE_URL = DATABASE_URL.replace("postgresql+asyncpg", "postgresql")
+    Accepts ``postgres://``, ``postgresql://`` and legacy
+    ``postgresql+asyncpg://`` URLs; the app and Alembic both use synchronous
+    SQLAlchemy, and psycopg is the driver installed by the ``api`` extra.
+    """
+    for prefix in ("postgresql+asyncpg://", "postgresql+psycopg2://", "postgresql://", "postgres://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+
+DATABASE_URL = sync_database_url(os.getenv("DATABASE_URL", "sqlite:///./sepsis_vitals.db"))
 
 _is_sqlite = DATABASE_URL.startswith("sqlite")
 
 # Choose column types that work for both PostgreSQL and SQLite.
 # SQLite has no native UUID, INET, or JSONB, so we fall back to String/Text.
-UUIDType = String(36) if _is_sqlite else PG_UUID(as_uuid=True)
+NIL_UUID = "00000000-0000-0000-0000-000000000000"
+
+
+class GUID(sa_types.TypeDecorator):
+    """UUID column that always reads and binds canonical *strings*.
+
+    PostgreSQL stores a native UUID; SQLite stores CHAR(36). The application
+    treats every identifier as ``str`` (JWT ``sub``, Pydantic models, dict
+    keys); ``PG_UUID(as_uuid=True)`` returned ``uuid.UUID`` objects on
+    Postgres, which broke token creation at login. Values that are not UUIDs
+    (an MRN, a free-form patient label, a stray path segment) bind to the nil
+    UUID, so lookups find nothing instead of raising a database error.
+    """
+
+    impl = String(36)
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(PG_UUID(as_uuid=False))
+        return dialect.type_descriptor(String(36))
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        try:
+            return str(uuid.UUID(str(value)))
+        except ValueError:
+            return NIL_UUID
+
+    def process_result_value(self, value, dialect):
+        return None if value is None else str(value)
+
+
+def is_uuid(value: object) -> bool:
+    """True when *value* is a well-formed UUID (string or UUID object)."""
+    try:
+        uuid.UUID(str(value))
+    except ValueError:
+        return False
+    return True
+
+
+UUIDType = GUID()
 InetType = String(45) if _is_sqlite else INET
 JsonType = Text if _is_sqlite else JSONB
 
@@ -154,6 +210,12 @@ class User(Base):
     totp_secret: Mapped[Optional[str]] = mapped_column(
         EncryptedString, nullable=True
     )
+    # JSON list of keyed hashes of unused single-use recovery codes.
+    mfa_recovery_hashes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Last TOTP time step (unix time // 30) accepted for the current secret.
+    # A code is accepted only for a later step, so each code works once
+    # (RFC 6238 section 5.2). NULL: none used yet; reset when the secret changes.
+    totp_last_step: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     mfa_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false"
     )
@@ -198,8 +260,9 @@ class Patient(Base):
     external_id: Mapped[str] = mapped_column(
         EncryptedString, nullable=False
     )
+    # Identity is (site_id, external_id_hash): MRNs are only unique per site.
     external_id_hash: Mapped[str] = mapped_column(
-        String(64), unique=True, nullable=False, default=""
+        String(64), nullable=False, default=""
     )
     site_id: Mapped[str] = mapped_column(String(32), nullable=False)
     age_years: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
@@ -221,6 +284,8 @@ class Patient(Base):
 
     __table_args__ = (
         CheckConstraint("sex IN ('M', 'F', 'U')", name="ck_patients_sex"),
+        UniqueConstraint("site_id", "external_id_hash", name="uq_patients_site_mrn"),
+        Index("idx_patients_mrn_hash", "external_id_hash"),
     )
 
     def __repr__(self) -> str:
@@ -500,9 +565,95 @@ def get_db() -> Generator[Session, None, None]:
 # ---------------------------------------------------------------------------
 
 
-def init_db() -> None:
-    """Create all tables defined by the ORM models.
+class SchemaMismatchError(RuntimeError):
+    """An existing table lacks columns the ORM needs (the schema is out of date)."""
 
-    Safe to call multiple times; existing tables are not modified.
+
+def _is_concurrent_create(exc: BaseException) -> bool:
+    """True only for the error another worker's identical CREATE produces.
+
+    SQLite: "table users already exists" / "index ... already exists".
+    PostgreSQL: DuplicateTable ('relation "users" already exists') or, when
+    two CREATE TABLE statements race in the catalog, a unique violation on
+    ``pg_type_typname_nsp_index``. Permission, connection and other unique
+    errors do not match and propagate.
     """
-    Base.metadata.create_all(bind=engine)
+    message = str(getattr(exc, "orig", exc)).lower()
+    return "already exists" in message or ("duplicate key" in message and "pg_type" in message)
+
+
+def schema_drift(bind: Any = None) -> list[str]:
+    """``table.column`` names the ORM defines but existing tables lack.
+
+    Tables that do not exist yet are not reported (``create_all`` adds them).
+    Only names are returned, never data.
+    """
+    from sqlalchemy import inspect
+
+    inspector = inspect(bind if bind is not None else engine)
+    missing: list[str] = []
+    for table in Base.metadata.sorted_tables:
+        if not inspector.has_table(table.name):
+            continue
+        present = {col["name"] for col in inspector.get_columns(table.name)}
+        missing += [f"{table.name}.{col.name}" for col in table.columns if col.name not in present]
+    return missing
+
+
+def init_db(production: Optional[bool] = None, attempts: int = 5) -> None:
+    """Create missing ORM tables, within the limits of who owns the schema.
+
+    * **Production** (``SEPSIS_ENV=production``): Alembic owns the schema. If
+      the database is not Alembic-managed yet, nothing is created: creating
+      the tables here would make a later ``alembic upgrade head`` fail on
+      "already exists" (for example API replicas starting before a separate
+      migration task). ``/ready`` reports the database as not ready until it
+      is migrated. On a migrated database only tables that have no migration
+      yet (frozen billing and bundle features, when enabled) are created.
+    * **Development**: all missing tables are created.
+
+    Several uvicorn workers run this at the same time. When another worker
+    creates the same table first, the "already exists" error is retried, at
+    most ``attempts`` times; every other error propagates. Afterwards the
+    existing tables must have every ORM column, otherwise
+    :class:`SchemaMismatchError` stops startup instead of failing requests
+    later.
+    """
+    import logging
+    import time as _time
+
+    from sqlalchemy import inspect
+    from sqlalchemy.exc import DBAPIError
+
+    log = logging.getLogger(__name__)
+    if production is None:
+        production = os.getenv("SEPSIS_ENV", "development") == "production"
+
+    if production:
+        with engine.connect() as conn:
+            managed = inspect(conn).has_table("alembic_version")
+        if not managed:
+            log.error(
+                "Database is not managed by Alembic; not creating tables in production. "
+                "Run `alembic upgrade head` (docker/entrypoint.sh does this by default)."
+            )
+            return
+
+    for attempt in range(1, attempts + 1):
+        try:
+            Base.metadata.create_all(bind=engine)
+            break
+        except DBAPIError as exc:
+            if attempt == attempts or not _is_concurrent_create(exc):
+                raise
+            # Another worker is creating the same schema; its tables are
+            # visible on the next pass, which then has nothing left to create.
+            _time.sleep(0.1 * attempt)
+
+    missing = schema_drift()
+    if missing:
+        raise SchemaMismatchError(
+            "Database schema is out of date; missing columns: "
+            + ", ".join(missing)
+            + ". Run `alembic upgrade head` (or recreate a development database)."
+        )
