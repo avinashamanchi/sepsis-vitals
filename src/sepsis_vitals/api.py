@@ -18,7 +18,6 @@ import ipaddress
 import json
 import logging
 import os
-from pathlib import Path
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -31,12 +30,9 @@ from fastapi import (
     FastAPI,
     HTTPException,
     Request,
-    WebSocket,
-    WebSocketDisconnect,
-    status,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from sepsis_vitals import __version__
@@ -89,7 +85,7 @@ async def _lifespan(application: FastAPI):
     await drift_monitor.stop()
 
 
-app = FastAPI(
+app: FastAPI = FastAPI(
     title="Sepsis Vitals API",
     version=__version__,
     description=(
@@ -1044,659 +1040,6 @@ async def patient_trend(patient_id: str, request: Request, user: Dict = Depends(
 
 
 # ---------------------------------------------------------------------------
-# Monitor endpoints (continuous patient monitoring)
-# ---------------------------------------------------------------------------
-
-
-@app.post("/monitor/register", dependencies=[Depends(check_rate_limit)])
-async def monitor_register(body: MonitorRegisterRequest, user: Dict = Depends(verify_auth)):
-    """Register a patient for continuous monitoring."""
-    patient_id = sanitise_string(body.patient_id)
-    await _verify_patient_org_async(patient_id, user)
-
-    registry, tracker, ingester = _get_monitor_components()
-    registry.register(
-        patient_id,
-        demographics=body.demographics,
-        comorbidities=body.comorbidities,
-    )
-
-    return {"status": "registered", "patient_id": patient_id}
-
-
-@app.delete("/monitor/{patient_id}", dependencies=[Depends(check_rate_limit)])
-async def monitor_unregister(patient_id: str, user: Dict = Depends(verify_auth)):
-    """Remove a patient from continuous monitoring."""
-    # Org-level authorization: verify patient belongs to user's org (fail closed)
-    await _verify_patient_org_async(patient_id, user)
-
-    registry, tracker, ingester = _get_monitor_components()
-    registry.unregister(sanitise_string(patient_id))
-    tracker.remove_patient(sanitise_string(patient_id))
-
-    return {"status": "unregistered", "patient_id": patient_id}
-
-
-@app.get("/monitor/status", dependencies=[Depends(check_rate_limit)])
-async def monitor_status(user: Dict = Depends(verify_auth)):
-    """List all monitored patients with current risk and trend."""
-    registry, tracker, ingester = _get_monitor_components()
-    patients = registry.list_patients()
-
-    from sepsis_vitals.auth.scope import require_site
-    site = require_site(user)
-    if site is not None:
-        def _site_patient_ids() -> set:
-            from sepsis_vitals.db import Patient, SessionLocal
-            db = SessionLocal()
-            try:
-                return {row[0] for row in db.query(Patient.id).filter(Patient.site_id == site)}
-            finally:
-                db.close()
-        allowed = await asyncio.to_thread(_site_patient_ids)
-        patients = [p for p in patients if p["patient_id"] in allowed]
-
-    # Enrich with deterioration data
-    for p in patients:
-        pid = p["patient_id"]
-        det = tracker.evaluate(pid)
-        p["alert_state"] = det.get("alert_state", "normal")
-        p["deterioration_rate"] = det.get("deterioration_rate_per_hour", 0.0)
-        p["window_hours"] = det.get("window_hours", 0.0)
-
-    return {"patients": patients, "count": len(patients)}
-
-
-# ---------------------------------------------------------------------------
-# Simulator endpoints (gated behind ENABLE_SIMULATOR=true)
-# ---------------------------------------------------------------------------
-
-
-@app.post("/simulator/ward", dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
-async def simulator_start_ward(body: SimulatorWardRequest, user: Dict = Depends(verify_auth)):
-    """Start a synthetic ward simulation."""
-    if not _simulator_enabled:
-        raise HTTPException(status_code=403, detail="Simulator not enabled")
-
-    _, _, ingester = _get_monitor_components()
-    if ingester is None:
-        raise HTTPException(status_code=503, detail="Prediction engine not loaded")
-
-    manager = _get_simulation_manager()
-    session_id = manager.start_ward(
-        ingester=ingester,
-        n_patients=body.n_patients,
-        speed=body.speed,
-        sepsis_count=body.sepsis_count,
-        seed=body.seed,
-    )
-
-    return {"session_id": session_id, "status": "started"}
-
-
-@app.post("/simulator/replay", dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
-async def simulator_start_replay(body: SimulatorReplayRequest, user: Dict = Depends(verify_auth)):
-    """Start a MIMIC-IV case replay."""
-    if not _simulator_enabled:
-        raise HTTPException(status_code=403, detail="Simulator not enabled")
-
-    _, _, ingester = _get_monitor_components()
-    if ingester is None:
-        raise HTTPException(status_code=503, detail="Prediction engine not loaded")
-
-    from sepsis_vitals.ml.case_library import CaseLibrary
-    lib = CaseLibrary()
-
-    if body.subject_id == "random" or body.subject_id is None:
-        case_meta = lib.get_random_case(sepsis=body.sepsis_only if body.sepsis_only else None)
-    else:
-        case_meta = lib.get_case(subject_id=int(body.subject_id))
-
-    if case_meta is None:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    # Load vitals timeline for this case
-    from sepsis_vitals.ml.mimic_loader import MIMICLoader
-    loader = MIMICLoader.from_demo()
-    vitals = loader.load_vitals(stay_ids={case_meta["stay_id"]})
-
-    manager = _get_simulation_manager()
-    session_id = manager.start_replay(
-        case_meta=case_meta,
-        timeline=vitals,
-        ingester=ingester,
-        speed=body.speed,
-    )
-
-    return {"session_id": session_id, "subject_id": case_meta["subject_id"], "status": "started"}
-
-
-@app.delete("/simulator/{session_id}", dependencies=[Depends(check_rate_limit)])
-async def simulator_stop(session_id: str, user: Dict = Depends(verify_auth)):
-    """Stop a simulation session."""
-    if not _simulator_enabled:
-        raise HTTPException(status_code=403, detail="Simulator not enabled")
-
-    manager = _get_simulation_manager()
-    stopped = manager.stop_session(sanitise_string(session_id))
-
-    if not stopped:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    return {"session_id": session_id, "status": "stopped"}
-
-
-@app.get("/simulator/sessions", dependencies=[Depends(check_rate_limit)])
-async def simulator_sessions(user: Dict = Depends(verify_auth)):
-    """List active simulation sessions."""
-    if not _simulator_enabled:
-        raise HTTPException(status_code=403, detail="Simulator not enabled")
-
-    manager = _get_simulation_manager()
-    return {"sessions": manager.list_sessions()}
-
-
-@app.get("/simulator/cases", dependencies=[Depends(check_rate_limit)])
-async def simulator_cases(user: Dict = Depends(verify_auth)):
-    """List available MIMIC-IV cases for replay."""
-    if not _simulator_enabled:
-        raise HTTPException(status_code=403, detail="Simulator not enabled")
-
-    from sepsis_vitals.ml.case_library import CaseLibrary
-    lib = CaseLibrary()
-
-    try:
-        cases = lib.list_cases()
-    except Exception:
-        cases = []
-
-    return {"cases": cases, "count": len(cases)}
-
-
-def _alembic_head() -> Optional[str]:
-    """Head revision of the migration scripts shipped with this deployment.
-
-    alembic.ini lives in the working directory in the container (/app) and
-    at the repository root in development; the installed package location
-    is neither. Returns None when no migration scripts are found.
-    """
-    from alembic.config import Config
-    from alembic.script import ScriptDirectory
-
-    candidates = [Path(os.getenv("SEPSIS_ALEMBIC_DIR", "")), Path.cwd(), Path(__file__).resolve().parents[2]]
-    for root in candidates:
-        if str(root) and (root / "alembic.ini").exists() and (root / "alembic").is_dir():
-            cfg = Config(str(root / "alembic.ini"))
-            cfg.set_main_option("script_location", str(root / "alembic"))
-            return ScriptDirectory.from_config(cfg).get_current_head()
-    return None
-
-
-@app.get("/ready")
-async def readiness():
-    """API readiness: database reachable and (when managed) migrations at head.
-
-    Separate from liveness (/health) and prediction readiness (/model/status):
-    the API can serve scores and patient data without a model.
-    """
-    def _check() -> Dict[str, Any]:
-        from sqlalchemy import text as sql_text
-
-        from sepsis_vitals.db import engine
-        checks: Dict[str, Any] = {}
-        try:
-            with engine.connect() as conn:
-                conn.execute(sql_text("SELECT 1"))
-                try:
-                    current = conn.execute(sql_text("SELECT version_num FROM alembic_version")).scalar()
-                except Exception:
-                    current = None
-        except Exception as exc:
-            logger.warning("Readiness: database unreachable (%s)", type(exc).__name__)
-            return {"database": "unreachable", "migrations": "unknown"}
-        checks["database"] = "ok"
-        if current is None:
-            checks["migrations"] = "unmanaged"
-            return checks
-        try:
-            head = _alembic_head()
-        except Exception as exc:
-            logger.warning("Readiness: migration scripts unreadable (%s)", type(exc).__name__)
-            head = None
-        if head is None:
-            checks["migrations"] = "unknown"
-        else:
-            checks["migrations"] = "at-head" if current == head else "behind"
-        return checks
-
-    checks = await asyncio.to_thread(_check)
-    ready = checks["database"] == "ok" and (
-        checks["migrations"] == "at-head"
-        or (checks["migrations"] == "unmanaged" and not _is_production)
-    )
-    return JSONResponse(status_code=200 if ready else 503, content={"ready": ready, **checks})
-
-
-@app.get("/model/status")
-async def model_status():
-    """Prediction readiness, validation status and provenance of the model.
-
-    ``prediction_ready`` means a verified model is loaded. It never means
-    clinically ready: ``clinically_ready`` stays false for every validation
-    status this build knows about.
-    """
-    await asyncio.to_thread(_get_predictor)
-    status = dict(_model_status)
-    status.setdefault("prediction_ready", False)
-    status.setdefault("clinically_ready", False)
-    status.setdefault("clinical_use", "not-permitted")
-    return status
-
-
-@app.get("/model/info", dependencies=[Depends(check_rate_limit)])
-async def model_info(user: Dict = Depends(verify_auth)):
-    """Model metadata, performance metrics, and top features."""
-    predictor = await asyncio.to_thread(_get_predictor)
-    if predictor is None:
-        raise _model_unavailable()
-
-    return {
-        "artifact_status": predictor.artifact_status.as_dict(),
-        "model_name": predictor.metadata["model_name"],
-        "version": predictor.metadata["version"],
-        "is_calibrated": predictor.metadata.get("is_calibrated", False),
-        "feature_count": len(predictor.feature_names),
-        "training_data": predictor.metadata.get("model_card", {}).get("training_data", "Unknown"),
-        "metrics": predictor.metadata.get("metrics", {}),
-        "feature_importance": dict(list(
-            predictor.metadata.get("feature_importance", {}).items()
-        )[:15]),
-    }
-
-
-# ---------------------------------------------------------------------------
-# AI Clinical Copilot (Anthropic-powered)
-# ---------------------------------------------------------------------------
-
-# The copilot is frozen by default until clinical validation and a human-factors
-# review establish that it adds value without unsafe automation bias.
-_copilot_enabled = os.getenv("SEPSIS_ENABLE_COPILOT", "false").lower() == "true"
-# Enterprise LLM feature gate — separate opt-in, requires signed BAA.
-_enterprise_llm_enabled = os.getenv("SEPSIS_ENTERPRISE_LLM", "false").lower() == "true"
-
-
-def _deidentify_vitals(vitals: dict) -> dict:
-    """Strip any patient-identifying information before sending to external LLM.
-
-    Only numeric clinical measurements are sent. No names, MRNs, DOBs, or
-    free-text fields cross the boundary.
-    """
-    safe_keys = {
-        "temperature", "heart_rate", "resp_rate", "sbp", "dbp", "spo2",
-        "gcs", "map", "lactate", "wbc", "procalcitonin",
-    }
-    return {k: v for k, v in vitals.items() if k in safe_keys}
-
-
-@app.post("/copilot", response_model=CopilotResponse, dependencies=[Depends(check_rate_limit)])
-async def clinical_copilot(body: CopilotRequest, user: Dict = Depends(verify_auth)):
-    """Research-only observation summary.
-
-    Disabled by default. Enabling it requires an explicit feature flag; enabling
-    external LLM processing additionally requires a signed BAA and separate flag.
-    """
-    if not _copilot_enabled:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Copilot is frozen for this investigational release pending "
-                "clinical validation and human-factors review."
-            ),
-        )
-
-    copilot_key = f"copilot:{user.get('user', user.get('email', 'anon'))}"
-    if not _copilot_limiter.allow(copilot_key):
-        raise HTTPException(status_code=429, detail="Copilot rate limit exceeded. Max 1 request per 2 seconds.")
-
-    _metrics["copilot_calls_total"] += 1
-
-    vitals_dict = {k: v for k, v in body.vitals.model_dump().items() if v is not None}
-    scores = compute_scores(vitals_dict)
-    scores_dict = scores.as_dict()
-
-    # Get ML prediction if model loaded
-    ml_risk = None
-    predictor = await asyncio.to_thread(_get_predictor)
-    if predictor:
-        comorbidities = body.comorbidities.model_dump() if body.comorbidities else None
-        pred = await asyncio.to_thread(
-            predictor.predict,
-            vitals=vitals_dict,
-            patient_id=body.patient_id,
-            age_years=body.age_years,
-            comorbidities=comorbidities,
-        )
-        ml_risk = pred.to_dict()
-
-    # LLM copilot: ONLY available under enterprise flag with BAA
-    if _enterprise_llm_enabled:
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if api_key:
-            try:
-                # Sanitise and check for prompt injection before LLM call
-                safe_question = None
-                if body.question:
-                    from sepsis_vitals.security import check_prompt_injection, PromptInjectionError
-                    try:
-                        check_prompt_injection(body.question)
-                    except PromptInjectionError:
-                        raise HTTPException(
-                            status_code=400,
-                            detail="Invalid input detected in clinical question.",
-                        )
-                    safe_question = sanitise_string(body.question, max_length=500)
-                safe_vitals = _deidentify_vitals(vitals_dict)
-                analysis = await _anthropic_copilot(
-                    safe_vitals, scores_dict, ml_risk, body.age_years, safe_question
-                )
-                return analysis
-            except Exception:
-                logger.warning("LLM copilot failed, falling back to rule-based", exc_info=True)
-
-    # Default: deterministic rule-based analysis (legally safe, no hallucination risk)
-    return _rule_based_copilot(vitals_dict, scores_dict, ml_risk, body.age_years)
-
-
-async def _anthropic_copilot(
-    vitals: dict, scores: dict, ml_risk: Optional[dict],
-    age: Optional[int], question: Optional[str],
-) -> CopilotResponse:
-    """Call Anthropic Claude for clinical analysis."""
-    import anthropic
-
-    client = anthropic.Anthropic()
-
-    risk_info = ""
-    if ml_risk:
-        risk_info = f"""
-ML Model Prediction:
-- Risk probability: {ml_risk['risk_probability']:.1%}
-- Risk level: {ml_risk['risk_level']}
-- Top risk factors: {json.dumps(ml_risk.get('top_risk_factors', [])[:3])}
-"""
-
-    prompt = f"""You summarize observations for an investigational sepsis-model validation study. Do not diagnose, prescribe, recommend treatment, or claim clinical benefit. Identify only the supplied score criteria, unusual measurements, missing data, and questions for a designated study reviewer.
-
-Patient vitals: {json.dumps(vitals)}
-Age: {age if age else 'Unknown'}
-Clinical scores: qSOFA={scores.get('qsofa',0)}/3, SIRS={scores.get('sirs_count',0)}/3, NEWS2={scores.get('news2_style',0)}, Shock Index={scores.get('shock_index','N/A')}
-Risk level: {scores.get('risk_level', 'unknown')}
-{risk_info}
-{f'Clinical question: {question}' if question else ''}
-
-Respond in this exact JSON format:
-{{
-  "analysis": "2-3 sentence research observation summary",
-  "risk_level": "low|moderate|high|critical",
-  "key_concerns": ["concern1", "concern2"],
-  "suggested_actions": ["data verification step", "study review step"]
-}}
-
-Be concise and precise. Suggested actions must be limited to data verification,
-documentation, or review under the study protocol."""
-
-    message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=500,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    response_text = getattr(message.content[0], "text", "")
-    if not isinstance(response_text, str) or not response_text.strip():
-        raise RuntimeError("Enterprise LLM returned no text response")
-    response_text = response_text.strip()
-    # Extract JSON from response
-    if "```json" in response_text:
-        response_text = response_text.split("```json")[1].split("```")[0].strip()
-    elif "```" in response_text:
-        response_text = response_text.split("```")[1].split("```")[0].strip()
-
-    parsed = json.loads(response_text)
-
-    return CopilotResponse(
-        analysis=parsed.get("analysis", "Analysis unavailable."),
-        risk_level=parsed.get("risk_level", scores.get("risk_level", "unknown")),
-        key_concerns=parsed.get("key_concerns", []),
-        suggested_actions=parsed.get("suggested_actions", []),
-        disclaimer=(
-            "Investigational research summary. Not for diagnosis or treatment; "
-            "review only under the approved study protocol."
-        ),
-    )
-
-
-def _rule_based_copilot(
-    vitals: dict, scores: dict, ml_risk: Optional[dict], age: Optional[int],
-) -> CopilotResponse:
-    """Produce a non-treatment research summary when external LLM use is off."""
-    concerns: List[str] = []
-    risk_level = scores.get("risk_level", "low")
-
-    temp = vitals.get("temperature")
-    if temp and (temp > 38.3 or temp < 36.0):
-        concerns.append(f"Temperature ({temp}°C) meets an encoded score criterion.")
-
-    hr = vitals.get("heart_rate")
-    if hr and hr > 100:
-        concerns.append(f"Heart rate ({hr} bpm) is above the encoded reference range.")
-    elif hr and hr < 50:
-        concerns.append(f"Heart rate ({hr} bpm) is below the encoded reference range.")
-
-    rr = vitals.get("resp_rate")
-    if rr and rr > 22:
-        concerns.append(f"Respiratory rate ({rr}/min) meets the qSOFA criterion.")
-
-    sbp = vitals.get("sbp")
-    if sbp and sbp <= 100:
-        concerns.append(f"Systolic blood pressure ({sbp} mmHg) meets the qSOFA criterion.")
-
-    spo2 = vitals.get("spo2")
-    if spo2 and spo2 < 94:
-        concerns.append(f"SpO2 ({spo2}%) is below the encoded reference range.")
-
-    gcs = vitals.get("gcs")
-    if gcs and gcs < 15:
-        concerns.append(f"GCS ({gcs}/15) meets the qSOFA criterion.")
-
-    lactate = vitals.get("lactate")
-    if lactate is not None and lactate >= 2.0:
-        concerns.append(f"Lactate ({lactate} mmol/L) meets an encoded risk criterion.")
-
-    qsofa = scores.get("qsofa", 0)
-    sirs = scores.get("sirs_count", 0)
-    ml_prob = ml_risk["risk_probability"] if ml_risk else None
-    if ml_prob is not None:
-        concerns.append(
-            f"The unvalidated development model produced a {ml_prob:.0%} output."
-        )
-
-    if not concerns:
-        concerns.append("No encoded score criteria fired in the supplied observations.")
-
-    analysis = (
-        f"Research summary: qSOFA {qsofa}/3 and SIRS {sirs}/3. "
-        f"The encoded risk category is {risk_level}; this is not a diagnosis."
-    )
-
-    return CopilotResponse(
-        analysis=analysis,
-        risk_level=risk_level,
-        key_concerns=concerns[:5],
-        suggested_actions=[
-            "Verify observation values, timestamps, units, and data source.",
-            "Record reviewer feedback under the approved validation protocol.",
-        ],
-        disclaimer=(
-            "Investigational research summary. Not for diagnosis or treatment."
-        ),
-    )
-
-
-# ---------------------------------------------------------------------------
-# WebSocket endpoint for real-time alerts
-# ---------------------------------------------------------------------------
-
-@app.websocket("/ws/alerts")
-async def websocket_alerts(websocket: WebSocket):
-    """Real-time sepsis alert stream via WebSocket.
-
-    Clients receive JSON messages when any patient triggers a high/critical alert.
-    Authentication uses the ``bearer.<JWT>`` WebSocket subprotocol so credentials
-    never appear in URLs or access logs.
-    """
-    # Authenticate WebSocket handshake via JWT
-    ws_org_id = None  # org_id for filtering broadcasts
-    ws_expires_at: Optional[float] = None  # close when the access token expires
-    selected_subprotocol = None
-    if _auth_enabled:
-        offered = [
-            value.strip()
-            for value in websocket.headers.get("sec-websocket-protocol", "").split(",")
-            if value.strip()
-        ]
-        token_protocol = next(
-            (value for value in offered if value.startswith("bearer.")),
-            None,
-        )
-        token = token_protocol.removeprefix("bearer.") if token_protocol else None
-        if not token:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
-        try:
-            from sepsis_vitals.auth.tokens import decode_token
-            payload = decode_token(token)
-            if payload.get("type") != "access":
-                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-                return
-            ws_org_id = payload.get("org_id")
-            ws_expires_at = float(payload["exp"])
-            if ws_org_id is None and payload.get("role") != "system_admin":
-                # Fail closed: an org-less connection would receive every site's alerts.
-                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-                return
-            selected_subprotocol = "sepsis-vitals" if "sepsis-vitals" in offered else None
-        except Exception:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
-
-    await ws_manager.connect(
-        websocket,
-        org_id=ws_org_id,
-        subprotocol=selected_subprotocol,
-    )
-    try:
-        while True:
-            # Keep connection alive, receive any client messages. The session
-            # must not outlive its access token: the client reconnects with a
-            # fresh token after refreshing.
-            if ws_expires_at is not None:
-                remaining = ws_expires_at - time.time()
-                if remaining <= 0:
-                    raise asyncio.TimeoutError
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=remaining)
-            else:
-                data = await websocket.receive_text()
-            # Client can send vitals for immediate scoring
-            try:
-                vitals = json.loads(data)
-                scores = compute_scores(vitals)
-                await websocket.send_json({
-                    "type": "score_result",
-                    "scores": scores.as_dict(),
-                })
-            except Exception:
-                await websocket.send_json({"type": "error", "detail": "Invalid JSON"})
-    except WebSocketDisconnect:
-        ws_manager.disconnect(websocket)
-    except asyncio.TimeoutError:
-        ws_manager.disconnect(websocket)
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="token expired")
-
-
-# ---------------------------------------------------------------------------
-# Prometheus-compatible metrics
-# ---------------------------------------------------------------------------
-
-@app.get("/metrics", response_class=PlainTextResponse, dependencies=[Depends(check_rate_limit)])
-async def prometheus_metrics(user: Dict = Depends(verify_auth)):
-    """Prometheus-compatible metrics endpoint. Requires auth in production."""
-    from sepsis_vitals.monitoring.drift_monitor import get_drift_monitor
-    drift_status = get_drift_monitor().get_drift_status()
-
-    # Build per-vital PSI lines
-    drift_lines = []
-    for vital, info in drift_status.get("per_vital", {}).items():
-        psi_val = info.get("psi", 0.0)
-        drift_lines += [
-            f'sepsis_psi{{vital="{vital}"}} {psi_val:.6f}',
-        ]
-
-    lines = [
-        "# HELP sepsis_requests_total Total API requests",
-        "# TYPE sepsis_requests_total counter",
-        f'sepsis_requests_total {_metrics["requests_total"]}',
-        "",
-        "# HELP sepsis_predictions_total Total ML predictions made",
-        "# TYPE sepsis_predictions_total counter",
-        f'sepsis_predictions_total {_metrics["predictions_total"]}',
-        "",
-        "# HELP sepsis_alerts_total Total sepsis alerts triggered",
-        "# TYPE sepsis_alerts_total counter",
-        f'sepsis_alerts_total {_metrics["alerts_total"]}',
-        "",
-        "# HELP sepsis_errors_total Total API errors",
-        "# TYPE sepsis_errors_total counter",
-        f'sepsis_errors_total {_metrics["errors_total"]}',
-        "",
-        "# HELP sepsis_copilot_calls_total Total AI copilot calls",
-        "# TYPE sepsis_copilot_calls_total counter",
-        f'sepsis_copilot_calls_total {_metrics["copilot_calls_total"]}',
-        "",
-        "# HELP sepsis_rate_limited_total Total rate-limited requests",
-        "# TYPE sepsis_rate_limited_total counter",
-        f'sepsis_rate_limited_total {_metrics["rate_limited_total"]}',
-        "",
-        "# HELP sepsis_prediction_latency_ms Average prediction latency",
-        "# TYPE sepsis_prediction_latency_ms gauge",
-        f'sepsis_prediction_latency_ms {_metrics["avg_prediction_ms"]:.1f}',
-        "",
-        "# HELP sepsis_websocket_connections Active WebSocket connections",
-        "# TYPE sepsis_websocket_connections gauge",
-        f"sepsis_websocket_connections {ws_manager.active_connections}",
-        "",
-        "# HELP sepsis_model_loaded Whether the ML model is loaded",
-        "# TYPE sepsis_model_loaded gauge",
-        f"sepsis_model_loaded {1 if _predictor is not None else 0}",
-        "",
-        "# HELP sepsis_drift_overall Whether overall population drift is detected (PSI>0.2)",
-        "# TYPE sepsis_drift_overall gauge",
-        f"sepsis_drift_overall {1 if drift_status['overall_drift'] else 0}",
-        "",
-        "# HELP sepsis_psi Population Stability Index per vital sign",
-        "# TYPE sepsis_psi gauge",
-        *drift_lines,
-        "",
-        "# HELP sepsis_drift_buffer_size Number of recent predictions buffered for drift detection",
-        "# TYPE sepsis_drift_buffer_size gauge",
-        *(
-            f'sepsis_drift_buffer_size{{vital="{v}"}} {n}'
-            for v, n in drift_status.get("buffer_counts", {}).items()
-        ),
-    ]
-    return "\n".join(lines) + "\n"
-
-
-# ---------------------------------------------------------------------------
 # Sub-routers — auth, patients, billing, alerts, FHIR
 # ---------------------------------------------------------------------------
 
@@ -1768,3 +1111,43 @@ def _include_routers():
 
 # Database init and router wiring now happen via the lifespan context
 # manager (see _lifespan above) instead of at module import time.
+
+
+# ---------------------------------------------------------------------------
+# Endpoint modules (moved out of this file; imported last so they can use
+# everything above). Re-exported names keep `from sepsis_vitals.api import X`
+# working.
+# ---------------------------------------------------------------------------
+
+from sepsis_vitals.routes.monitor import (  # noqa: E402,F401
+    monitor_register,
+    monitor_status,
+    monitor_unregister,
+)
+from sepsis_vitals.routes.simulator import (  # noqa: E402,F401
+    simulator_cases,
+    simulator_sessions,
+    simulator_start_replay,
+    simulator_start_ward,
+    simulator_stop,
+)
+from sepsis_vitals.routes.status import (  # noqa: E402,F401
+    _alembic_head,
+    model_info,
+    model_status,
+    readiness,
+)
+from sepsis_vitals.routes.copilot import (  # noqa: E402,F401
+    _anthropic_copilot,
+    _copilot_enabled,
+    _deidentify_vitals,
+    _enterprise_llm_enabled,
+    _rule_based_copilot,
+    clinical_copilot,
+)
+from sepsis_vitals.routes.realtime import (  # noqa: E402,F401
+    websocket_alerts,
+)
+from sepsis_vitals.routes.metrics import (  # noqa: E402,F401
+    prometheus_metrics,
+)

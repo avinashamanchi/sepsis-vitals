@@ -561,6 +561,24 @@ def get_db() -> Generator[Session, None, None]:
 def init_db() -> None:
     """Create all tables defined by the ORM models.
 
-    Safe to call multiple times; existing tables are not modified.
+    Safe to call multiple times; existing tables are not modified. Several
+    uvicorn workers run this concurrently at startup: when another worker
+    creates a table between our existence check and our CREATE, the database
+    reports "already exists" (or a duplicate pg_type key on PostgreSQL), and
+    that used to abort startup of the whole server. Such races are retried;
+    any other error propagates. Production schemas are created by Alembic
+    before the workers start (docker/entrypoint.sh).
     """
-    Base.metadata.create_all(bind=engine)
+    import time as _time
+
+    from sqlalchemy.exc import DBAPIError
+
+    for attempt in range(5):
+        try:
+            Base.metadata.create_all(bind=engine)
+            return
+        except DBAPIError as exc:
+            message = str(exc).lower()
+            if attempt == 4 or not ("already exists" in message or "duplicate key" in message):
+                raise
+            _time.sleep(0.1 * (attempt + 1))

@@ -231,3 +231,37 @@ def test_duplicate_blind_indexes_fail_clearly(monkeypatch):
         with Operations.context(MigrationContext.configure(conn)):
             with pytest.raises(RuntimeError, match="1 duplicate per-site MRN"):
                 mig._require_unique("site_id, external_id_hash", "patients", "per-site MRN")
+
+
+def test_init_db_tolerates_a_concurrent_worker(monkeypatch):
+    """Regression: with uvicorn --workers 4, two workers raced in create_all and
+    "table users already exists" shut the whole server down."""
+    import sqlalchemy.exc as sa_exc
+
+    from sepsis_vitals import db
+
+    calls = {"n": 0}
+    real = db.Base.metadata.create_all
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise sa_exc.OperationalError("CREATE TABLE users", {}, Exception("table users already exists"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(db.Base.metadata, "create_all", flaky)
+    db.init_db()
+    assert calls["n"] == 2
+
+
+def test_init_db_does_not_hide_real_errors(monkeypatch):
+    import sqlalchemy.exc as sa_exc
+
+    from sepsis_vitals import db
+
+    def broken(*args, **kwargs):
+        raise sa_exc.OperationalError("SELECT 1", {}, Exception("disk I/O error"))
+
+    monkeypatch.setattr(db.Base.metadata, "create_all", broken)
+    with pytest.raises(sa_exc.OperationalError):
+        db.init_db()
