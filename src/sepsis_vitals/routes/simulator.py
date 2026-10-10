@@ -9,6 +9,7 @@ shared state is read from the api module per request, so patching
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Dict
 
@@ -47,7 +48,7 @@ async def simulator_start_ward(body: SimulatorWardRequest, user: Dict = Depends(
     if not _core()._simulator_enabled:
         raise HTTPException(status_code=403, detail="Simulator not enabled")
 
-    _, _, ingester = _core()._get_monitor_components()
+    _, _, ingester = await asyncio.to_thread(_core()._get_monitor_components)
     if ingester is None:
         raise HTTPException(status_code=503, detail="Prediction engine not loaded")
 
@@ -69,7 +70,7 @@ async def simulator_start_replay(body: SimulatorReplayRequest, user: Dict = Depe
     if not _core()._simulator_enabled:
         raise HTTPException(status_code=403, detail="Simulator not enabled")
 
-    _, _, ingester = _core()._get_monitor_components()
+    _, _, ingester = await asyncio.to_thread(_core()._get_monitor_components)
     if ingester is None:
         raise HTTPException(status_code=503, detail="Prediction engine not loaded")
 

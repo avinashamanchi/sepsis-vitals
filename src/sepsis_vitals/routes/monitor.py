@@ -47,7 +47,7 @@ async def monitor_register(body: MonitorRegisterRequest, user: Dict = Depends(ve
     patient_id = sanitise_string(body.patient_id)
     await _verify_patient_org_async(patient_id, user)
 
-    registry, tracker, ingester = _core()._get_monitor_components()
+    registry, tracker, ingester = await asyncio.to_thread(_core()._get_monitor_components)
     registry.register(
         patient_id,
         demographics=body.demographics,
@@ -63,7 +63,7 @@ async def monitor_unregister(patient_id: str, user: Dict = Depends(verify_auth))
     # Org-level authorization: verify patient belongs to user's org (fail closed)
     await _verify_patient_org_async(patient_id, user)
 
-    registry, tracker, ingester = _core()._get_monitor_components()
+    registry, tracker, ingester = await asyncio.to_thread(_core()._get_monitor_components)
     registry.unregister(sanitise_string(patient_id))
     tracker.remove_patient(sanitise_string(patient_id))
 
@@ -73,7 +73,7 @@ async def monitor_unregister(patient_id: str, user: Dict = Depends(verify_auth))
 @router.get("/monitor/status", dependencies=[Depends(check_rate_limit)])
 async def monitor_status(user: Dict = Depends(verify_auth)):
     """List all monitored patients with current risk and trend."""
-    registry, tracker, ingester = _core()._get_monitor_components()
+    registry, tracker, ingester = await asyncio.to_thread(_core()._get_monitor_components)
     patients = registry.list_patients()
 
     from sepsis_vitals.auth.scope import require_site

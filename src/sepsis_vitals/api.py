@@ -398,6 +398,44 @@ _PHI_AUDIT_PATTERNS = {
     "/score": "score_calculation",
 }
 
+# Path segments that carry a patient identifier (internal id or MRN).
+_AUDIT_ID_PREFIXES = ("/fhir/Patient/", "/fhir/RiskAssessment/", "/patient/")
+
+
+def _audit_action(method: str, path: str) -> Optional[str]:
+    """Audit action for a request path, or None when it touches no PHI."""
+    if path.startswith("/fhir/"):
+        if path == "/fhir/metadata":
+            return None
+        return "fhir_write" if method == "POST" else "fhir_read"
+    for pattern, action in _PHI_AUDIT_PATTERNS.items():
+        if path.startswith(pattern) or (pattern.endswith("/") and pattern[:-1] in path):
+            return action
+    return None
+
+
+def _audit_target(path: str) -> tuple[str, Optional[str]]:
+    """(path safe to log, patient id to record) for an audited request.
+
+    An internal patient id (a UUID) is recorded as the resource id. Any other
+    identifier in the path, such as an MRN used for a FHIR lookup, is
+    replaced in the logged path by its keyed reference and not stored.
+    """
+    from sepsis_vitals.db import is_uuid
+    from sepsis_vitals.security import log_ref
+
+    for prefix in _AUDIT_ID_PREFIXES:
+        head, found, rest = path.partition(prefix)
+        if not found:
+            continue
+        ident, sep, tail = rest.partition("/")
+        if not ident:
+            break
+        if is_uuid(ident):
+            return path, ident
+        return f"{head}{prefix}{log_ref(ident)}{sep}{tail}", None
+    return path, None
+
 
 def _emit_audit_event(
     action: str,
@@ -473,11 +511,7 @@ async def hipaa_audit_middleware(request: Request, call_next):
         tracker.record_failed_auth(ip)
 
     # PHI audit logging
-    audit_action = None
-    for pattern, action in _PHI_AUDIT_PATTERNS.items():
-        if path.startswith(pattern) or (pattern.endswith("/") and pattern[:-1] in path):
-            audit_action = action
-            break
+    audit_action = _audit_action(request.method, path)
 
     if audit_action:
         # Extract user_id from request state if available
@@ -495,19 +529,15 @@ async def hipaa_audit_middleware(request: Request, call_next):
         if user_id and user_id != "unauthenticated":
             tracker.record_phi_access(user_id, ip)
 
-        # Extract patient_id from path if present
-        patient_id = None
-        if "/patient/" in path:
-            parts = path.split("/patient/")
-            if len(parts) > 1:
-                patient_id = parts[1].split("/")[0]
+        # Patient id from the path, if present (MRNs are not logged)
+        safe_path, patient_id = _audit_target(path)
 
         await asyncio.to_thread(
             _emit_audit_event,
             action=audit_action,
             user_id=user_id,
             ip_address=ip,
-            path=path,
+            path=safe_path,
             patient_id=patient_id,
             status_code=response.status_code,
         )
