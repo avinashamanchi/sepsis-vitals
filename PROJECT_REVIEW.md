@@ -15,6 +15,12 @@ prioritized plan.
 > were found, and most were fixed. The current status of each item is in
 > [§7 Consolidated issue register](#7-stage-2-consolidated-issue-register).
 > Sections 1-6 are the original stage-1 review, kept as a record.
+>
+> **Stage 3 (2026-10-09), completion and hardening:** [§8](#8-stage-3-completion-register)
+> is now the authoritative register. Each finding has exactly one status,
+> tied to commits and CI runs. §7 is kept as history. Nothing here makes the
+> software production-ready or clinically safe; see the readiness statements
+> in §8.6.
 
 ---
 
@@ -461,3 +467,186 @@ still hold.
 | Local dev DB untouched by the test run | modification time unchanged |
 
 Not verifiable locally: anything needing node (frontend lint/test/build), Docker, `docker compose`, or PostgreSQL. These are covered by the CI jobs `frontend`, `docker` and `postgres-migrations` on PR #4.
+
+
+## 8. Stage 3: completion register
+
+Re-checked on 2026-10-09 on branch `review/independent-review-fixes`.
+Code head: `17f6c56`. This section is authoritative; §7 is history.
+
+Each finding has exactly one status:
+
+| Status | Meaning |
+|---|---|
+| **Fixed and verified** | Fixed, and a named test or CI step reproduces the original failure and now passes on the final head. |
+| **Implemented; verification blocked** | Implemented, but it can only be verified in an environment this work could not access. |
+| **Awaiting explicit approval** | Ready to act on. The owner must approve the exact action in §8.4. |
+| **Awaiting clinician-approved requirements** | Engineering is ready. A clinical specification is missing and has not been invented. |
+| **Awaiting authorized data or external access** | Needs representative clinical data, credentials or infrastructure access. |
+| **Disproved or superseded** | Evidence shows the issue no longer applies. |
+| **Unresolved** | Not done. The exact next action is given. |
+
+"Verified on the final head" means two things. First, the full local suite (§8.5) passed on `17f6c56`. Second, the CI run for that commit passed all 10 jobs: lint, typecheck, security, tests on Python 3.10/3.11/3.12, frontend, postgres-migrations, docker and compose-smoke. Each fix commit is listed so it can be reviewed on its own.
+
+### 8.1 Stage-1 findings
+
+| # | Finding | Status | Fix commit(s) | Evidence on the final head |
+|---|---|---|---|---|
+| S1 | No tenant scoping on patient, FHIR, alert, monitor and WebSocket paths | Fixed and verified | 52fddba, 17eb237 | `tests/test_tenant_isolation.py` (36 two-site tests), also run against PostgreSQL in the `postgres-migrations` job |
+| S2 | `PUT /auth/me` let users switch site | Fixed and verified | 52fddba | `test_user_cannot_switch_own_site` |
+| S3 | `org_id=None` meant "allow all" | Fixed and verified | 52fddba | `test_unassigned_user_sees_nothing`, `test_websocket_rejects_orgless_non_admin` |
+| S4 | Global contacts, SMS relay, push-endpoint SSRF | Fixed and verified | 52fddba | `test_notification_contacts_are_owner_scoped`, `test_push_endpoint_allowlist` |
+| S5 | Alert acknowledgements misattributed | Fixed and verified | 52fddba | `test_alert_ack_is_attributed_to_authenticated_user_and_scoped` |
+| S6 | MRN unique across sites; FHIR upsert overwrote other sites | Fixed and verified | 2304a8e, 53bec5f | `test_same_mrn_may_exist_at_two_sites`; composite key created by migration 003 on PostgreSQL (CI) |
+| S7 | `TRUSTED_PROXIES` unset behind nginx/ALB | Implemented; verification blocked | a3e5593 | The compose subnet setting runs in `compose-smoke`. Verifying the Terraform VPC CIDR needs `terraform plan` against the real AWS account (§8.4 item 8) |
+| S8 | MFA never enforced; lockout uncapped | Awaiting explicit approval | a05be62, bc9fa41 | Fixed: lockout cap. Implemented: TOTP enrolment, recovery codes, admin reset and a role policy (`tests/test_mfa.py`, 9 tests). Enforcement is **off by default** and turning it on is your decision (§8.4 item 3) |
+| S9 | Token lifecycle gaps | Fixed and verified | a05be62, 17eb237, bc9fa41 | Refresh replay revokes the token family. Reset tokens are single-use. WebSockets close at token expiry. Same-second revocation fixed (N23). Break-glass is tracked separately (N18) |
+| S10 | Compose published DB, Redis, monitoring and MLLP on all interfaces | Fixed and verified | a3e5593, 32be657 | `compose-smoke` step "Infrastructure ports are loopback-only"; `tests/test_deploy_config.py` |
+| S11a | PHI in logs | Fixed and verified | 52fddba, a05be62 | `log_ref()` in listener, escalation and monitor logs; `test_reset_request_does_not_log_email_and_is_uniform` |
+| S11b | Patient-state and escalation SQLite stores held plaintext identifiers | Awaiting explicit approval | e1c8049 | New stores hold keyed references and AES-GCM ciphertext, with mode 0600 (`tests/test_state_store_protection.py`). **Existing legacy files are untouched**: converting them needs approval (§8.4 item 4) |
+| S12 | Billing org IDOR | Fixed and verified | 972638a | Billing routes require billing admin through `Depends`; the 404 no longer echoes the org ID (`tests/test_access_controls.py`). Billing stays frozen |
+| S13 | Legacy JWT code in `auth/jwt.py` | Awaiting explicit approval | — | Dead code: `create_access_token`, `verify_token`, `UserStore`, `_b64url_*` are referenced only by tests (§8.3) |
+| C1 | NEWS2 oxygen handling | Fixed and verified | 52fddba | `TestNEWS2Scale2`, band tests |
+| C2 | MIMIC WBC/procalcitonin item IDs | Fixed and verified | 52fddba | `tests/test_mimic_itemids.py`; the CI fixture covers the loader (N17) |
+| C3 | GCS items swapped | Fixed and verified | 52fddba | `test_gcs_components_are_not_swapped` |
+| C4 | Sepsis-3 windows | Fixed and verified | 52fddba | `TestSeymourWindows` |
+| C5 | SIRS temperature threshold | Fixed and verified | 52fddba | `test_sirs_temperature_threshold` |
+| C6 | qSOFA GCS cut-off undocumented | Fixed and verified | 52fddba | Documented in `scores.py` |
+| C7 | No NEWS2 red score or ACVPU | Awaiting clinician-approved requirements | 32be657 | Not invented. The API reports the gap in `news2_limitations` on every score response (`test_scores.py`) |
+| M1 | Generator ties the label to age and comorbidity | Awaiting explicit approval | b9d030a | Generator mechanics added; defaults reproduce legacy output exactly. With age and comorbidity decoupled, the demographics-only AUROC falls from 0.730 to 0.507 (`reports/synthetic_profile_evaluation.md`). Replacing the committed model needs approval (§8.4 item 7) |
+| M2 | Headline AUROC measures detection, not early warning | Awaiting clinician-approved requirements | b9d030a | The `onset_within_horizon` label is implemented, and the script requires `--horizon-hours`. The horizon is a clinical choice and has not been made |
+| M3 | Train/serve skew | Fixed and verified | 17eb237 | `tests/test_inference_parity.py`, also run on PostgreSQL |
+| M4 | Synthetic timestamps ran backwards | Fixed and verified | f4d6df3 | `test_synthetic_timestamps_are_strictly_increasing` |
+| M5 | MIMIC-demo metrics in-sample, with pre-fix mappings | Awaiting authorized data or external access | 32be657 | The label bug is fixed (N27) and `known_issues` is recorded. Retraining or re-evaluating needs the credentialed PhysioNet data (§8.7) |
+| M6 | No uncertainty in reported metrics | Unresolved | b9d030a | The profile evaluation now has a patient-bootstrap CI and calibration. **Next action:** add patient-bootstrap CIs to `scripts/run_no_labs_ablation.py` (`ml/ablation.py`) and to the no-labs and demographics columns of `ml/profile_evaluation.py` |
+| M7 | TRIPOD+AI evaluation gaps | Awaiting authorized data or external access | b9d030a | The protocol is implemented (temporal split, CI, calibration, operating point, subgroups, leakage probe) but has only run on synthetic data. Real evaluation needs representative data and the clinical choices in §8.7 |
+| P1 | No single intended-use statement | Awaiting clinician-approved requirements | 19e2b3d | Draft in `compliance/intended_use_and_validation_plan.md`; needs owner and clinical sign-off |
+| P2 | Setting, data and model mismatch | Awaiting explicit approval | — | Product decision (for example a vitals-only model for LMIC wards) |
+| P3 | Launch gates not testable | Awaiting clinician-approved requirements | — | Numeric go/revise/stop criteria must come from the study team. None were invented |
+| P4 | Positioning lacks a buyer and deliverables | Awaiting explicit approval | — | Owner decision |
+| P5 | Regulatory framing too soft | Awaiting explicit approval | — | Needs regulatory counsel; silent mode remains the only defensible use |
+| P6 | Stale `AUDIT_INSTRUCTIONS.md` | Awaiting explicit approval | — | Its still-valid checks are carried into §8.2 as AU-*. Retiring the file needs approval (§8.4 item 6) |
+| P7 | License choice | Awaiting explicit approval | — | Owner decision |
+| A1 | CI typecheck red | Fixed and verified | 2bcf45a | `typecheck` job |
+| A2 | CI only on PRs into `main` | Fixed and verified | 2bcf45a | CI runs on this PR's pushes |
+| A3 | Slow test suite | Fixed and verified | 002cef6 | Full suite about 150 s locally (stage 1: 535 s), with 113 more tests |
+| A4 | God modules (`api.py`, `fhir/listener.py`) | Fixed and verified | ccdae32 | `api.py` keeps the app, auth and prediction core; endpoints moved to `routes/` (monitor, simulator, copilot, realtime, metrics, status). `fhir/listener.py` is now a facade over six modules. Old import paths still work (`tests/test_module_structure.py`) |
+| A5 | Dead code | Awaiting explicit approval | — | Inventory with evidence in §8.3; nothing deleted |
+| A6 | Dependency bloat; no Python lockfile | Unresolved | a3e5593 | Fixed: `psycopg` added, `asyncpg` removed. **Next action:** move `anthropic` (copilot, frozen) and the payment/SMS SDKs into optional extras with lazy imports; generate a hashed lockfile (`uv pip compile --generate-hashes` or `pip-compile`); install with `--require-hashes` in the Dockerfile and CI |
+| A7 | Built site committed to `docs/` | Awaiting explicit approval | 29bb4ef | 45 generated files removed. Pages is now built in CI from `frontend/dist`, and the publish guard passes in the `frontend` job. **Deploying needs the merge** (§8.4 item 2) |
+| A8 | Frontend/backend contract drift | Fixed and verified | 39045b3, 53bec5f | Vitest contract tests (`api.test.ts`, `Patients`, `Analytics`, `Login`); `compose-smoke` logs in and reads patients through nginx `/api` |
+| A9 | Thin frontend tests | Unresolved | 53bec5f, bc9fa41 | Added 4 test files covering API, Patients, Analytics and Login (reset and MFA). **Next action:** add tests for Dashboard, Alerts and Monitor, plus a Playwright smoke test against the `compose-smoke` stack |
+| A10 | `DriftMonitor` bound to a stale loop | Fixed and verified | 002cef6 | Monitor tests pass in any order |
+| A11 | No `SECURITY.md`, Dependabot or pip-audit | Unresolved | — | **Next action:** add `.github/dependabot.yml` (pip, npm, github-actions; weekly) and a `pip-audit` CI job (report-only at first). `SECURITY.md` needs an owner-chosen security contact |
+
+### 8.2 Stage-2 findings, new stage-3 findings, and carried-over audit checks
+
+| # | Finding | Status | Fix commit(s) | Evidence on the final head |
+|---|---|---|---|---|
+| N1 | 12 frontend vulnerabilities (2 critical, 8 high) | Fixed and verified | e1c8049 | vitest 4; `npm audit` reports 0 in the `frontend` job (clean `npm ci`) |
+| N2 | Plaintext GitHub OAuth token in `.claude/settings.local.json` (gitignored; never committed) | Awaiting explicit approval | — | **Not rotated.** Only the owner can revoke it at GitHub (§8.4 item 1). Editing the local file also needs approval |
+| N3 | Migrations missing ORM columns | Fixed and verified | 2304a8e | `tests/test_migrations.py`; upgrades from an empty PostgreSQL database in CI |
+| N4 | Encrypted columns overflowed `VARCHAR(64)` | Fixed and verified | 2304a8e | `test_encrypted_columns_are_not_length_limited`; long MRN inserted on PostgreSQL in CI |
+| N5 | `init.sql` created a stale schema | Fixed and verified | a3e5593 | `compose-smoke`: `/ready` reports `migrations: at-head` and login works |
+| N6 | No sync Postgres driver | Fixed and verified | a3e5593 | `postgres-migrations` job |
+| N7 | Frontend calls never reached the API | Fixed and verified | 39045b3 | `compose-smoke` "Login and API routing through nginx (/api)" |
+| N8 | Patients list showed demo patients and invented values | Fixed and verified | 17eb237, 39045b3 | `test_patient_list_reports_latest_observation_or_null`; `Patients.test.tsx` |
+| N9 | Dashboard and Analytics invented numbers | Fixed and verified | 39045b3, 53bec5f | `Analytics.test.tsx` |
+| N10 | Password reset unfinished | Fixed and verified | a05be62, 39045b3 | `test_reset_*`; `Login.test.tsx` reset form. Delivery through a real SMTP server is untested |
+| N11 | Lockout overflow | Fixed and verified | a05be62 | `test_lockout_is_capped_and_never_overflows` |
+| N12 | Docker image could not serve predictions; no model delivery | Fixed and verified | a3e5593, e1c8049 | `docker` job: model absent gives an explicit 503; read-only mounted model is verified by SHA-256 and returns provenance; never `clinically_ready`; non-root user |
+| N13 | Compose required `ANTHROPIC_API_KEY` | Fixed and verified | a3e5593 | `compose-smoke` runs without it |
+| N14 | Tests wrote to the developer database | Fixed and verified | 002cef6 | `tests/conftest.py` temporary database |
+| N15 | Order-dependent monitor tests | Fixed and verified | 002cef6 | `asyncio.run` |
+| N16 | `GET /patients/alerts` unreachable | Fixed and verified | 17eb237 | `test_active_alert_list_is_routable` |
+| N17 | MIMIC loader never exercised in CI | Fixed and verified | 32be657 | `tests/fixtures/mimic_format.py`, `tests/test_mimic_loader_fixture.py` (7 tests, no real data) |
+| N18 | Break-glass access non-functional | Awaiting clinician-approved requirements | 972638a | The endpoint now always returns 403 and is audited (`tests/test_access_controls.py`). Redesigning it needs an approved emergency-access policy. The unreachable service code is in the dead-code list |
+| N19a | API could show "low" risk for a rule-critical patient | Fixed and verified | e1c8049 | `risk_level = max(rule, model)`. The alert fires on the rule alert. Both components and provenance are returned and persisted (`test_model_present_reports_ready_but_never_clinically_ready`, `test_predictor_dual.py`) |
+| N19b | The committed model's probability is wrong for such patients | Awaiting explicit approval | — | Consequence of M1. Needs a retrained model (§8.4 item 7) and, for any claim, real data |
+| N20 | Deprecated `.dict()` | Fixed and verified | 17eb237 | No deprecation warnings |
+| N21 | History rows without timestamps | Fixed and verified | 17eb237 | mypy clean; rows skipped |
+| N22 | Validation report written into `docs/` | Fixed and verified | 29bb4ef | Now writes to `reports/` |
+| N23 | Same-second revocation | Fixed and verified | bc9fa41 | `test_session_issued_right_after_revocation_is_valid`, `test_revocations_stored_in_seconds_still_apply` |
+| N24 | Unused `asyncpg` | Fixed and verified | a3e5593 | Removed |
+| N25 | **New.** On PostgreSQL, registration and login raised `TypeError` (UUID objects in JWT claims) | Fixed and verified | 53bec5f | `GUID` column type; `postgres-migrations` logs in on PostgreSQL |
+| N26 | **New.** Migration 003 backfill crashed opaquely on undecryptable rows, and failed with a raw constraint error on duplicate MRNs | Fixed and verified | 53bec5f | Clear `RuntimeError` with no values printed (`test_migrations.py` backfill and duplicate tests) |
+| N27 | **New.** MIMIC training used SOFA = 0, so there were no Sepsis-3 positives | Fixed and verified | 32be657 | Onset taken from `derive_sepsis_labels`. Demo: positive rows went from 0 to 6,459 (local, credentialed data). Logic covered by fixture tests in CI |
+| N28 | **New.** `docker-compose.yml` was invalid YAML on `main` | Fixed and verified | 32be657 | `tests/test_deploy_config.py`; `compose-smoke` |
+| N29 | **New.** Login returned 500 after any failed attempt on SQLite (naive datetime comparison) | Fixed and verified | bc9fa41 | `test_lockout_check_accepts_naive_timestamps_from_sqlite` |
+| N30 | **New.** Dashboard container always unhealthy (busybox resolved `localhost` to `::1`) | Fixed and verified | d309e5d | `compose-smoke` waits for healthy |
+| N31 | **New.** With `--workers 4`, concurrent `create_all` aborted the whole server ("table users already exists"); Docker CI failed intermittently | Fixed and verified | ccdae32 | `test_init_db_tolerates_a_concurrent_worker`, `test_init_db_does_not_hide_real_errors`; `docker` job green on ccdae32 and 17f6c56 |
+| N32 | **New.** Alembic's `fileConfig` disabled application loggers, including audit and security logs, after in-process migrations | Fixed and verified | 32be657 | `disable_existing_loggers=False`; caplog-based tests pass after migrations |
+| N33 | **New.** Model load (about 1.7 s) and each prediction (about 17 ms) blocked the event loop | Fixed and verified | 372e1d5 | `asyncio.to_thread`; warm load in lifespan; `/health` never loads the model |
+| N34 | **New.** `/ready` reported the database unreachable in the container (Alembic scripts not found) and mixed up liveness, readiness and model state | Fixed and verified | e1c8049, fd64b47 | `/health` (liveness), `/ready` (DB plus migration state), `/model/status` (prediction readiness; never clinically ready); `test_alembic_head_is_found_from_the_working_directory`; `compose-smoke` |
+| N35 | **New.** Model artifacts were unpickled without an integrity check | Fixed and verified | e1c8049 | `models/manifest.json` SHA-256 checked before `joblib.load`; schema and runtime checks (`tests/test_model_artifacts.py`, 11 tests) |
+| AU-0.3 | Old audit: `_load_keys` race | Disproved or superseded | — | Double-checked lock (`auth/tokens.py`: `_keys_lock`) |
+| AU-2.1 | Old audit: `async def` handlers doing blocking database work | Unresolved | 372e1d5, 17f6c56 | Fixed: predictions, model load, `verify_auth`'s user lookup (worker thread) and the FHIR GET and billing handlers (now `def`) (`tests/test_module_structure.py`). **Next action:** the 4 FHIR POST handlers (`create_patient`, `create_observation`, `create_bundle`, `process_vitals`) and the frozen billing `stripe_webhook` still do synchronous database work after awaiting the request body. Move that work into a `def` helper called with `asyncio.to_thread` |
+| AU-2.3 | Old audit: WebSocket broadcast opens a DB session per message | Disproved or superseded | — | One lookup per broadcast, not per client. It runs in a worker thread, is closed in `finally`, and fails closed (`realtime/websocket.py` `_patient_org_id`, `broadcast`) |
+| AU-2.4 | Old audit: rate-limiter thread safety | Disproved or superseded | — | `threading.Lock` around bucket access (`security.py` `RateLimiter`) |
+| AU-3.7 | Old audit: no PII key rotation | Unresolved | — | **Next action:** tag ciphertexts with a key ID (`enc:v2:<kid>:`), read a keyring (`SEPSIS_PII_KEYS`) for decryption, and write a re-wrap job. Running the job on existing databases needs approval |
+| AU-4.4 | Old audit: extreme vitals | Disproved or superseded | — | Request models bound every vital (`api.py` `VitalsInput`: for example SBP 30-300, HR 0-350); score tests cover the bands |
+| AU-4.5 | Old audit: simulator data leaking into real paths | Disproved or superseded | — | `ml/simulator.py` and `routes/simulator.py` do not use the database session, predictor, escalation manager or WebSocket broadcast |
+
+### 8.3 Dead-code inventory (nothing deleted; awaiting approval)
+
+| Path | Lines | Evidence it is unused in production | Tests that would go with it |
+|---|---:|---|---|
+| `src/sepsis_vitals/state.py` | 372 | No `src/` or `scripts/` importer; the runtime uses `ml/state_store.py` | `TestStateStore*` in `tests/test_new_systems.py` |
+| `src/sepsis_vitals/ml/forecast.py` | 252 | No importer outside its own tests | `tests/test_forecast.py` (6) |
+| `src/sepsis_vitals/ml/ensemble.py` | 131 | No importer outside its own tests | `tests/test_ensemble.py` (6) |
+| `health_economics/` (repo root) | 131 | Not part of the package; tests only | parts of `test_new_systems.py` and `test_new_modules.py` |
+| `auth/jwt.py`: `create_access_token`, `verify_token`, `_b64url_*`, `UserStore` | about 180 | Production tokens come from `auth/tokens.py`; `UserStore` would create `models/users.db` | parts of `test_new_systems.py` |
+| `auth/service.py`: `break_glass_login`, `_get_break_glass_hash`, `_fire_break_glass_alerts` | about 120 | The only route returns 403 before reaching it (N18) | break-glass tests in `test_new_systems.py` |
+| `files/` (untracked, local only) | — | An older copy of the bundles feature: `protocol.py` and `models.py` are identical; `service.py`, `router.py` and `forecast.py` differ. It also has `BundlePanel.tsx` and `outbox.ts`, which are **not** in the repository | Not tracked. Left untouched; it may hold unmerged work |
+
+Not dead: `model_scaffold.py` (used by `ml/trainer.py`) and `data_quality.py` (tested feature code).
+
+### 8.4 Approvals requested: exact actions and rollback
+
+| # | Action | Exact proposed steps | Rollback |
+|---|---|---|---|
+| 1 | Revoke the exposed GitHub token (N2) | **You:** GitHub → Settings → Applications → Authorized OAuth Apps → revoke the GitHub CLI grant, then `gh auth login`. **With your approval, I then:** remove the token-bearing allow-rules from `.claude/settings.local.json`. The current `gh` session may be using this token, so revoking it ends that session | Log in again with `gh auth login` |
+| 2 | Merge PR #4 (deploys Pages from CI) | Squash or merge after review. `pages.yml` builds `frontend/dist`, runs `scripts/check_published_site.sh`, then deploys | `git revert -m 1 <merge>` restores `docs/` and the old workflow; re-run Pages |
+| 3 | Turn on MFA enforcement (S8) | 1) Tell users. 2) Admins enrol at `/auth/mfa/enroll` and store their recovery codes. 3) Set `SEPSIS_MFA_REQUIRED_ROLES=system_admin` and restart. 4) Extend to other roles once they have enrolled | Unset the variable and restart. Reset a locked-out user with `python -m sepsis_vitals.auth.admin_cli reset-mfa --email <user>` |
+| 4 | Convert legacy SQLite stores (S11b) | `python scripts/migrate_state_stores.py --source models --output <new dir> --dry-run`, then without `--dry-run`, using the production `SEPSIS_PII_KEY`. Point `SEPSIS_STATE_DIR` at the output. Delete the legacy files only under your retention policy, as a separate approval | Source files are never modified; point `SEPSIS_STATE_DIR` back |
+| 5 | Remove the dead code (A5, S13) | One commit deleting the §8.3 paths (not `files/`) and their tests; full suite and CI | `git revert <commit>` |
+| 6 | Retire `AUDIT_INSTRUCTIONS.md` (P6) | `git rm AUDIT_INSTRUCTIONS.md`; its still-valid checks live on as AU-* above | `git revert <commit>` |
+| 7 | Replace the committed synthetic model (M1, N19b) | Add `--profile decoupled` (and, once a horizon is approved, `--label-mode onset_within_horizon --horizon-hours <H>`) to `retrain.py`; retrain; rebuild `models/manifest.json` with `validation_status: synthetic-development`; compare with `scripts/evaluate_synthetic_profiles.py` | Keep the current artifact and manifest under `models/archive/<sha>/`; restore both files (the manifest pins the SHA-256) |
+| 8 | Check `TRUSTED_PROXIES` in Terraform (S7) | Read-only `terraform plan` with the deployment's AWS credentials; **no apply** | None needed (read-only) |
+
+### 8.5 Verification on the final head
+
+| Check | Commit | Result |
+|---|---|---|
+| Full local `pytest` | 17f6c56 | **745 passed, 0 failed, 0 skipped**, 162 s |
+| Tests collected | 17f6c56 | 745 (stage 2: 667; stage 1: 632). The 78 added tests are in `test_access_controls` (12), `test_model_artifacts` (11), `test_module_structure` (11), `test_mfa` (9), `test_mimic_loader_fixture` (7), `test_deploy_config` (6), `test_profile_evaluation` (6), `test_state_store_protection` (5), `test_migrations` (+5), `test_auth_hardening` (+3), `test_predictor_dual` (+2), `test_scores` (+1). None were removed |
+| `ruff check src tests scripts` | 17f6c56 | clean |
+| `mypy src/sepsis_vitals` | 17f6c56 | clean (83 files) |
+| `bandit -r src -c pyproject.toml -ll` | 17f6c56 | 0 medium, 0 high (15 low) |
+| CI run (all 10 jobs) | 17f6c56 | all 10 jobs passed: [run 38007905116](https://github.com/avinashamanchi/sepsis-vitals/actions/runs/38007905116) |
+| CI run (all 10 jobs) | ccdae32 | passed: [run 38007581164](https://github.com/avinashamanchi/sepsis-vitals/actions/runs/38007581164) |
+
+What the CI jobs cover:
+- **frontend:** clean `npm ci`, lint, vitest, build, `npm audit` (0 vulnerabilities) and the Pages publish guard.
+- **postgres-migrations:** concurrent upgrades from empty, the smoke script (backfill, login), and the API, auth, tenant and parity tests on PostgreSQL 16.
+- **docker:** non-root user, no model and no `.env` in the image, the model-absent and model-mounted paths, and a clean shutdown.
+- **compose-smoke:** loopback-only ports; login, patients (200 with a token, 401 without), `/ready`, `/model/status` and the SPA, all through nginx.
+
+Local limits: Node, Docker and PostgreSQL are not used locally (the workspace blocks `node`/`npm`), so those checks rely on CI.
+
+### 8.6 Readiness statements
+
+- **Development and tests:** ready for continued development. Every check above passes on the final head. Passing tests do not establish clinical safety, regulatory compliance or model validity.
+- **Deployment and infrastructure:** the API and dashboard images and the compose stack build, migrate and serve in CI. Nothing has been deployed. Terraform has not been planned or applied. Merging and Pages deployment await approval. **Not production-ready.**
+- **Security and privacy:** tenant isolation, token lifecycle, billing authorisation, artifact integrity and new state stores are fixed and tested. Not yet done: MFA enforcement (off by default), conversion of legacy stores, the exposed GitHub token (not revoked), PII key rotation (unresolved), Python dependency pinning (unresolved) and SECURITY.md/Dependabot. No penetration test or HIPAA/GDPR assessment has been done.
+- **Model validation:** **none on clinical data.** The committed model is `synthetic-development`, trained on a generator that ties risk to age. Every reported number describes synthetic data. MIMIC-demo results are in-sample and predate the label fix.
+- **Clinical use:** **not permitted.** `/model/status` and every prediction report `clinical_use: not-permitted`, and no validation status counts as clinically approved. Silent-mode research use needs an approved protocol, intended use, prediction horizon, alert policy and validation on representative data.
+
+### 8.7 Clinical and data blockers (nothing below was invented)
+
+1. **Prediction target and horizon (M2):** the label definition and the hours before onset.
+2. **NEWS2 red score and ACVPU (C7):** whether to implement them, and how to capture new confusion.
+3. **Alert thresholds and acceptance criteria (P3):** numeric go/revise/stop gates; operating point and alert burden.
+4. **Emergency-access policy (N18):** who may break glass, scope, duration and review.
+5. **Intended use (P1):** setting, users and the decisions the output supports.
+6. **Data:** credentialed MIMIC-IV access for re-evaluation (M5), and representative data from the target setting for real validation (M7). No real patient data was accessed, uploaded or altered in this work.
