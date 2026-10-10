@@ -217,3 +217,20 @@ def test_mfa_status_reports_counts_without_identities(client, monkeypatch, capsy
     assert admin_cli.main(["mfa-status", "--roles", "nurse"]) == 0
     out = capsys.readouterr().out
     assert "@" not in out and email not in out
+
+
+def test_totp_allows_one_step_of_clock_drift_and_no_more():
+    """Regression: a code checked just after its 30 s step ended was rejected
+    (seen as an intermittent CI failure on login right after enrollment)."""
+    import time
+
+    import pyotp
+
+    from sepsis_vitals.auth.jwt import verify_totp
+
+    secret = pyotp.random_base32()
+    totp = pyotp.TOTP(secret)
+    now = time.time()
+    assert verify_totp(secret, totp.at(now))
+    assert verify_totp(secret, totp.at(now - 30))       # previous step
+    assert not verify_totp(secret, totp.at(now - 90))   # three steps old

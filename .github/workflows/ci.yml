@@ -340,6 +340,7 @@ jobs:
             echo "REDIS_PASSWORD=$(rand)"
             echo "GRAFANA_PASSWORD=$(rand)"
             echo "SEPSIS_WEBHOOK_SECRET=$(rand)"
+            echo "SEPSIS_TOKEN_SECRET=$(rand)"
             echo "SEPSIS_PII_KEY=$(python3 -c 'import base64, os; print(base64.b64encode(os.urandom(32)).decode())')"
             echo "JWT_PRIVATE_KEY=$(awk '{printf "%s\\n", $0}' /tmp/jwt.pem)"
             echo "JWT_PUBLIC_KEY=$(awk '{printf "%s\\n", $0}' /tmp/jwt.pub)"

@@ -55,3 +55,20 @@ def test_frozen_copilot_key_is_optional(compose):
 def test_postgres_bootstrap_creates_no_tables():
     sql = (ROOT / "docker" / "postgres" / "init.sql").read_text().upper()
     assert "CREATE TABLE" not in sql  # Alembic owns the schema
+
+
+def test_password_reset_has_a_token_secret_where_jwts_use_rsa(compose):
+    """N50: with RSA-signed JWTs and no SEPSIS_TOKEN_SECRET/SEPSIS_JWT_SECRET,
+    every password-reset request failed with a 500."""
+    env = compose["services"]["api"]["environment"]
+    assert "JWT_PRIVATE_KEY" in env and "SEPSIS_TOKEN_SECRET" in env
+    terraform = (ROOT / "terraform" / "main.tf").read_text()
+    assert 'name = "SEPSIS_TOKEN_SECRET"' in terraform
+
+
+def test_terraform_tasks_can_read_their_secrets():
+    """N51: the ECS execution role had no policies, so tasks could not pull
+    the image, write logs or resolve secrets."""
+    terraform = (ROOT / "terraform" / "main.tf").read_text()
+    assert "AmazonECSTaskExecutionRolePolicy" in terraform
+    assert "secretsmanager:GetSecretValue" in terraform

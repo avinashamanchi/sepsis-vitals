@@ -210,11 +210,12 @@ resource "aws_ecs_task_definition" "api" {
     ]
     secrets = [
       { name = "DATABASE_URL",          valueFrom = "${aws_secretsmanager_secret.db_url.arn}" },
-      { name = "ANTHROPIC_API_KEY",     valueFrom = "${aws_secretsmanager_secret.anthropic.arn}" },
       { name = "JWT_PRIVATE_KEY",       valueFrom = "${aws_secretsmanager_secret.jwt_private.arn}" },
       { name = "JWT_PUBLIC_KEY",        valueFrom = "${aws_secretsmanager_secret.jwt_public.arn}" },
       { name = "SEPSIS_PII_KEY",        valueFrom = "${aws_secretsmanager_secret.pii_key.arn}" },
       { name = "SEPSIS_WEBHOOK_SECRET", valueFrom = "${aws_secretsmanager_secret.webhook.arn}" },
+      # HMAC key for password-reset and email-verification tokens (JWTs use the RSA keys).
+      { name = "SEPSIS_TOKEN_SECRET",   valueFrom = "${aws_secretsmanager_secret.token_secret.arn}" },
       { name = "REDIS_URL",             valueFrom = "${aws_secretsmanager_secret.redis_url.arn}" },
     ]
     logConfiguration = {
@@ -359,6 +360,11 @@ resource "aws_secretsmanager_secret" "pii_key" {
 
 resource "aws_secretsmanager_secret" "webhook" {
   name = "${local.name_prefix}/webhook-secret"
+  kms_key_id = aws_kms_key.secrets.id
+}
+
+resource "aws_secretsmanager_secret" "token_secret" {
+  name       = "${local.name_prefix}/token-secret"
   kms_key_id = aws_kms_key.secrets.id
 }
 
@@ -586,6 +592,41 @@ resource "aws_iam_role" "ecs_execution" {
       Effect    = "Allow"
       Principal = { Service = "ecs-tasks.amazonaws.com" }
     }]
+  })
+}
+
+# The execution role pulls the image, writes logs and resolves the task's
+# secrets at start-up. Without these grants no task can start.
+resource "aws_iam_role_policy_attachment" "ecs_execution" {
+  role       = aws_iam_role.ecs_execution.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role_policy" "ecs_execution_secrets" {
+  name = "${local.name_prefix}-read-task-secrets"
+  role = aws_iam_role.ecs_execution.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = ["secretsmanager:GetSecretValue"]
+        Resource = [
+          aws_secretsmanager_secret.db_url.arn,
+          aws_secretsmanager_secret.redis_url.arn,
+          aws_secretsmanager_secret.jwt_private.arn,
+          aws_secretsmanager_secret.jwt_public.arn,
+          aws_secretsmanager_secret.pii_key.arn,
+          aws_secretsmanager_secret.webhook.arn,
+          aws_secretsmanager_secret.token_secret.arn,
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = [aws_kms_key.secrets.arn]
+      },
+    ]
   })
 }
 

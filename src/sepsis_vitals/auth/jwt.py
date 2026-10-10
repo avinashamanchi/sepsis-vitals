@@ -97,10 +97,17 @@ def generate_totp_secret() -> str:
 
 
 def verify_totp(secret: str, code: str) -> bool:
-    """Return True if *code* is a valid TOTP token for *secret*."""
+    """Return True if *code* is a valid TOTP token for *secret*.
+
+    Accepts the codes of the adjacent 30-second steps as well (RFC 6238
+    section 5.2: allow for clock drift and transmission delay). Without it a
+    code typed near the end of its step, or checked just after the step
+    changed, was rejected. Codes are not yet blocked from reuse within that
+    window; see N52 in PROJECT_REVIEW.md.
+    """
     import pyotp
     totp = pyotp.TOTP(secret)
-    return totp.verify(code)
+    return totp.verify(code, valid_window=1)
 
 
 def get_totp_uri(secret: str, email: str) -> str:

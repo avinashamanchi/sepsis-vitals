@@ -86,6 +86,8 @@ services:
       JWT_PUBLIC_KEY:       ${JWT_PUBLIC_KEY:?Set JWT_PUBLIC_KEY in .env}
       SEPSIS_PII_KEY:       ${SEPSIS_PII_KEY:?Set SEPSIS_PII_KEY in .env}
       SEPSIS_WEBHOOK_SECRET: ${SEPSIS_WEBHOOK_SECRET:?Set SEPSIS_WEBHOOK_SECRET in .env}
+      # HMAC key for password-reset and email-verification tokens (JWTs use the RSA keys).
+      SEPSIS_TOKEN_SECRET:  ${SEPSIS_TOKEN_SECRET:?Set SEPSIS_TOKEN_SECRET in .env}
       SEPSIS_CONFIG_KEY:    ${SEPSIS_CONFIG_KEY}
       SEPSIS_ENV:           ${SEPSIS_ENV:-production}
       SEPSIS_ALLOWED_ORIGINS: http://localhost:8000,http://localhost:3000
