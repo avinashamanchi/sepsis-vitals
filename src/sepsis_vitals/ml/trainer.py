@@ -22,6 +22,7 @@ import time
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 import joblib
@@ -215,15 +216,97 @@ class ModelResult:
     conformal_predictor: Optional[ConformalPredictor] = None
 
 
+class BrokenBackendError(RuntimeError):
+    """An optional model backend is installed but unusable (partial or corrupt install)."""
+
+
+#: Availability of the optional backends at the last _get_model_configs() call:
+#: {"LightGBM": "available" | "<reason it is unavailable>", ...}
+BACKEND_STATUS: Dict[str, str] = {}
+
+
+_NATIVE_LOAD_MARKERS = (
+    "library not loaded", "could not be loaded", "dlopen", "cannot open shared object", "dll load failed",
+)
+
+
+def _is_native_runtime_failure(exc: BaseException) -> bool:
+    """A shared library the package needs could not be loaded (not a Python error).
+
+    LightGBM raises OSError for this; XGBoost raises its own XGBoostError
+    with the dynamic loader's message.
+    """
+    return isinstance(exc, OSError) or any(m in str(exc).lower() for m in _NATIVE_LOAD_MARKERS)
+
+
+def load_optional_backend(module_name: str, attribute: str) -> Tuple[Any, Optional[str]]:
+    """``(estimator class, None)`` if usable, ``(None, reason)`` if genuinely unavailable.
+
+    Unavailable means the package is not installed, or it is installed but
+    its native runtime is missing (``OSError``, e.g. LightGBM/XGBoost without
+    libomp on macOS). A package that is found but is unusable raises
+    :class:`BrokenBackendError` rather than being skipped silently. That
+    covers a leftover directory without ``__init__`` (a namespace package),
+    an import that fails inside the package, and a missing estimator class.
+    Any other exception propagates.
+    """
+    import importlib
+    import importlib.util
+
+    try:
+        spec = importlib.util.find_spec(module_name)
+    except (ImportError, ValueError) as exc:
+        raise BrokenBackendError(f"{module_name}: cannot inspect the installation ({type(exc).__name__})") from exc
+    if spec is None:
+        return None, f"{module_name} is not installed"
+    if spec.origin is None and spec.submodule_search_locations is not None:
+        raise BrokenBackendError(
+            f"{module_name} is a bare directory without __init__.py (a partial or removed install); "
+            "reinstall it from the lock or remove the leftover directory"
+        )
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError as exc:
+        raise BrokenBackendError(
+            f"{module_name} is installed but failed to import (missing {exc.name or 'a dependency'}); "
+            "the environment is incomplete"
+        ) from exc
+    except Exception as exc:
+        if not _is_native_runtime_failure(exc):
+            raise  # an unexpected failure is not "unavailable"
+        return None, (f"{module_name} is installed but its native runtime could not be loaded "
+                      f"({type(exc).__name__}; on macOS: brew install libomp)")
+    estimator = getattr(module, attribute, None)
+    if estimator is None:
+        raise BrokenBackendError(f"{module_name} imports but has no {attribute}: partial or corrupt installation")
+    return estimator, None
+
+
 def _get_model_configs() -> Dict[str, Dict[str, Any]]:
-    """Return model configurations with hyperparameter search spaces."""
+    """Return model configurations with hyperparameter search spaces.
+
+    Optional backends that are unavailable are skipped, with the reason kept
+    in :data:`BACKEND_STATUS`. Set ``SEPSIS_REQUIRE_ALL_BACKENDS=1`` to make
+    any unavailable backend an error (for candidate-complete runs).
+    """
     configs = {}
+    require_all = os.getenv("SEPSIS_REQUIRE_ALL_BACKENDS", "") == "1"
+    BACKEND_STATUS.clear()
+
+    def optional(name: str, module_name: str, attribute: str) -> Any:
+        estimator, reason = load_optional_backend(module_name, attribute)
+        BACKEND_STATUS[name] = "available" if estimator is not None else str(reason)
+        if estimator is None:
+            if require_all:
+                raise BrokenBackendError(f"{name} is required (SEPSIS_REQUIRE_ALL_BACKENDS=1) but {reason}")
+            print(f"  [INFO] {name} unavailable — skipping ({reason})")
+        return estimator
 
     # LightGBM (optional — requires libomp on macOS)
-    try:
-        import lightgbm as lgb
+    lgb_classifier = optional("LightGBM", "lightgbm", "LGBMClassifier")
+    if lgb_classifier is not None:
         configs["LightGBM"] = {
-            "model_class": lgb.LGBMClassifier,
+            "model_class": lgb_classifier,
             "param_grid": [
                 {"n_estimators": 300, "max_depth": 5, "learning_rate": 0.05,
                  "num_leaves": 31, "min_child_samples": 20, "subsample": 0.8,
@@ -241,14 +324,12 @@ def _get_model_configs() -> Dict[str, Dict[str, Any]]:
             "needs_scaling": False,
             "tree_model": True,
         }
-    except (ImportError, OSError):
-        print("  [INFO] LightGBM unavailable — skipping")
 
     # XGBoost
-    try:
-        import xgboost as xgb
+    xgb_classifier = optional("XGBoost", "xgboost", "XGBClassifier")
+    if xgb_classifier is not None:
         configs["XGBoost"] = {
-            "model_class": xgb.XGBClassifier,
+            "model_class": xgb_classifier,
             "param_grid": [
                 {"n_estimators": 300, "max_depth": 5, "learning_rate": 0.05,
                  "subsample": 0.8, "colsample_bytree": 0.8, "reg_alpha": 0.1,
@@ -266,8 +347,6 @@ def _get_model_configs() -> Dict[str, Dict[str, Any]]:
             "needs_scaling": False,
             "tree_model": True,
         }
-    except Exception:
-        print("  [INFO] XGBoost unavailable — skipping")
 
     configs["RandomForest"] = {
         "model_class": RandomForestClassifier,
