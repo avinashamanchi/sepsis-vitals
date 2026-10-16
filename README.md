@@ -114,7 +114,10 @@ The matched development experiment in
 [`reports/no_labs_ablation.md`](reports/no_labs_ablation.md) retrains the same
 candidate models with every raw, derived, and missingness-based lab feature
 removed. On the identical 3,000-patient synthetic held-out split, AUROC was
-0.8584 without labs versus 0.9158 with the full feature set (change −0.0574).
+0.8482 (95% CI 0.837–0.859) without labs versus 0.9136 (0.907–0.919) with the
+full feature set (paired difference −0.0654, −0.074 to −0.058). That run
+compared three candidate models; LightGBM and XGBoost were unavailable on the
+host (see the report's provenance section).
 This is evidence about the behavior of the synthetic development pipeline—not
 evidence of performance in a hospital or patient population. Much of the
 no-labs arm's discrimination comes from demographics that the generator links

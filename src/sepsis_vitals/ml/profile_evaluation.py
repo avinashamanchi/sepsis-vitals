@@ -74,6 +74,7 @@ def evaluate_profile(
     n_bootstrap: int = 1000,
     **generator_options: Any,
 ) -> Dict[str, Any]:
+    from sepsis_vitals.ml.provenance import dataset_fingerprint
     from sepsis_vitals.ml.synthetic_data import generate_dataset
     from sepsis_vitals.ml.trainer import prepare_features
 
@@ -145,6 +146,7 @@ def evaluate_profile(
         "horizon_hours": horizon_hours,
         "generator_options": generator_options,
         "rows": {"train": len(train), "val": len(val), "test": len(test)},
+        "dataset_sha256": dataset_fingerprint([df])["sha256"],
         "positive_rate_test": round(float(y_test.mean()), 4),
         "auroc": _round(_auc(y_test, p_test)),
         "auroc_95ci": uncertainty["arms"]["model"]["auroc"]["ci"],

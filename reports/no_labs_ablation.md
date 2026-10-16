@@ -31,3 +31,32 @@ On this hand-authored synthetic held-out set, the no-labs model achieved AUROC 0
 - Estimand: row-level held-out AUROC/AUPRC of each arm, and the paired difference (no labs minus full), on 44,937 held-out rows from 3,000 patients (8,714 positive rows, 1,143 patients with a positive row). No rows were excluded.
 - Method: paired patient-level (cluster) bootstrap, percentile intervals, 95% level, 1,000 replicates (seed 42); 0 single-class replicates excluded.
 - The intervals cover sampling variability of this synthetic held-out set given the trained models. They do not include training variability and are not evidence about patients.
+
+## Provenance (recorded after generation)
+
+Added on 2026-10-15. This run predates `sepsis_vitals.ml.provenance`. The
+facts below are either what the run itself recorded or what can be derived
+from the repository. Everything else is stated as unknown.
+
+- Generated: 2026-10-10T11:55:27.692319+00:00. Runtime was not recorded.
+- Code: the working tree committed as `d7a2d00`. Its exact state at run time was not recorded.
+- Environment, as recorded by the run: Python 3.11.15, macOS-15.7.8, scikit-learn 1.6.1, `requirements/dev.txt`. Other installed package versions were not recorded. The lock's Python 3.11 pins are numpy 2.4.6, pandas 3.0.6 and scipy 1.17.1.
+- Candidate models compared: RandomForest, GradientBoosting, LogisticRegression. **This is not a candidate-complete run.** LightGBM and XGBoost were not compared because their native runtime was missing on this host. `.github/workflows/reports-candidate-complete.yml` produces a candidate-complete run on Linux.
+- Seeds: data 42, bootstrap 42, CV split 42, model `random_state` 42.
+- Dataset hash: not recorded. The data can be regenerated with the synthetic generator (20,000 patients, seed 42).
+
+### Correction: why the numbers differ from the previous report
+
+The previous report (commit `a0565a6`) gave a full-feature AUROC of 0.9158 and
+a no-labs AUROC of 0.8584. This one gives 0.9136 and 0.8482. Commit `d7a2d00`
+and PROJECT_REVIEW.md §9 attributed the change to the generator timestamp fix
+(M4, `f4d6df3`). **That attribution is not supported by the records.**
+
+- The previous report recorded no code commit, environment or candidate set.
+- `f4d6df3` is not an ancestor of `a0565a6`, so the generator fix is one of
+  several differences between the two runs.
+- Both runs selected GradientBoosting. That is consistent with, but does not
+  establish, an identical candidate set.
+
+The change is consistent with the generator fix. Showing that the fix
+caused it needs both code versions run in one recorded environment.

@@ -12,15 +12,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+import time
 import warnings
 from pathlib import Path
 
 from sepsis_vitals.ml.profile_evaluation import PROFILES, TARGET_SPECIFICITY, evaluate_profile
+from sepsis_vitals.ml.provenance import markdown as provenance_markdown
+from sepsis_vitals.ml.provenance import run_provenance
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _md(results: list, horizon: float, n: int, seed: int) -> str:
+def _md(results: list, horizon: float, n: int, seed: int, provenance: dict) -> str:
     def fmt(v):
         return "n/a" if v is None else f"{v:.3f}"
 
@@ -77,6 +81,7 @@ def _md(results: list, horizon: float, n: int, seed: int) -> str:
         "Reproduce: `python scripts/evaluate_synthetic_profiles.py --horizon-hours "
         f"{horizon:g} --patients {n} --seed {seed}`",
         "",
+        *provenance_markdown(provenance),
     ]
     return "\n".join(lines)
 
@@ -89,6 +94,7 @@ def main() -> None:
     parser.add_argument("--output-dir", default=str(ROOT / "reports"))
     opts = parser.parse_args()
     warnings.filterwarnings("ignore")
+    started = time.monotonic()
 
     results = [
         evaluate_profile("legacy", opts.patients, opts.seed, **PROFILES["legacy"]),
@@ -98,12 +104,24 @@ def main() -> None:
             horizon_hours=opts.horizon_hours, **PROFILES["decoupled"],
         ),
     ]
+    # The profile evaluation fits HistGradientBoosting only; no optional
+    # backends are involved. Each result records its own data split sizes.
+    provenance = run_provenance(
+        seeds={"data_and_bootstrap": opts.seed, "model_random_state": 0},
+        dataset={"description": f"synthetic generator profiles, {opts.patients:,} patients each;",
+                 "sha256": [r["dataset_sha256"] for r in results],
+                 "shapes": [r["rows"] for r in results]},
+        candidates=["HistGradientBoosting (fixed)"],
+        runtime_seconds=time.monotonic() - started,
+        command="python scripts/evaluate_synthetic_profiles.py " + " ".join(sys.argv[1:]),
+    )
     out = Path(opts.output_dir)
     out.mkdir(parents=True, exist_ok=True)
     (out / "synthetic_profile_evaluation.json").write_text(
-        json.dumps({"claim_scope": "synthetic engineering evidence only", "results": results}, indent=2) + "\n"
+        json.dumps({"claim_scope": "synthetic engineering evidence only", "results": results,
+                    "provenance": provenance}, indent=2) + "\n"
     )
-    md = _md(results, opts.horizon_hours, opts.patients, opts.seed)
+    md = _md(results, opts.horizon_hours, opts.patients, opts.seed, provenance)
     (out / "synthetic_profile_evaluation.md").write_text(md)
     print(md)
 

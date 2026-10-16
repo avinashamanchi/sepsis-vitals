@@ -34,3 +34,15 @@ specificity 0.90 on validation (an engineering convention, not a clinical thresh
   (models/manifest.json) is still the legacy synthetic model.
 
 Reproduce: `python scripts/evaluate_synthetic_profiles.py --horizon-hours 12 --patients 4000 --seed 7`
+
+## Provenance (recorded after generation)
+
+Added on 2026-10-15. The run recorded none of the following, so this is what
+the repository shows:
+
+- Code: committed in `d7a2d00`. The generation time and working-tree state were not recorded.
+- Environment: not recorded. The commit message states `requirements/dev.txt` on macOS. The lock's Python 3.11 pins are scikit-learn 1.6.1, numpy 2.4.6, pandas 3.0.6 and scipy 1.17.1.
+- Model: HistGradientBoosting only, so optional backends are not involved.
+- Seeds: data and bootstrap 7, model `random_state` 0.
+- Dataset hash: not recorded. The data can be regenerated (4,000 patients per profile, seed 7).
+- Later runs record all of this automatically (`sepsis_vitals.ml.provenance`).

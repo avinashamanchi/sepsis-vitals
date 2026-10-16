@@ -392,5 +392,38 @@
       },
       "split": "patient-level, temporal by admission time (60/15/25)"
     }
-  ]
+  ],
+  "provenance": {
+    "recorded_after_generation": true,
+    "note": "Added on 2026-10-15, after generation. Only facts recorded by the run itself or derivable from the repository are stated; everything else is listed as unknown.",
+    "generated_at": null,
+    "code": {
+      "commit": null,
+      "note": "Committed in d7a2d00; generation time and tree state not recorded."
+    },
+    "environment": {
+      "packages": "not recorded; the commit message states requirements/dev.txt on macOS",
+      "dependency_lock_pins": {
+        "scikit-learn": "1.6.1",
+        "numpy": "2.4.6",
+        "pandas": "3.0.6",
+        "scipy": "1.17.1",
+        "lightgbm": "4.7.0",
+        "xgboost": "3.2.0"
+      }
+    },
+    "optional_backends": "not used: the profile evaluation fits HistGradientBoosting only",
+    "candidate_models": [
+      "HistGradientBoosting (fixed)"
+    ],
+    "seeds": {
+      "data_and_bootstrap": 7,
+      "model_random_state": 0
+    },
+    "dataset": {
+      "sha256": null,
+      "note": "Not recorded. Regenerable: 4,000 patients per profile, seed 7."
+    },
+    "runtime_seconds": null
+  }
 }

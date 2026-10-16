@@ -132,5 +132,57 @@
     "platform": "macOS-15.7.8",
     "scikit_learn": "1.6.1",
     "dependency_lock": "requirements/dev.txt"
+  },
+  "provenance": {
+    "recorded_after_generation": true,
+    "note": "Added on 2026-10-15, after generation. Only facts recorded by the run itself or derivable from the repository are stated; everything else is listed as unknown.",
+    "generated_at": "2026-10-10T11:55:27.692319+00:00",
+    "code": {
+      "commit": null,
+      "note": "Generated from the working tree that was committed as d7a2d00; the tree state at run time was not recorded."
+    },
+    "environment": {
+      "python": "3.11.15",
+      "platform": "macOS-15.7.8",
+      "scikit_learn": "1.6.1",
+      "dependency_lock": "requirements/dev.txt",
+      "packages": "not recorded; the run states it used requirements/dev.txt, whose Python 3.11 pins are listed under dependency_lock_pins",
+      "dependency_lock_pins": {
+        "scikit-learn": "1.6.1",
+        "numpy": "2.4.6",
+        "pandas": "3.0.6",
+        "scipy": "1.17.1",
+        "lightgbm": "4.7.0",
+        "xgboost": "3.2.0"
+      }
+    },
+    "optional_backends": {
+      "LightGBM": "not compared (absent from candidate_models; on this host its native runtime, libomp, was missing)",
+      "XGBoost": "not compared (same reason)"
+    },
+    "candidate_models": {
+      "full": [
+        "RandomForest",
+        "GradientBoosting",
+        "LogisticRegression"
+      ],
+      "no_labs": [
+        "RandomForest",
+        "GradientBoosting",
+        "LogisticRegression"
+      ]
+    },
+    "seeds": {
+      "data": 42,
+      "bootstrap": 42,
+      "cv_split": 42,
+      "model_random_state": 42
+    },
+    "dataset": {
+      "sha256": null,
+      "note": "Not recorded. Regenerable: synthetic generator, 20,000 patients, seed 42."
+    },
+    "runtime_seconds": null,
+    "candidate_complete": false
   }
 }

@@ -45,3 +45,10 @@ Same learner (HistGradientBoosting), same patient-level split, different feature
 - None of these numbers should be quoted as product performance.
 
 Reproduce: `python scripts/audit_synthetic_pipeline.py`
+
+## Provenance (recorded after generation)
+
+Added on 2026-10-15. Generated at 2026-10-06T22:58:31.495459+00:00 and committed in
+`f4d6df3`. The environment, package versions, working-tree state, dataset
+hash and runtime were not recorded. The data can be regenerated with the
+script defaults (6,000 patients, seed 7).

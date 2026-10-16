@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -13,7 +14,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from retrain import load_synthetic_data, run_pipeline  # noqa: E402
+from sepsis_vitals.ml import trainer  # noqa: E402
 from sepsis_vitals.ml.ablation import add_uncertainty, build_comparison_report  # noqa: E402
+from sepsis_vitals.ml.provenance import dataset_fingerprint, run_provenance  # noqa: E402
+from sepsis_vitals.ml.provenance import markdown as provenance_markdown  # noqa: E402
 
 
 def _markdown_report(report: dict) -> str:
@@ -65,15 +69,14 @@ def _markdown_report(report: dict) -> str:
     rows.extend(f"- {item}" for item in report["limitations"])
     candidates = report.get("candidate_models", {}).get("full")
     if candidates:
-        missing = [m for m in KNOWN_CANDIDATES if m not in candidates]
-        env = report.get("environment", {})
-        rows += [
+        backends = (report.get("provenance") or {}).get("optional_backends")
+        missing = ([m for m, status in backends.items() if status != "available"] if backends
+                   else [m for m in KNOWN_CANDIDATES if m not in candidates])
+        rows.append(
             f"- Candidate models compared: {', '.join(candidates)}."
-            + (f" Not available on this host: {', '.join(missing)} (they need the OpenMP runtime);"
-               " a run where they load may select a different model." if missing else ""),
-            f"- Environment: Python {env.get('python', '?')}, {env.get('platform', '?')}, "
-            f"scikit-learn {env.get('scikit_learn', '?')}, pins from {env.get('dependency_lock', '?')}.",
-        ]
+            + (f" Not available on this host: {', '.join(missing)} (see Provenance);"
+               " a candidate-complete run may select a different model." if missing else "")
+        )
     if unc:
         rows += [
             "",
@@ -89,6 +92,8 @@ def _markdown_report(report: dict) -> str:
             "- The intervals cover sampling variability of this synthetic held-out set given the trained "
             "models. They do not include training variability and are not evidence about patients.",
         ]
+    if report.get("provenance"):
+        rows += ["", *provenance_markdown(report["provenance"])]
     return "\n".join(rows) + "\n"
 
 
@@ -116,15 +121,6 @@ def _diff(unc: dict | None, metric: str) -> str:
 KNOWN_CANDIDATES = ("LightGBM", "XGBoost", "RandomForest", "GradientBoosting", "LogisticRegression")
 
 
-def _environment() -> dict:
-    import platform
-
-    import sklearn
-
-    return {"python": platform.python_version(), "platform": platform.platform(terse=True),
-            "scikit_learn": sklearn.__version__, "dependency_lock": "requirements/dev.txt"}
-
-
 def main(args: list[str] | None = None) -> dict:
     parser = argparse.ArgumentParser(
         description="Run matched full versus no-labs synthetic retraining"
@@ -137,6 +133,7 @@ def main(args: list[str] | None = None) -> dict:
     parser.add_argument("--report-dir", default="reports")
     parser.add_argument("--bootstrap", type=int, default=1000, help="bootstrap replicates for CIs")
     opts = parser.parse_args(args)
+    started = time.monotonic()
 
     train_df, val_df, test_df, provenance = load_synthetic_data(
         n_patients=opts.patients,
@@ -172,7 +169,6 @@ def main(args: list[str] | None = None) -> dict:
         arm: [m["name"] for m in result["report"].get("model_comparison", [])]
         for arm, result in (("full", full_result), ("no_labs", no_labs_result))
     }
-    report["environment"] = _environment()
     report["split"] = {
         "train_patients": int(train_df["patient_id"].nunique()),
         "validation_patients": int(val_df["patient_id"].nunique()),
@@ -181,6 +177,18 @@ def main(args: list[str] | None = None) -> dict:
         "validation_observations": len(val_df),
         "held_out_test_observations": len(test_df),
     }
+
+    report["provenance"] = run_provenance(
+        backend_status=dict(trainer.BACKEND_STATUS),
+        seeds={"data": opts.seed, "bootstrap": opts.seed, "cv_split": 42, "model_random_state": 42},
+        dataset={
+            "description": f"synthetic generator, {opts.patients:,} patients, prevalence {opts.prevalence};",
+            **dataset_fingerprint((train_df, val_df, test_df)),
+        },
+        candidates=report["candidate_models"],
+        runtime_seconds=time.monotonic() - started,
+        command="python scripts/run_no_labs_ablation.py " + " ".join(sys.argv[1:] if args is None else args),
+    )
 
     report_dir = Path(opts.report_dir)
     report_dir.mkdir(parents=True, exist_ok=True)

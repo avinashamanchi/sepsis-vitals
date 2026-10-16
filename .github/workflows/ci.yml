@@ -69,6 +69,11 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
+    env:
+      # Only the known MIMIC-demo skips are allowed (tests/conftest.py), and
+      # training tests must see every candidate model backend.
+      SEPSIS_STRICT_SKIPS: "1"
+      SEPSIS_REQUIRE_ALL_BACKENDS: "1"
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
