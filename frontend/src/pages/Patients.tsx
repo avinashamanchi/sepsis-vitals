@@ -6,19 +6,30 @@ import { Search, Users } from 'lucide-react'
 import { api, isDemo } from '../lib/api'
 import type { RiskLevel } from '../types'
 
+// Live rows may lack values: null means "not observed", never normal or 0.
 interface PatientRow {
   id: string
   bed: string
   age?: number
-  risk: RiskLevel
-  prob: number
-  temp: number
-  hr: number
-  rr: number
-  sbp: number
-  spo2: number
-  lac: number
+  risk: RiskLevel | null
+  prob: number | null
+  temp: number | null
+  hr: number | null
+  rr: number | null
+  sbp: number | null
+  spo2: number | null
+  lac: number | null
   updated: string
+}
+
+const RISK_LEVELS: readonly RiskLevel[] = ['low', 'moderate', 'high', 'critical']
+
+function asRisk(value: string | null | undefined): RiskLevel | null {
+  return RISK_LEVELS.includes(value as RiskLevel) ? (value as RiskLevel) : null
+}
+
+function show(value: number | null, unit: string): string {
+  return value == null ? '—' : `${value}${unit}`
 }
 
 const DEMO_PATIENTS: PatientRow[] = [
@@ -37,29 +48,34 @@ export function Patients() {
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [filterRisk, setFilterRisk] = useState<RiskLevel | 'all'>('all')
-  const [patients, setPatients] = useState<PatientRow[]>(DEMO_PATIENTS)
+  // Demo rows only in demo mode: a live ward must never show invented patients.
+  const [patients, setPatients] = useState<PatientRow[]>(isDemo ? DEMO_PATIENTS : [])
   const [loading, setLoading] = useState(!isDemo)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
     if (isDemo) return
     api.getPatients()
       .then((data) => {
-        const rows: PatientRow[] = data.map((p) => ({
+        setPatients(data.map((p) => ({
           id: p.id,
-          bed: p.bed ?? '',
-          risk: (p.riskLevel as RiskLevel) ?? 'low',
-          prob: p.riskProbability ?? 0,
-          temp: p.vitals?.temperature ?? 0,
-          hr: p.vitals?.heart_rate ?? 0,
-          rr: p.vitals?.resp_rate ?? 0,
-          sbp: p.vitals?.sbp ?? 0,
-          spo2: p.vitals?.spo2 ?? 0,
-          lac: p.vitals?.lactate ?? 0,
-          updated: p.lastUpdated ?? 'N/A',
-        }))
-        if (rows.length > 0) setPatients(rows)
+          bed: p.external_id,
+          age: p.age_years ?? undefined,
+          risk: asRisk(p.latest_risk_level),
+          prob: null,
+          temp: p.latest_vitals?.temperature ?? null,
+          hr: p.latest_vitals?.heart_rate ?? null,
+          rr: p.latest_vitals?.resp_rate ?? null,
+          sbp: p.latest_vitals?.sbp ?? null,
+          spo2: p.latest_vitals?.spo2 ?? null,
+          lac: p.latest_vitals?.lactate ?? null,
+          updated: p.latest_recorded_at ? new Date(p.latest_recorded_at).toLocaleString() : '—',
+        })))
       })
-      .catch((err: unknown) => console.error('Failed to load patients:', err))
+      .catch((err: unknown) => {
+        console.error('Failed to load patients:', err)
+        setLoadError(err instanceof Error ? err.message : 'Could not load patients')
+      })
       .finally(() => setLoading(false))
   }, [])
 
@@ -121,13 +137,21 @@ export function Patients() {
           <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
           <span className="ml-3 text-sm text-text-muted">{t('patients.loadingPatients')}</span>
         </div>
+      ) : loadError ? (
+        <div role="alert" className="rounded-lg border border-danger/30 bg-danger/10 p-4 text-sm text-danger">
+          {t('patients.loadError', 'Patients could not be loaded. Nothing shown here is current.')} ({loadError})
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-lg border border-border p-6 text-center text-sm text-text-muted">
+          {t('patients.empty', 'No patients match. Patients appear here once registered at your site.')}
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {filtered.map((p) => (
             <button
               key={p.id}
               onClick={() => navigate(`/patients/${p.id}`)}
-              aria-label={`View details for patient ${p.id}, ${p.bed}${p.age ? `, age ${p.age}` : ''}, ${p.risk} risk`}
+              aria-label={`View details for patient ${p.id}, ${p.bed}${p.age ? `, age ${p.age}` : ''}, ${p.risk ? `${p.risk} risk` : 'not yet scored'}`}
               className="bg-surface border border-border rounded-lg p-4 hover:border-accent/30 transition-colors text-left w-full cursor-pointer"
             >
               <div className="flex items-center justify-between mb-3">
@@ -136,16 +160,22 @@ export function Patients() {
                   <span className="text-xs text-text-muted ml-2">{p.bed}</span>
                   {p.age && <span className="text-xs text-text-muted ml-2">{t('patients.age', { n: p.age })}</span>}
                 </div>
-                <RiskBadge level={p.risk} pulse={p.risk === 'critical'} />
+                {p.risk ? (
+                  <RiskBadge level={p.risk} pulse={p.risk === 'critical'} />
+                ) : (
+                  <span className="text-xs px-2 py-0.5 rounded-full border border-border text-text-muted">
+                    {t('patients.notScored', 'Not scored')}
+                  </span>
+                )}
               </div>
               <div className="grid grid-cols-4 gap-3 text-xs">
-                <div><span className="text-text-muted block">{t('vitals.temperature')}</span><span className="text-text-secondary">{p.temp}°C</span></div>
-                <div><span className="text-text-muted block">{t('vitals.heartRate')}</span><span className="text-text-secondary">{p.hr} bpm</span></div>
-                <div><span className="text-text-muted block">{t('vitals.sbp')}</span><span className="text-text-secondary">{p.sbp} mmHg</span></div>
-                <div><span className="text-text-muted block">{t('vitals.spo2')}</span><span className="text-text-secondary">{p.spo2}%</span></div>
-                <div><span className="text-text-muted block">{t('vitals.respRate')}</span><span className="text-text-secondary">{p.rr}/min</span></div>
-                <div><span className="text-text-muted block">{t('vitals.lactate')}</span><span className="text-text-secondary">{p.lac} mmol/L</span></div>
-                <div><span className="text-text-muted block">{t('risk.label', { level: '' }).trim()}</span><span className="text-text-secondary">{(p.prob * 100).toFixed(0)}%</span></div>
+                <div><span className="text-text-muted block">{t('vitals.temperature')}</span><span className="text-text-secondary">{show(p.temp, '°C')}</span></div>
+                <div><span className="text-text-muted block">{t('vitals.heartRate')}</span><span className="text-text-secondary">{show(p.hr, ' bpm')}</span></div>
+                <div><span className="text-text-muted block">{t('vitals.sbp')}</span><span className="text-text-secondary">{show(p.sbp, ' mmHg')}</span></div>
+                <div><span className="text-text-muted block">{t('vitals.spo2')}</span><span className="text-text-secondary">{show(p.spo2, '%')}</span></div>
+                <div><span className="text-text-muted block">{t('vitals.respRate')}</span><span className="text-text-secondary">{show(p.rr, '/min')}</span></div>
+                <div><span className="text-text-muted block">{t('vitals.lactate')}</span><span className="text-text-secondary">{show(p.lac, ' mmol/L')}</span></div>
+                <div><span className="text-text-muted block">{t('risk.label', { level: '' }).trim()}</span><span className="text-text-secondary">{p.prob == null ? '—' : `${(p.prob * 100).toFixed(0)}%`}</span></div>
                 <div><span className="text-text-muted block">{t('dashboard.updated')}</span><span className="text-text-secondary">{p.updated}</span></div>
               </div>
             </button>

@@ -1,0 +1,433 @@
+{
+  "claim_scope": "synthetic engineering evidence only; not clinical performance",
+  "model": {
+    "model_id": "GradientBoosting-2.0.0",
+    "model_version": "2.0.0",
+    "validation_status": "synthetic-development",
+    "artifact_sha256": "93dedb4ff761b6502a44c238802e9373260dd84b36aa0659cd22fcbf90412cf1",
+    "feature_schema_sha256": "713c9d45436a26808b97c67a9df3a6da0415c445d44360ef39798b3734e1bad5",
+    "pipeline_version": "2.0.0",
+    "artifact_state": "ready",
+    "model_name": "GradientBoosting"
+  },
+  "cohort_generator": {
+    "generator": "sepsis_vitals.ml.synthetic_data.generate_dataset (legacy profile)",
+    "n_patients": 4000,
+    "sepsis_prevalence": 0.15,
+    "seed": 20261015,
+    "training_seed": 42,
+    "note": "Generated independently of the training data (different seed). The generator has changed since training (M4 timestamp fix), so this cohort is close to, not identical with, the training distribution."
+  },
+  "dataset": {
+    "sha256": "5a4c94ee52b16161a9bcab486ebe2d8dc66d55aae7cea72d9aa61d0933b78087",
+    "shapes": [
+      [
+        60217,
+        23
+      ]
+    ],
+    "method": "pandas row hash, ordered"
+  },
+  "label": "current_state: 1 for observations at or after the generated onset time. No prediction horizon.",
+  "cohort": {
+    "patients": 4000,
+    "observations": 60217,
+    "septic_patients": 1088,
+    "positive_rows": 11002,
+    "row_positive_rate": 0.1827,
+    "observations_per_patient_median": 15.0,
+    "patient_days": 9362.8,
+    "missing_fraction": {
+      "temperature": 0.079,
+      "heart_rate": 0.08,
+      "resp_rate": 0.078,
+      "sbp": 0.081,
+      "dbp": 0.08,
+      "spo2": 0.081,
+      "gcs": 0.02,
+      "map": 0.079,
+      "lactate": 0.248,
+      "wbc": 0.25,
+      "procalcitonin": 0.25
+    },
+    "age_median": 55.0,
+    "sex": {
+      "F": 2022,
+      "M": 1978
+    }
+  },
+  "discrimination": {
+    "method": "paired patient-level (cluster) bootstrap, percentile intervals",
+    "level": 0.95,
+    "n_boot": 1000,
+    "valid_replicates": 1000,
+    "degenerate_replicates": 0,
+    "reliable": true,
+    "seed": 61015,
+    "n_patients": 4000,
+    "n_rows": 60217,
+    "n_positive_rows": 11002,
+    "n_patients_with_positive_rows": 1477,
+    "reference_arm": "model",
+    "arms": {
+      "model": {
+        "auroc": {
+          "estimate": 0.9088,
+          "ci": [
+            0.9026,
+            0.914
+          ]
+        },
+        "auprc": {
+          "estimate": 0.7199,
+          "ci": [
+            0.706,
+            0.7328
+          ]
+        }
+      },
+      "age_only": {
+        "auroc": {
+          "estimate": 0.7812,
+          "ci": [
+            0.7685,
+            0.7939
+          ]
+        },
+        "auprc": {
+          "estimate": 0.3975,
+          "ci": [
+            0.3748,
+            0.4211
+          ]
+        }
+      }
+    },
+    "differences_vs_reference": {
+      "age_only": {
+        "auroc": {
+          "estimate": -0.1276,
+          "ci": [
+            -0.138,
+            -0.1177
+          ]
+        },
+        "auprc": {
+          "estimate": -0.3224,
+          "ci": [
+            -0.3408,
+            -0.3029
+          ]
+        }
+      }
+    }
+  },
+  "calibration": {
+    "slope": 1.002,
+    "intercept": 0.243,
+    "in_the_large": 0.0188,
+    "mean_output": 0.1639,
+    "observed_rate": 0.1827,
+    "reliability_by_decile": [
+      {
+        "mean_output": 0.0081,
+        "observed_rate": 0.012,
+        "n_rows": 6022
+      },
+      {
+        "mean_output": 0.0153,
+        "observed_rate": 0.0153,
+        "n_rows": 6022
+      },
+      {
+        "mean_output": 0.0193,
+        "observed_rate": 0.0179,
+        "n_rows": 6021
+      },
+      {
+        "mean_output": 0.0245,
+        "observed_rate": 0.0236,
+        "n_rows": 6022
+      },
+      {
+        "mean_output": 0.0355,
+        "observed_rate": 0.0287,
+        "n_rows": 6022
+      },
+      {
+        "mean_output": 0.0545,
+        "observed_rate": 0.0475,
+        "n_rows": 6021
+      },
+      {
+        "mean_output": 0.0909,
+        "observed_rate": 0.1076,
+        "n_rows": 6022
+      },
+      {
+        "mean_output": 0.1693,
+        "observed_rate": 0.2506,
+        "n_rows": 6021
+      },
+      {
+        "mean_output": 0.4207,
+        "observed_rate": 0.5433,
+        "n_rows": 6022
+      },
+      {
+        "mean_output": 0.8007,
+        "observed_rate": 0.7805,
+        "n_rows": 6022
+      }
+    ]
+  },
+  "decision_curve": [
+    {
+      "threshold": 0.05,
+      "net_benefit_model": 0.1561,
+      "net_benefit_all": 0.1397
+    },
+    {
+      "threshold": 0.1,
+      "net_benefit_model": 0.1428,
+      "net_benefit_all": 0.0919
+    },
+    {
+      "threshold": 0.15,
+      "net_benefit_model": 0.1305,
+      "net_benefit_all": 0.0385
+    },
+    {
+      "threshold": 0.2,
+      "net_benefit_model": 0.1197,
+      "net_benefit_all": -0.0216
+    },
+    {
+      "threshold": 0.25,
+      "net_benefit_model": 0.1095,
+      "net_benefit_all": -0.0897
+    },
+    {
+      "threshold": 0.3,
+      "net_benefit_model": 0.1013,
+      "net_benefit_all": -0.1676
+    },
+    {
+      "threshold": 0.4,
+      "net_benefit_model": 0.0831,
+      "net_benefit_all": -0.3622
+    },
+    {
+      "threshold": 0.5,
+      "net_benefit_model": 0.0655,
+      "net_benefit_all": -0.6346
+    },
+    {
+      "threshold": 0.6,
+      "net_benefit_model": 0.0472,
+      "net_benefit_all": -1.0432
+    }
+  ],
+  "threshold_policy": {
+    "id": "placeholder-bands-v1",
+    "status": "engineering-placeholder: not clinically derived or approved",
+    "model_bands": {
+      "moderate": 0.25,
+      "high": 0.5,
+      "critical": 0.75
+    },
+    "alert_cutoff": 0.6,
+    "alert_rule": "alert if the rule-based scores raise an alert, or the combined level is high or critical, or the model output exceeds alert_cutoff",
+    "sha256": "1b8212f85f8eb52097ba43fb64f9d435f88a2e43a769bca0740328e1ebf7e345"
+  },
+  "alert_burden": [
+    {
+      "rule": "model output >= 0.25",
+      "sensitivity": 0.7211,
+      "specificity": 0.9185,
+      "ppv": 0.6641,
+      "flag_rate": 0.1984,
+      "septic_patients_flagged_at_or_after_onset": 0.9577,
+      "septic_patients_flagged_before_onset": 0.6195,
+      "non_septic_patients_ever_flagged": 0.2242,
+      "flagged_observations_per_patient_day": 1.28
+    },
+    {
+      "rule": "model output >= 0.5",
+      "sensitivity": 0.5329,
+      "specificity": 0.9611,
+      "ppv": 0.7537,
+      "flag_rate": 0.1292,
+      "septic_patients_flagged_at_or_after_onset": 0.8566,
+      "septic_patients_flagged_before_onset": 0.4035,
+      "non_septic_patients_ever_flagged": 0.0783,
+      "flagged_observations_per_patient_day": 0.83
+    },
+    {
+      "rule": "model output >= 0.6",
+      "sensitivity": 0.4556,
+      "specificity": 0.9706,
+      "ppv": 0.7762,
+      "flag_rate": 0.1072,
+      "septic_patients_flagged_at_or_after_onset": 0.7978,
+      "septic_patients_flagged_before_onset": 0.3318,
+      "non_septic_patients_ever_flagged": 0.0484,
+      "flagged_observations_per_patient_day": 0.69
+    },
+    {
+      "rule": "model output >= 0.75",
+      "sensitivity": 0.2999,
+      "specificity": 0.9853,
+      "ppv": 0.8199,
+      "flag_rate": 0.0668,
+      "septic_patients_flagged_at_or_after_onset": 0.67,
+      "septic_patients_flagged_before_onset": 0.2077,
+      "non_septic_patients_ever_flagged": 0.0175,
+      "flagged_observations_per_patient_day": 0.43
+    },
+    {
+      "rule": "rule-based alert alone",
+      "sensitivity": 0.2659,
+      "specificity": 0.699,
+      "ppv": 0.1649,
+      "flag_rate": 0.2946,
+      "septic_patients_flagged_at_or_after_onset": 0.7215,
+      "septic_patients_flagged_before_onset": 0.4081,
+      "non_septic_patients_ever_flagged": 0.6951,
+      "flagged_observations_per_patient_day": 1.89
+    },
+    {
+      "rule": "deployed alert rule (rules OR level OR cut-off)",
+      "sensitivity": 0.6233,
+      "specificity": 0.6694,
+      "ppv": 0.2965,
+      "flag_rate": 0.3841,
+      "septic_patients_flagged_at_or_after_onset": 0.9329,
+      "septic_patients_flagged_before_onset": 0.5993,
+      "non_septic_patients_ever_flagged": 0.6985,
+      "flagged_observations_per_patient_day": 2.47
+    }
+  ],
+  "alert_sources": {
+    "alerts": 23127,
+    "rules_only": 15348,
+    "model_only": 5387
+  },
+  "subgroups": {
+    "age 18-44": {
+      "rows": 22252,
+      "positive_rows": 954,
+      "auroc": 0.8007,
+      "mean_output": 0.0331,
+      "observed_rate": 0.0429
+    },
+    "age 45-64": {
+      "rows": 15378,
+      "positive_rows": 1842,
+      "auroc": 0.897,
+      "mean_output": 0.0985,
+      "observed_rate": 0.1198
+    },
+    "age 65+": {
+      "rows": 22587,
+      "positive_rows": 8206,
+      "auroc": 0.8619,
+      "mean_output": 0.3372,
+      "observed_rate": 0.3633
+    },
+    "sex F": {
+      "rows": 30668,
+      "positive_rows": 5822,
+      "auroc": 0.9102,
+      "mean_output": 0.1676,
+      "observed_rate": 0.1898
+    },
+    "sex M": {
+      "rows": 29549,
+      "positive_rows": 5180,
+      "auroc": 0.9072,
+      "mean_output": 0.1599,
+      "observed_rate": 0.1753
+    },
+    "labs measured in the observation": {
+      "rows": 59310,
+      "positive_rows": 10848,
+      "auroc": 0.9092,
+      "mean_output": 0.1641,
+      "observed_rate": 0.1829
+    },
+    "no labs in the observation": {
+      "rows": 907,
+      "positive_rows": 154,
+      "auroc": 0.8813,
+      "mean_output": 0.1459,
+      "observed_rate": 0.1698
+    },
+    "first observation of the stay": {
+      "rows": 4000,
+      "positive_rows": 35,
+      "auroc": 0.4,
+      "mean_output": 0.0383,
+      "observed_rate": 0.0088
+    },
+    "later observations": {
+      "rows": 56217,
+      "positive_rows": 10967,
+      "auroc": 0.9064,
+      "mean_output": 0.1728,
+      "observed_rate": 0.1951
+    }
+  },
+  "failure_probes": {
+    "temperature > 38": {
+      "rows": 2230,
+      "share_where_value_lowered_output": 0.9785,
+      "median_change_in_output": -0.0428
+    },
+    "heart_rate > 90": {
+      "rows": 15934,
+      "share_where_value_lowered_output": 0.8665,
+      "median_change_in_output": -0.0179
+    }
+  },
+  "provenance": {
+    "generated_at": "2026-10-16T05:22:18.658318+00:00",
+    "code": {
+      "commit": "af45686051f73d44932e3ca93c35c56bb54382a7",
+      "uncommitted_changes": true
+    },
+    "environment": {
+      "python": "3.11.15",
+      "platform": "macOS-15.7.8",
+      "machine": "arm64",
+      "packages": {
+        "scikit-learn": "1.6.1",
+        "numpy": "2.4.6",
+        "pandas": "3.0.6",
+        "scipy": "1.17.1",
+        "lightgbm": "4.7.0",
+        "xgboost": "3.2.0"
+      },
+      "dependency_lock": "requirements/dev.txt",
+      "dependency_lock_sha256": "b5894485af1d2ced686086503a81f9c6e8f1d293d79b3d2a42a3c70e3dc03f42"
+    },
+    "seeds": {
+      "cohort": 20261015,
+      "bootstrap": 61015
+    },
+    "dataset": {
+      "description": "synthetic generator (legacy profile), 4,000 patients;",
+      "sha256": "5a4c94ee52b16161a9bcab486ebe2d8dc66d55aae7cea72d9aa61d0933b78087",
+      "shapes": [
+        [
+          60217,
+          23
+        ]
+      ],
+      "method": "pandas row hash, ordered"
+    },
+    "candidate_models": "not applicable: evaluates the committed artifact",
+    "runtime_seconds": 69.8,
+    "command": "python scripts/evaluate_committed_model.py "
+  }
+}

@@ -56,6 +56,8 @@ export function Predict() {
   const handleSubmit = async (vitals: Record<string, number>, patientId: string) => {
     setLoading(true)
     setError('')
+    // A new request replaces the old result; if it fails, nothing stale stays on screen.
+    setResult(null)
     setMonitorStatus('')
     try {
       const body: { vitals: Record<string, number>; patient_id: string; age_years?: number; comorbidities?: Record<string, number> } = {
@@ -66,7 +68,7 @@ export function Predict() {
 
       const activeComorbidities: Record<string, number> = {}
       for (const [k, v] of Object.entries(comorbidities)) {
-        if (v) activeComorbidities[k] = 1
+        if (v) activeComorbidities[`has_${k}`] = 1
       }
       if (Object.keys(activeComorbidities).length > 0) {
         body.comorbidities = activeComorbidities
@@ -119,7 +121,6 @@ export function Predict() {
           <div className="bg-surface border border-border rounded-lg p-5">
             <h2 className="font-heading text-sm font-semibold mb-4">{t('predict.patientVitals')}</h2>
             <VitalsForm onSubmit={handleSubmit} loading={loading} submitLabel={t('predict.runPrediction')} />
-            {error && <p className="mt-3 text-sm text-danger">{error}</p>}
           </div>
 
           {/* Demographics */}
@@ -191,6 +192,15 @@ export function Predict() {
 
         {/* Right column: Results */}
         <div className="space-y-4">
+          {error && (
+            <div className="bg-surface border border-danger/30 rounded-lg p-5" role="alert" data-testid="no-risk">
+              <h2 className="font-heading text-sm font-semibold text-danger">No risk calculated</h2>
+              <p className="mt-2 text-sm text-text-secondary">{error}</p>
+              <p className="mt-2 text-xs text-text-muted">
+                No result was produced for this request. This is not a low-risk result.
+              </p>
+            </div>
+          )}
           {result ? (
             <>
               {/* Risk Summary */}
@@ -199,16 +209,35 @@ export function Predict() {
                   <h2 className="font-heading text-sm font-semibold">{t('predict.predictionResult')}</h2>
                   <RiskBadge level={result.risk_level} size="md" pulse={result.alert} />
                 </div>
+                <p className="mb-3 rounded border border-warning/30 bg-warning/8 p-2 text-[11px] leading-4 text-text-secondary" data-testid="decision-support">
+                  {result.decision_support_notice || 'Decision support only. Not a diagnosis.'}
+                </p>
+                {/* The badge is the higher of two different signals; keep them apart. */}
+                <dl className="grid grid-cols-2 gap-2 text-xs" aria-label="Risk level sources">
+                  <div className="rounded border border-border p-2">
+                    <dt className="text-text-muted">Rule-based scores</dt>
+                    <dd className="font-semibold text-text-primary">{result.rule_risk_level ?? 'unknown'}</dd>
+                  </div>
+                  <div className="rounded border border-border p-2">
+                    <dt className="text-text-muted">Development model</dt>
+                    <dd className="font-semibold text-text-primary">{result.model_risk_level ?? 'unknown'}</dd>
+                  </div>
+                </dl>
+                <p className="mt-2 text-[11px] leading-4 text-text-muted">
+                  The badge shows the higher of the two levels: the model cannot lower what the
+                  rule-based scores indicate. It is not a probability.
+                </p>
                 <div className="text-center py-4">
                   <p className="text-5xl font-bold font-heading text-text-primary">
                     {(result.risk_probability * 100).toFixed(1)}%
                   </p>
-                  <p className="text-sm text-text-secondary mt-2">Development-model output</p>
-                  <p className="text-xs text-text-muted mt-1">
-                    {t('predict.confidenceInterval', {
-                      lower: (result.confidence_interval.lower * 100).toFixed(1),
-                      upper: (result.confidence_interval.upper * 100).toFixed(1),
-                    })}
+                  <p className="text-sm text-text-secondary mt-2">
+                    Development-model output (not a calibrated probability for patients)
+                  </p>
+                  <p className="text-xs text-text-muted mt-1" data-testid="uncertainty">
+                    {result.confidence_interval
+                      ? `Interval (${result.uncertainty?.method ?? 'unspecified method'}): ${(result.confidence_interval.lower * 100).toFixed(1)}% – ${(result.confidence_interval.upper * 100).toFixed(1)}%`
+                      : (result.uncertainty?.note ?? 'No validated uncertainty estimate is available for this model.')}
                   </p>
                 </div>
                 <div className="mt-4 p-3 bg-elevated rounded-lg">
@@ -220,7 +249,29 @@ export function Predict() {
                 <p className="mt-3 text-[10px] leading-4 text-text-muted">
                   {result.validation_status ?? 'Synthetic development baseline; no clinical validation'}
                 </p>
+                <p className="mt-1 text-[10px] font-semibold leading-4 text-warning" data-testid="clinical-use">
+                  Clinical use: {result.clinical_use === 'not-permitted' || !result.clinical_use
+                    ? 'not permitted'
+                    : result.clinical_use}
+                </p>
               </div>
+
+              {/* Data quality */}
+              {result.data_quality && result.data_quality.warnings.length > 0 && (
+                <div className="bg-surface border border-warning/25 rounded-lg p-4" data-testid="data-quality">
+                  <h2 className="font-heading text-sm font-semibold mb-2">Data-quality warnings</h2>
+                  <ul className="space-y-1 text-xs text-text-secondary">
+                    {result.data_quality.warnings.map((w) => (
+                      <li key={w.code}>
+                        {w.message}
+                        {w.fields.length > 0 && (
+                          <span className="text-text-muted"> ({w.fields.join(', ')})</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {/* Clinical Scores */}
               {scores && (
@@ -242,17 +293,25 @@ export function Predict() {
                 </div>
               )}
 
-              {/* SHAP Feature Importance */}
+              {/* Per-patient attribution */}
               {result.top_risk_factors.length > 0 && (
-                <div className="bg-surface border border-border rounded-lg p-5">
-                  <h2 className="font-heading text-sm font-semibold mb-3 flex items-center gap-2">
+                <div className="bg-surface border border-border rounded-lg p-5" data-testid="attribution">
+                  <h2 className="font-heading text-sm font-semibold mb-1 flex items-center gap-2">
                     <TrendingUp className="w-4 h-4 text-info" />
-                    Model drivers <span className="font-normal text-text-muted">(not causal)</span>
+                    What moved this model output <span className="font-normal text-text-muted">(not causal)</span>
                   </h2>
+                  <p className="mb-3 text-[11px] leading-4 text-text-muted">
+                    {result.explanation?.note ??
+                      'Change in the model output when each input is replaced by its training median.'}
+                  </p>
                   <div className="h-[200px]">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart
-                        data={result.top_risk_factors.slice(0, 8)}
+                        data={result.top_risk_factors.slice(0, 8).map((f) => ({
+                          name: f.label ?? f.feature,
+                          feature: f.feature,
+                          contribution: Number((f.contribution * 100).toFixed(2)),
+                        }))}
                         layout="vertical"
                         margin={{ left: 80 }}
                       >
@@ -262,10 +321,11 @@ export function Predict() {
                           stroke="#4a6080"
                           tick={{ fill: '#4a6080', fontSize: 11 }}
                           tickLine={false}
+                          unit=" pts"
                         />
                         <YAxis
                           type="category"
-                          dataKey="feature"
+                          dataKey="name"
                           stroke="#4a6080"
                           tick={{ fill: '#8ba8cc', fontSize: 11 }}
                           tickLine={false}
@@ -280,14 +340,15 @@ export function Predict() {
                             fontSize: 12,
                           }}
                         />
-                        <Bar dataKey="importance" radius={[0, 4, 4, 0]}>
+                        <Bar dataKey="contribution" radius={[0, 4, 4, 0]}>
                           {result.top_risk_factors.slice(0, 8).map((entry, i) => (
                             <Cell
                               key={i}
                               fill={
-                                Object.entries(featureColors).find(([k]) =>
-                                  entry.feature.includes(k)
-                                )?.[1] ?? '#38b4ff'
+                                entry.contribution < 0 ? '#4a6080' :
+                                  Object.entries(featureColors).find(([k]) =>
+                                    entry.feature.includes(k)
+                                  )?.[1] ?? '#38b4ff'
                               }
                             />
                           ))}
@@ -295,10 +356,54 @@ export function Predict() {
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
+                  <p className="mt-2 text-[10px] text-text-muted">
+                    Percentage points of model output. Positive: this patient&apos;s value raised the
+                    output compared with a typical training value. Inputs interact, so the values do not add up.
+                  </p>
                 </div>
               )}
+
+              {/* Traceability */}
+              <details className="bg-surface border border-border rounded-lg p-4 text-xs" data-testid="traceability">
+                <summary className="cursor-pointer font-heading text-sm font-semibold">
+                  Threshold policy, versions and audit record
+                </summary>
+                {result.threshold_policy && (
+                  <div className="mt-3 space-y-1 text-text-secondary">
+                    <p>
+                      Policy <span className="font-mono">{result.threshold_policy.id}</span>:{' '}
+                      {result.threshold_policy.status}
+                    </p>
+                    <p>
+                      Model bands:{' '}
+                      {Object.entries(result.threshold_policy.model_bands)
+                        .map(([level, cut]) => `${level} ≥ ${cut}`)
+                        .join(', ')}
+                      ; alert cut-off {result.threshold_policy.alert_cutoff}
+                    </p>
+                    <p className="text-text-muted">{result.threshold_policy.alert_rule}</p>
+                  </div>
+                )}
+                {result.versions && (
+                  <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1">
+                    {Object.entries(result.versions).map(([key, value]) => (
+                      <div key={key} className="contents">
+                        <dt className="text-text-muted">{key.replace(/_/g, ' ')}</dt>
+                        <dd className="font-mono break-all text-text-secondary">
+                          {value && value.length > 16 ? `${value.slice(0, 12)}…` : (value ?? '—')}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+                <p className="mt-3 text-text-muted">
+                  Request <span className="font-mono">{result.request_id ?? '—'}</span> · audit record{' '}
+                  <span className="font-mono">{result.audit_record_id ?? '—'}</span>
+                  {result.observed_at && <> · observed {result.observed_at}</>}
+                </p>
+              </details>
             </>
-          ) : (
+          ) : !error && (
             <div className="bg-surface border border-border rounded-lg p-8 text-center">
               <Brain className="w-8 h-8 text-text-muted mx-auto mb-3" />
               <p className="text-sm text-text-muted">{t('predict.emptyState')}</p>

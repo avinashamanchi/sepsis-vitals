@@ -106,6 +106,8 @@ class TestPredictorDualMode:
         with open(tmp_path / "imputation_medians.json", "w") as f:
             json.dump({"temperature": 37.0, "heart_rate": 80.0, "resp_rate": 18.0}, f)
 
+        from sepsis_vitals.ml.artifacts import write_manifest
+        write_manifest(tmp_path, "unvalidated")  # loader requires a verified manifest
         from sepsis_vitals.ml.predictor import SepsisPredictor
         predictor = SepsisPredictor(str(tmp_path))
         predictor.load()
@@ -127,7 +129,7 @@ class TestPredictorDualMode:
         metadata = {
             "model_name": "GradientBoosting",
             "version": "2.0.0",
-            "feature_names": ["f1", "f2", "f3"],
+            "feature_names": ["temperature", "heart_rate", "resp_rate"],
             "needs_scaling": False,
             "is_calibrated": False,
             "metrics": {"val_auroc": 0.85},
@@ -144,9 +146,65 @@ class TestPredictorDualMode:
         with open(tmp_path / "imputation_medians.json", "w") as f:
             json.dump({}, f)
 
+        from sepsis_vitals.ml.artifacts import write_manifest
+        write_manifest(tmp_path, "unvalidated")  # loader requires a verified manifest
         from sepsis_vitals.ml.predictor import SepsisPredictor
         predictor = SepsisPredictor(str(tmp_path))
         predictor.load()
 
         info = predictor.model_info()
         assert "dual_thresholds" in info
+
+
+class FixedProbability:
+    """Stand-in model returning one probability (module level so it pickles)."""
+
+    def __init__(self, prob):
+        self.prob = prob
+
+    def predict_proba(self, X):
+        return np.array([[1 - self.prob, self.prob]] * len(X))
+
+
+class TestRuleAlertsCannotBeSuppressed:
+    """Regression: with dual thresholds the model level replaced the rule level."""
+
+    def _predictor(self, tmp_path, prob):
+        import joblib
+
+        from sepsis_vitals.ml.artifacts import write_manifest
+        from sepsis_vitals.ml.predictor import SepsisPredictor
+        from sepsis_vitals.ml.trainer import prepare_features
+
+        names = ["temperature", "heart_rate", "resp_rate"]
+        joblib.dump(FixedProbability(prob), tmp_path / "sepsis_model.joblib")
+        metadata = {
+            "model_name": "Fixed", "version": "0.0.1", "feature_names": names,
+            "needs_scaling": False,
+            "dual_thresholds": {
+                "continuous": {"threshold": 0.7}, "on_demand": {"threshold": 0.4},
+            },
+        }
+        (tmp_path / "model_metadata.json").write_text(json.dumps(metadata))
+        write_manifest(tmp_path, "unvalidated")
+        p = SepsisPredictor(str(tmp_path), state_dir=str(tmp_path / "state"))
+        p.load()
+        assert prepare_features  # imported for parity with the training pipeline
+        return p
+
+    def test_low_model_probability_keeps_rule_based_critical(self, tmp_path):
+        p = self._predictor(tmp_path, prob=0.01)
+        vitals = {"heart_rate": 135, "resp_rate": 30, "sbp": 82, "temperature": 39.6, "gcs": 12}
+        result = p.predict(vitals, patient_id="rule-check").to_dict()
+        assert result["rule_risk_level"] == "critical"
+        assert result["model_risk_level"] == "low"
+        assert result["risk_level"] == "critical"
+        assert result["alert"] is True
+
+    def test_model_can_raise_but_not_lower_the_level(self, tmp_path):
+        p = self._predictor(tmp_path, prob=0.95)
+        vitals = {"heart_rate": 80, "resp_rate": 16, "sbp": 124, "temperature": 37.0, "gcs": 15}
+        result = p.predict(vitals, patient_id="raise-check").to_dict()
+        assert result["rule_risk_level"] == "low"
+        assert result["risk_level"] == "critical"
+        assert result["provenance"]["validation_status"] == "unvalidated"

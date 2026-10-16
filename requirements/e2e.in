@@ -1,0 +1,4 @@
+# End-to-end browser checks against the compose stack (scripts/e2e_compose.py).
+# Lock: uv pip compile requirements/e2e.in --universal --python-version 3.10 --generate-hashes --no-header -o requirements/e2e.txt
+playwright>=1.47
+pyotp>=2.9

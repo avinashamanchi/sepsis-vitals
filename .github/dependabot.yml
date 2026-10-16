@@ -1,0 +1,39 @@
+# Version updates (weekly). Every Dependabot PR runs the full CI: tests on
+# Python 3.10-3.12 from the hashed locks, the per-extras matrix, pip-audit,
+# npm audit, Docker, compose-smoke and PostgreSQL jobs. For Python, the
+# effective pins are requirements/*.txt; regenerate them with uv when acting
+# on a pyproject.toml update (docs/dependencies.md). scripts/check_lock.py
+# fails the PR if pyproject.toml and the locks disagree.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      python-minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # Pinned to the version the committed model artifact was saved with;
+      # changing it requires retraining and a new manifest (models/manifest.json).
+      - dependency-name: scikit-learn
+
+  - package-ecosystem: npm
+    directory: "/frontend"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: "/docker"
+    schedule:
+      interval: weekly

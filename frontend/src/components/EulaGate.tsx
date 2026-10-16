@@ -62,6 +62,7 @@ export function EulaGate({ children }: { children: React.ReactNode }) {
         {/* EULA Content */}
         <div
           onScroll={handleScroll}
+          data-eula-body
           className="bg-surface border border-border rounded-xl max-h-[55vh] overflow-y-auto p-6 space-y-5 text-sm leading-relaxed text-text-secondary"
         >
           <div className="flex items-start gap-3 p-4 bg-danger/8 border border-danger/20 rounded-lg">

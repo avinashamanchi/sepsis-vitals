@@ -9,7 +9,7 @@ import { RiskBadge } from '../components/RiskBadge'
 import { TrendArrow } from '../components/TrendArrow'
 import { LoadingSpinner } from '../components/LoadingSpinner'
 import type { RiskLevel, MonitoredPatient } from '../types'
-import { RISK_BORDER } from '../lib/risk'
+import { RISK_BORDER, isRiskLevel } from '../lib/risk'
 import clsx from 'clsx'
 
 /** Demo patients for GitHub Pages mode */
@@ -36,6 +36,7 @@ function makeDemoPatients(): MonitoredPatient[] {
       vitals: { heart_rate: 72 + i * 5, temperature: 36.5 + i * 0.3, sbp: 120 - i * 5, spo2: 98 - i },
       risk_probability: r.prob,
       risk_level: r.level,
+      risk_status: 'scored' as const,
       trend_direction: r.trend,
       last_prediction_time: now - i * 120,
       last_vitals_time: now - i * 60,
@@ -57,6 +58,14 @@ function timeAgo(unixSeconds: number, t: (key: string, opts?: Record<string, unk
   if (diff < 3600) return t('time.minutesAgo', { n: Math.floor(diff / 60) })
   if (diff < 86400) return t('time.hoursAgo', { n: Math.floor(diff / 3600) })
   return t('time.daysAgo', { n: Math.floor(diff / 86400) })
+}
+
+/** The risk to show, or null: never a default 0% or "low" for a patient
+ * whose latest attempt was not scored and recorded. */
+function currentRisk(patient: MonitoredPatient): { level: RiskLevel; probability: number } | null {
+  if (patient.risk_status === 'unavailable' || patient.risk_status === 'not-scored') return null
+  if (patient.risk_probability == null || !isRiskLevel(patient.risk_level)) return null
+  return { level: patient.risk_level, probability: patient.risk_probability }
 }
 
 function isStale(patient: MonitoredPatient): boolean {
@@ -100,7 +109,7 @@ export function Monitor() {
       .then((data) => {
         const patients: MonitoredPatient[] = data.patients.map((p) => ({
           ...p,
-          risk_level: (p.risk_level as RiskLevel) || 'low',
+          risk_level: isRiskLevel(p.risk_level) ? p.risk_level : 'unknown',
           trend_direction: (p.trend_direction as MonitoredPatient['trend_direction']) || 'unknown',
           alert_state: (p.alert_state as MonitoredPatient['alert_state']) || 'normal',
           deterioration_rate: p.deterioration_rate ?? 0,
@@ -159,7 +168,7 @@ export function Monitor() {
                 .then((data) => {
                   const pts: MonitoredPatient[] = data.patients.map((p) => ({
                     ...p,
-                    risk_level: (p.risk_level as RiskLevel) || 'low',
+                    risk_level: isRiskLevel(p.risk_level) ? p.risk_level : 'unknown',
                     trend_direction: (p.trend_direction as MonitoredPatient['trend_direction']) || 'unknown',
                     alert_state: (p.alert_state as MonitoredPatient['alert_state']) || 'normal',
                     deterioration_rate: p.deterioration_rate ?? 0,
@@ -194,14 +203,15 @@ export function Monitor() {
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
           {patients.map((patient) => {
             const stale = isStale(patient)
+            const risk = currentRisk(patient)
             return (
             <Link
               key={patient.patient_id}
               to={`/patients/${patient.patient_id}`}
               className={clsx(
                 'bg-surface border-2 rounded-lg p-4 transition-all hover:bg-elevated block',
-                stale ? 'border-border opacity-60' : RISK_BORDER[patient.risk_level],
-                !stale && patient.risk_level === 'critical' && 'animate-pulse-critical',
+                stale ? 'border-border opacity-60' : risk ? RISK_BORDER[risk.level] : 'border-border',
+                !stale && risk?.level === 'critical' && 'animate-pulse-critical',
               )}
             >
               {/* Stale banner */}
@@ -216,16 +226,27 @@ export function Monitor() {
                 <span className={clsx('font-heading font-semibold text-sm', stale && 'text-text-muted')}>{patient.patient_id}</span>
                 {stale
                   ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-elevated text-text-muted border border-border">{t('monitor.stale')}</span>
-                  : <RiskBadge level={patient.risk_level} size="sm" pulse={patient.risk_level === 'critical'} />
+                  : risk
+                    ? <RiskBadge level={risk.level} size="sm" pulse={risk.level === 'critical'} />
+                    : <span className="text-[10px] px-2 py-0.5 rounded-full bg-elevated text-text-secondary border border-border" data-testid="no-risk">
+                        No risk calculated
+                      </span>
                 }
               </div>
 
               {/* Risk probability + trend */}
               <div className="flex items-center justify-between mb-3">
                 <span className={clsx('text-2xl font-bold font-heading', stale && 'text-text-muted')}>
-                  {stale ? '?' : `${(patient.risk_probability * 100).toFixed(0)}%`}
+                  {stale ? '?' : risk ? `${(risk.probability * 100).toFixed(0)}%` : '—'}
                 </span>
-                {!stale && (
+                {!stale && !risk && (
+                  <span className="text-[10px] text-text-muted">
+                    {patient.risk_status === 'unavailable'
+                      ? 'Latest attempt failed. Not a low-risk result.'
+                      : 'Not scored yet'}
+                  </span>
+                )}
+                {!stale && risk && (
                   <TrendArrow
                     direction={patient.trend_direction}
                     rateText={

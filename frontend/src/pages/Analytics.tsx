@@ -35,35 +35,45 @@ const CHART_TOOLTIP = {
   },
 }
 
+const RISK_COLORS: Record<string, string> = {
+  low: '#00ff9d', moderate: '#ffb830', high: '#ff6b35', critical: '#ff3b5c',
+}
+
+type WeeklyPoint = { day: string; predictions: number; alerts: number; dismissed?: number }
+type RiskSlice = { name: string; value: number; color: string }
+
 export function Analytics() {
   const { t } = useTranslation()
-  const weeklyData = isDemo ? DEMO_WEEKLY : []
-  const riskDist = isDemo ? DEMO_RISK_DIST : []
-  const [stats, setStats] = useState({
-    totalPredictions: '1,110',
-    alertsGenerated: '66',
-    alertRate: '6.0%',
-    reviewedFlags: '25',
-    dataSource: 'Synthetic',
-  })
+  const [weeklyData, setWeeklyData] = useState<WeeklyPoint[]>(isDemo ? DEMO_WEEKLY : [])
+  const [riskDist, setRiskDist] = useState<RiskSlice[]>(isDemo ? DEMO_RISK_DIST : [])
+  // Illustrative figures only in demo mode; live mode shows observed counts or '—'.
+  const [stats, setStats] = useState(isDemo
+    ? { totalPredictions: '1,110', alertsGenerated: '66', alertRate: '6.0%', reviewedFlags: '25', dataSource: 'Synthetic' }
+    : { totalPredictions: '—', alertsGenerated: '—', alertRate: '—', reviewedFlags: '—', dataSource: 'Live counts' })
 
   useEffect(() => {
     if (isDemo) return
-    api.dashboardStats()
-      .then((data) => {
-        const total = data.predictions_today * 7
-        const alertCount = data.active_alerts * 7
-        const rate = total > 0 ? ((alertCount / total) * 100).toFixed(1) : '0.0'
+    // Observed daily counts from the backend: no extrapolation.
+    api.weeklyTrends(7)
+      .then((days) => {
+        const total = days.reduce((n, d) => n + d.predictions, 0)
+        const flagged = days.reduce((n, d) => n + d.alerts, 0)
+        setWeeklyData(days.map((d) => ({ day: d.date ?? '—', predictions: d.predictions, alerts: d.alerts })))
         setStats((s) => ({
           ...s,
           totalPredictions: total.toLocaleString(),
-          alertsGenerated: String(alertCount),
-          alertRate: `${rate}%`,
-          reviewedFlags: '—',
-          dataSource: 'Live counts',
+          alertsGenerated: String(flagged),
+          alertRate: total > 0 ? `${((flagged / total) * 100).toFixed(1)}%` : '—',
         }))
       })
-      .catch((err: unknown) => console.error('Failed to load analytics stats:', err))
+      .catch((err: unknown) => console.error('Failed to load weekly trends:', err))
+    api.riskDistribution(24)
+      .then((rows) => setRiskDist(rows.map((r) => ({
+        name: r.risk_level.charAt(0).toUpperCase() + r.risk_level.slice(1),
+        value: r.percentage,
+        color: RISK_COLORS[r.risk_level] ?? '#4a6080',
+      }))))
+      .catch((err: unknown) => console.error('Failed to load risk distribution:', err))
   }, [])
   return (
     <div className="space-y-6 animate-fade-in">
@@ -79,7 +89,7 @@ export function Analytics() {
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Model outputs" value={stats.totalPredictions} sublabel="Evaluation window" color="info" />
+        <StatCard label="Model outputs" value={stats.totalPredictions} sublabel={isDemo ? 'Evaluation window' : 'Last 7 days'} color="info" />
         <StatCard label="Review flags" value={stats.alertsGenerated} sublabel={`${stats.alertRate} flag rate`} color="warning" />
         <StatCard label="Flags reviewed" value={stats.reviewedFlags} sublabel="No outcome label implied" color="accent" />
         <StatCard label="Data source" value={stats.dataSource} sublabel={isDemo ? 'Interface demo' : 'Operational counts'} color="default" />
@@ -117,7 +127,7 @@ export function Analytics() {
         {/* Risk Distribution */}
         <div className="bg-surface border border-border rounded-lg">
           <div className="px-4 py-3 border-b border-border">
-            <h2 className="font-heading text-sm font-semibold">Synthetic output distribution</h2>
+            <h2 className="font-heading text-sm font-semibold">{isDemo ? 'Synthetic output distribution' : 'Output distribution (last 24 h)'}</h2>
           </div>
           <div className="p-4 h-[280px] flex items-center">
             <div className="w-1/2 h-full" role="img" aria-label={t('analytics.riskDistributionLabel')}>

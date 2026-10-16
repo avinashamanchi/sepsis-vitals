@@ -8,13 +8,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libpq-dev libffi-dev curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Dependencies come from the hashed lock for [api,ml] (requirements/deploy.txt,
+# see docs/dependencies.md): every package and version is pinned and verified.
+COPY requirements/deploy.txt requirements/deploy.txt
+RUN pip install --no-cache-dir --require-hashes -r requirements/deploy.txt
+
 COPY pyproject.toml README.md ./
 COPY src/ src/
-
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir build && \
-    pip install --no-cache-dir ".[api]" && \
-    pip wheel --no-deps --wheel-dir /wheels .
+RUN pip wheel --no-deps --wheel-dir /wheels . && \
+    pip check
 
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
@@ -31,7 +33,7 @@ WORKDIR /app
 
 # Runtime system deps only
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 curl \
+    libpq5 libgomp1 curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder
@@ -42,11 +44,14 @@ COPY --from=builder /wheels /wheels
 COPY src/ src/
 COPY alembic/ alembic/
 COPY alembic.ini ./
+COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/sepsis-entrypoint
 
-# Install the package wheel
-RUN pip install --no-cache-dir --no-index --find-links=/wheels sepsis_vitals || true
+# Install the package wheel (fail the build if it does not install)
+RUN pip install --no-cache-dir --no-index --no-deps --find-links=/wheels sepsis_vitals && pip check
 
-RUN chown -R sepsis:sepsis /app
+# Model artifacts are mounted read-only at /models (never baked into the
+# image); mutable patient state lives in /app/state (mount an encrypted volume).
+RUN mkdir -p /app/state /models && chown -R sepsis:sepsis /app && chmod 0700 /app/state
 USER sepsis
 
 # Health check — FastAPI /health endpoint
@@ -58,8 +63,11 @@ EXPOSE 8080
 # Security: read-only filesystem where possible
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    SEPSIS_ENV=production
+    SEPSIS_ENV=production \
+    SEPSIS_MODEL_DIR=/models \
+    SEPSIS_STATE_DIR=/app/state
 
+ENTRYPOINT ["/usr/local/bin/sepsis-entrypoint"]
 CMD ["uvicorn", "sepsis_vitals.api:app", \
      "--host", "0.0.0.0", \
      "--port", "8080", \

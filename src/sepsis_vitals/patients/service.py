@@ -14,12 +14,12 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import case, cast, func, Date
+from sqlalchemy import Date, String, case, cast, func
 from sqlalchemy.orm import Session
 
 from sepsis_vitals.db import Alert, Patient, PredictionRecord, Score, VitalReading
 from sepsis_vitals.scores import ScoreBundle, compute_scores
-from sepsis_vitals.security import compute_blind_index
+from sepsis_vitals.security import blind_index_candidates, compute_blind_index
 
 
 # ---------------------------------------------------------------------------
@@ -39,18 +39,17 @@ def create_patient(
     Raises
     ------
     ValueError
-        If a patient with the same *external_id* already exists.
+        If a patient with the same *external_id* already exists at *site_id*.
+        MRNs are only unique within a site.
     """
     ext_id_hash = compute_blind_index(external_id)
     existing = (
         db.query(Patient)
-        .filter(Patient.external_id_hash == ext_id_hash)
+        .filter(Patient.site_id == site_id, Patient.external_id_hash.in_(blind_index_candidates(external_id)))
         .first()
     )
     if existing is not None:
-        raise ValueError(
-            f"Patient with external_id '{external_id}' already exists"
-        )
+        raise ValueError("Patient already exists at this site")
 
     patient = Patient(
         external_id=external_id,
@@ -71,15 +70,16 @@ def get_patient(patient_id: str, db: Session) -> Patient | None:
 
 
 def get_patient_by_external_id(
-    external_id: str, db: Session
+    external_id: str, db: Session, site_id: str | None = None
 ) -> Patient | None:
-    """Return a patient by their external (site-assigned) identifier."""
-    ext_id_hash = compute_blind_index(external_id)
-    return (
-        db.query(Patient)
-        .filter(Patient.external_id_hash == ext_id_hash)
-        .first()
-    )
+    """Return a patient by their site-assigned identifier.
+
+    MRNs are only unique per site; pass *site_id* to disambiguate.
+    """
+    query = db.query(Patient).filter(Patient.external_id_hash.in_(blind_index_candidates(external_id)))
+    if site_id is not None:
+        query = query.filter(Patient.site_id == site_id)
+    return query.first()
 
 
 def list_patients(
@@ -93,6 +93,67 @@ def list_patients(
     if site_id is not None:
         query = query.filter(Patient.site_id == site_id)
     return query.order_by(Patient.created_at.desc()).offset(skip).limit(limit).all()
+
+
+_SUMMARY_VITALS = (
+    "temperature", "heart_rate", "resp_rate", "sbp", "dbp", "spo2", "gcs",
+    "lactate", "wbc", "procalcitonin",
+)
+
+
+def latest_observations(
+    patient_ids: list[str], db: Session
+) -> dict[str, dict[str, Any]]:
+    """Return each patient's most recent reading and its score, if any.
+
+    Patients without readings are absent from the result; callers must treat
+    that as "not yet observed", never as normal or low risk.
+    """
+    if not patient_ids:
+        return {}
+    latest = (
+        db.query(
+            VitalReading.patient_id.label("pid"),
+            func.max(VitalReading.recorded_at).label("ts"),
+        )
+        .filter(VitalReading.patient_id.in_(patient_ids))
+        .group_by(VitalReading.patient_id)
+        .subquery()
+    )
+    rows = (
+        db.query(VitalReading, Score)
+        .join(
+            latest,
+            (VitalReading.patient_id == latest.c.pid)
+            & (VitalReading.recorded_at == latest.c.ts),
+        )
+        .outerjoin(Score, Score.vital_id == VitalReading.id)
+        .all()
+    )
+    # Several readings can share the latest timestamp: FHIR stores each
+    # Observation as its own row, so heart rate and respiratory rate measured
+    # together arrive as two rows. Merge them; if more than one is scored,
+    # report the most severe level recorded at that time.
+    severity = {"low": 0, "moderate": 1, "high": 2, "critical": 3}
+    out: dict[str, dict[str, Any]] = {}
+    for reading, score in sorted(rows, key=lambda r: str(r[0].id)):
+        entry = out.setdefault(reading.patient_id, {
+            "latest_vitals": {},
+            "latest_risk_level": None,
+            "latest_recorded_at": reading.recorded_at,
+        })
+        vitals = entry["latest_vitals"]
+        for name in _SUMMARY_VITALS:
+            value = getattr(reading, name)
+            if value is not None and name not in vitals:
+                vitals[name] = value
+        if reading.map_pressure is not None and "map" not in vitals:
+            vitals["map"] = reading.map_pressure
+        level = score.risk_level if score is not None else None
+        current = entry["latest_risk_level"]
+        if level is not None and (current is None or severity.get(level, -1) > severity.get(current, -1)):
+            entry["latest_risk_level"] = level
+    return out
 
 
 def update_patient(
@@ -452,10 +513,10 @@ def escalate_alert(
 
 
 def get_site_dashboard_stats(
-    site_id: str,
+    site_id: str | None,
     db: Session,
 ) -> dict[str, Any]:
-    """Return aggregate statistics for a site dashboard.
+    """Return aggregate statistics for a site dashboard (all sites when None).
 
     Keys returned:
 
@@ -463,15 +524,16 @@ def get_site_dashboard_stats(
     * ``active_alerts`` -- number of unacknowledged alerts.
     * ``recent_predictions`` -- number of scores computed in the last 24 h.
     """
+    site_filter = [Patient.site_id == site_id] if site_id is not None else []
     patient_count: int = (
         db.query(func.count(Patient.id))
-        .filter(Patient.site_id == site_id)
+        .filter(*site_filter)
         .scalar()
         or 0
     )
 
     patient_ids_subq = (
-        db.query(Patient.id).filter(Patient.site_id == site_id).subquery()
+        db.query(Patient.id).filter(*site_filter).subquery()
     )
 
     active_alerts: int = (
@@ -514,21 +576,40 @@ def get_site_dashboard_stats(
 # ---------------------------------------------------------------------------
 
 
+def _scope_predictions(query: Any, site_id: str | None) -> Any:
+    """Restrict a PredictionRecord query to patients registered at *site_id*.
+
+    ``PredictionRecord.patient_id`` is not a foreign key, so predictions for
+    unregistered patient IDs are only visible to unscoped (admin) callers.
+    """
+    if site_id is None:
+        return query
+    # patient_id is free text on predictions but UUID on patients: compare as text.
+    return query.join(Patient, cast(Patient.id, String) == PredictionRecord.patient_id).filter(
+        Patient.site_id == site_id
+    )
+
+
 def get_weekly_trends(
     db: Session,
     days: int = 7,
+    site_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return daily prediction and alert counts for the last *days* days."""
+    """Return daily prediction and alert counts for the last *days* days.
+
+    When *site_id* is given, only predictions for that site's patients count.
+    """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
+    query = db.query(
+        cast(PredictionRecord.created_at, Date).label("day"),
+        func.count(PredictionRecord.id).label("predictions"),
+        func.sum(
+            case((PredictionRecord.alert_fired == True, 1), else_=0)  # noqa: E712
+        ).label("alerts"),
+    )
     rows = (
-        db.query(
-            cast(PredictionRecord.created_at, Date).label("day"),
-            func.count(PredictionRecord.id).label("predictions"),
-            func.sum(
-                case((PredictionRecord.alert_fired == True, 1), else_=0)  # noqa: E712
-            ).label("alerts"),
-        )
+        _scope_predictions(query, site_id)
         .filter(PredictionRecord.created_at >= cutoff)
         .group_by(cast(PredictionRecord.created_at, Date))
         .order_by(cast(PredictionRecord.created_at, Date))
@@ -548,15 +629,20 @@ def get_weekly_trends(
 def get_risk_distribution(
     db: Session,
     hours_back: int = 24,
+    site_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return a breakdown of risk levels from recent predictions."""
+    """Return a breakdown of risk levels from recent predictions.
+
+    When *site_id* is given, only predictions for that site's patients count.
+    """
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours_back)
 
+    query = db.query(
+        PredictionRecord.risk_level,
+        func.count(PredictionRecord.id).label("count"),
+    )
     rows = (
-        db.query(
-            PredictionRecord.risk_level,
-            func.count(PredictionRecord.id).label("count"),
-        )
+        _scope_predictions(query, site_id)
         .filter(PredictionRecord.created_at >= cutoff)
         .group_by(PredictionRecord.risk_level)
         .all()

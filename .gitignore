@@ -15,6 +15,7 @@ __pycache__/
 dist/
 build/
 .eggs/
+.artifacts/
 *.so
 .venv/
 venv/
