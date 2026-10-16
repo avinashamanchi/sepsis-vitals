@@ -207,6 +207,24 @@ def test_record_prediction_raises_when_the_database_refuses(monkeypatch):
                           result={"risk_probability": 0.1, "risk_level": "low"}, payload={})
 
 
+@pytest.mark.parametrize("raw, stored", [
+    ("203.0.113.7", "203.0.113.7"), (" 2001:db8::1 ", "2001:db8::1"),
+    ("testclient", None), ("unknown", None), ("1.2.3.4, 5.6.7.8", None), (None, None),
+])
+def test_client_addresses_that_are_not_ips_are_stored_as_null(raw, stored):
+    """Regression (found on PostgreSQL): a non-IP client address in an INET
+    column failed every audit write, so every prediction became a 503."""
+    from sepsis_vitals.db import inet_or_none
+
+    assert inet_or_none(raw) == stored
+
+
+def test_record_with_a_non_ip_client_address_is_written(client):
+    resp = client.post("/predict", json={"patient_id": "synthetic-ip", "vitals": VITALS})
+    assert resp.status_code == 200, resp.text  # the test client's host is "testclient"
+    assert _record(resp.json()["audit_record_id"]).ip_address is None
+
+
 # -- append-only and tamper-evident ---------------------------------------------
 
 def test_records_cannot_be_changed_or_removed(client):
@@ -478,3 +496,53 @@ def test_malformed_request_ids_are_replaced(client):
                        headers={"X-Request-ID": "bad id; with spaces"})
     assert resp.headers["X-Request-ID"] != "bad id; with spaces"
     assert len(resp.headers["X-Request-ID"]) == 32
+
+
+# -- health: compatibility, policy, recent inference, audit guard -----------------
+
+def test_model_status_reports_checks_policy_and_recent_inference(client):
+    client.post("/predict", json={"patient_id": "synthetic-health", "vitals": VITALS})
+    status = client.get("/model/status").json()
+    assert status["checks"] == {"artifact_integrity": "verified", "feature_schema": "compatible"}
+    assert status["threshold_policy"]["id"] == "placeholder-bands-v1"
+    recent = status["recent_inference"]
+    assert recent["window"] >= 1 and recent["outcomes"].get("scored", 0) >= 1
+    assert 0.0 < recent["success_rate"] <= 1.0 and recent["latency_ms_p50"] > 0
+    assert status["clinical_use"] == "not-permitted"
+
+
+def test_recent_inference_summary_counts_failures_and_latency():
+    from sepsis_vitals.routes.status import recent_inference_summary
+
+    entries = [{"outcome": "scored", "latency_ms": float(ms)} for ms in range(1, 20)]
+    entries += [{"outcome": "audit_unavailable"}, {"outcome": "model_error"}]
+    s = recent_inference_summary(entries)
+    assert s["window"] == 21 and s["outcomes"] == {"scored": 19, "audit_unavailable": 1, "model_error": 1}
+    assert s["success_rate"] == round(19 / 21, 4)
+    assert s["latency_ms_p50"] == 10.0 and s["latency_ms_p95"] == 19.0
+    assert recent_inference_summary([])["success_rate"] is None
+
+
+def test_ready_requires_the_append_only_guard(client, monkeypatch):
+    body = client.get("/ready").json()
+    assert body["audit_guard"] == "present"
+    monkeypatch.setattr("sepsis_vitals.routes.status._audit_guard", lambda: "missing")
+    resp = client.get("/ready")
+    assert resp.status_code == 503 and resp.json()["audit_guard"] == "missing"
+
+
+# -- audit CLI (read-only) ---------------------------------------------------------
+
+def test_audit_cli_verifies_and_shows_without_content_by_default(client, capsys):
+    from sepsis_vitals.audit_records import _cli
+
+    body = client.post("/predict", json={"patient_id": "synthetic-cli", "vitals": VITALS}).json()
+    assert _cli(["verify"]) == 0
+    verified = json.loads(capsys.readouterr().out)
+    assert verified["records"]["altered"] == 0 and verified["records"]["intact"] >= 1
+    assert _cli(["show", body["audit_record_id"]]) == 0
+    shown = capsys.readouterr().out
+    assert '"seal": "intact"' in shown and body["request_id"] in shown
+    assert "synthetic-cli" not in shown and "observation" not in shown
+    assert _cli(["show", body["audit_record_id"], "--include-content"]) == 0
+    assert "synthetic-cli" in capsys.readouterr().out

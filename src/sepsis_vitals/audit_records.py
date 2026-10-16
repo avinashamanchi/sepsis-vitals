@@ -130,7 +130,7 @@ def record_prediction(
     if source not in SOURCES:
         raise ValueError(f"unknown audit source {source!r}")
     try:
-        from sepsis_vitals.db import PredictionRecord, SessionLocal
+        from sepsis_vitals.db import PredictionRecord, SessionLocal, inet_or_none
     except Exception as exc:  # pragma: no cover - import failure is a deployment error
         raise AuditWriteError(type(exc).__name__) from exc
 
@@ -181,7 +181,7 @@ def record_prediction(
         logger.error("Audit record not written (%s); result withheld", type(exc).__name__)
         raise AuditWriteError(type(exc).__name__) from exc
     try:
-        db.add(PredictionRecord(**values, ip_address=ip_address))
+        db.add(PredictionRecord(**values, ip_address=inet_or_none(ip_address)))
         db.commit()
     except Exception as exc:
         db.rollback()
@@ -202,3 +202,67 @@ def verify_record(record: Any) -> Optional[bool]:
         return None
     values = {name: getattr(record, name) for name in SEALED_FIELDS}
     return hmac.compare_digest(_seal(values), sealed)
+
+
+def _cli(argv: Optional[list] = None) -> int:
+    """Read-only inspection of the prediction audit trail.
+
+        python -m sepsis_vitals.audit_records verify          # every record
+        python -m sepsis_vitals.audit_records show <id>       # metadata and digests
+        python -m sepsis_vitals.audit_records show <id> --include-content
+
+    ``verify`` prints counts and the ids of altered records, never content.
+    ``show`` prints content only with --include-content, which is meant for
+    synthetic demonstrations: with real data the content is PHI.
+    """
+    import argparse
+
+    from sepsis_vitals.db import PredictionRecord, SessionLocal
+
+    parser = argparse.ArgumentParser(prog="python -m sepsis_vitals.audit_records")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("verify", help="check every record's seal")
+    show = sub.add_parser("show", help="one record's metadata and digests")
+    show.add_argument("record_id")
+    show.add_argument("--include-content", action="store_true")
+    opts = parser.parse_args(argv)
+
+    db = SessionLocal()
+    try:
+        if opts.command == "verify":
+            counts = {"intact": 0, "altered": 0, "unsealed": 0}
+            altered = []
+            for record in db.query(PredictionRecord).yield_per(500):
+                state = verify_record(record)
+                key = "unsealed" if state is None else "intact" if state else "altered"
+                counts[key] += 1
+                if key == "altered":
+                    altered.append(record.id)
+            print(json.dumps({"records": counts, "altered_ids": altered}, indent=2))
+            return 1 if altered else 0
+        found = db.get(PredictionRecord, opts.record_id)
+        if found is None:
+            print("record not found")
+            return 1
+        record = found
+        out: Dict[str, Any] = {
+            name: getattr(record, name)
+            for name in ("id", "created_at", "source", "request_id", "risk_level", "alert_fired",
+                         "model_version", "threshold_policy", "input_sha256", "record_sha256")
+        }
+        out["seal"] = {None: "unsealed (before migration 006)", True: "intact", False: "ALTERED"}[verify_record(record)]
+        output = json.loads(record.output_scores) if isinstance(record.output_scores, str) else record.output_scores
+        out["versions"] = (output or {}).get("versions")
+        if opts.include_content:
+            out["patient_id"] = record.patient_id
+            out["risk_probability"] = record.risk_probability
+            out["input"] = json.loads(record.input_vitals) if isinstance(record.input_vitals, str) else record.input_vitals
+            out["output"] = output
+        print(json.dumps(out, indent=2, default=str))
+        return 0
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli())

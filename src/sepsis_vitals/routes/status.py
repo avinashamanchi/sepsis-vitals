@@ -54,6 +54,38 @@ def _alembic_head() -> Optional[str]:
     return None
 
 
+def _audit_guard() -> str:
+    """Whether the append-only triggers on prediction_records exist.
+
+    "present", "missing", "no-table" (fresh development database before the
+    first create) or "unknown" (query failed). Readiness requires
+    "present" or "no-table": an unguarded audit table is not ready.
+    """
+    from sqlalchemy import inspect, text
+
+    from sepsis_vitals.db import engine
+
+    try:
+        with engine.connect() as conn:
+            if not inspect(conn).has_table("prediction_records"):
+                return "no-table"
+            if conn.dialect.name == "postgresql":
+                count = conn.execute(text(
+                    "SELECT count(*) FROM pg_trigger WHERE tgrelid = 'prediction_records'::regclass "
+                    "AND tgname IN ('prediction_records_no_change', 'prediction_records_no_truncate')"
+                )).scalar()
+                return "present" if count == 2 else "missing"
+            if conn.dialect.name == "sqlite":
+                count = conn.execute(text(
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'trigger' AND name IN "
+                    "('prediction_records_no_update', 'prediction_records_no_delete')"
+                )).scalar()
+                return "present" if count == 2 else "missing"
+    except Exception as exc:
+        logger.warning("Readiness: audit guard check failed (%s)", type(exc).__name__)
+    return "unknown"
+
+
 @router.get("/ready")
 async def readiness():
     """API readiness: database reachable and (when managed) migrations at head.
@@ -77,6 +109,7 @@ async def readiness():
             logger.warning("Readiness: database unreachable (%s)", type(exc).__name__)
             return {"database": "unreachable", "migrations": "unknown"}
         checks["database"] = "ok"
+        checks["audit_guard"] = _audit_guard()
         if current is None:
             checks["migrations"] = "unmanaged"
             return checks
@@ -95,7 +128,7 @@ async def readiness():
     ready = checks["database"] == "ok" and (
         checks["migrations"] == "at-head"
         or (checks["migrations"] == "unmanaged" and not _deps._is_production)
-    )
+    ) and checks.get("audit_guard") in ("present", "no-table")
     return JSONResponse(status_code=200 if ready else 503, content={"ready": ready, **checks})
 
 
@@ -107,12 +140,49 @@ async def model_status():
     clinically ready: ``clinically_ready`` stays false for every validation
     status this build knows about.
     """
-    await asyncio.to_thread(_core()._get_predictor)
+    predictor = await asyncio.to_thread(_core()._get_predictor)
     status = dict(_core()._model_status)
     status.setdefault("prediction_ready", False)
     status.setdefault("clinically_ready", False)
     status.setdefault("clinical_use", "not-permitted")
+    state = str(status.get("state"))
+    status["checks"] = {
+        # Artifacts are verified against manifest.json before unpickling, and
+        # the current feature pipeline must produce every model feature.
+        "artifact_integrity": {"ready": "verified", "unverified": "not verified (explicitly allowed)",
+                               "invalid": "failed"}.get(state, "not checked"),
+        "feature_schema": "compatible" if state in ("ready", "unverified")
+        else "incompatible" if state == "incompatible" else "not checked",
+    }
+    if predictor is not None:
+        policy = predictor.threshold_policy()
+        status["threshold_policy"] = {k: policy[k] for k in ("id", "status", "sha256")}
+    status["recent_inference"] = recent_inference_summary(list(_core()._recent_inferences))
     return status
+
+
+def recent_inference_summary(entries: list) -> Dict[str, Any]:
+    """Outcome counts, success rate and latency of the last inference attempts.
+
+    "Success" means a recorded result was released. Contains no patient data.
+    """
+    import statistics
+
+    outcomes: Dict[str, int] = {}
+    for entry in entries:
+        outcomes[entry["outcome"]] = outcomes.get(entry["outcome"], 0) + 1
+    latencies = sorted(e["latency_ms"] for e in entries if e.get("latency_ms") is not None)
+    summary: Dict[str, Any] = {
+        "window": len(entries),
+        "outcomes": outcomes,
+        "success_rate": round(outcomes.get("scored", 0) / len(entries), 4) if entries else None,
+        "latency_ms_p50": None,
+        "latency_ms_p95": None,
+    }
+    if latencies:
+        summary["latency_ms_p50"] = round(statistics.median(latencies), 1)
+        summary["latency_ms_p95"] = round(latencies[min(len(latencies) - 1, int(0.95 * len(latencies)))], 1)
+    return summary
 
 
 @router.get("/model/info", dependencies=[Depends(check_rate_limit)])

@@ -131,6 +131,23 @@ class GUID(sa_types.TypeDecorator):
         return None if value is None else str(value)
 
 
+def inet_or_none(value: object) -> Optional[str]:
+    """A canonical IP address for an INET column, or None.
+
+    Client addresses can be "unknown", a test client's host name or an
+    unvalidated forwarded value. PostgreSQL rejects those in INET columns,
+    which would make the whole audit write fail.
+    """
+    import ipaddress
+
+    if value is None:
+        return None
+    try:
+        return str(ipaddress.ip_address(str(value).strip()))
+    except ValueError:
+        return None
+
+
 def is_uuid(value: object) -> bool:
     """True when *value* is a well-formed UUID (string or UUID object)."""
     try:

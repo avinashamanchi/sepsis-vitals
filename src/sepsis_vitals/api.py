@@ -283,6 +283,7 @@ _metrics: Dict[str, Any] = {
     "errors_total": 0,
     "copilot_calls_total": 0,
     "rate_limited_total": 0,
+    "audit_log_failures_total": 0,
     "avg_prediction_ms": 0.0,
     "_prediction_times": [],
 }
@@ -569,9 +570,11 @@ def _emit_audit_event(
     # Structured log output (picked up by log aggregators)
     logger.info("HIPAA_AUDIT %s", json.dumps(event))
 
-    # Persist to database (best-effort, never blocks)
+    # Persist to database. The response has already been produced, so this
+    # cannot block it; a failure is logged (error class only) and counted,
+    # and the structured log line above remains as the second copy.
     try:
-        from sepsis_vitals.db import SessionLocal, AuditLog
+        from sepsis_vitals.db import AuditLog, SessionLocal, inet_or_none
         db = SessionLocal()
         try:
             record = AuditLog(
@@ -580,12 +583,14 @@ def _emit_audit_event(
                 resource_type="patient_phi",
                 resource_id=patient_id,
                 details=json.dumps({"path": path, "status_code": status_code}),
-                ip_address=ip_address,
+                ip_address=inet_or_none(ip_address),
             )
             db.add(record)
             db.commit()
-        except Exception:
+        except Exception as exc:
             db.rollback()
+            _metrics["audit_log_failures_total"] += 1
+            logger.error("Access audit event not persisted (%s)", type(exc).__name__)
         finally:
             db.close()
     except ImportError:
