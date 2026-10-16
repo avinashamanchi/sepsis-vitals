@@ -567,3 +567,19 @@ def test_default_observation_time_is_utc(model_dir, tmp_path, monkeypatch):
     monkeypatch.delenv("TZ")
     if hasattr(_time, "tzset"):
         _time.tzset()
+
+
+def test_postgres_create_all_renders_the_trigger_ddl_verbatim():
+    """Regression (CI on c615e03): DDL() %-formatted the trigger body, so a
+    fresh PostgreSQL schema built by create_all failed with a syntax error."""
+    from sqlalchemy import create_mock_engine
+
+    from sepsis_vitals.db import PG_APPEND_ONLY_DDL, Base
+
+    rendered = []
+    engine = create_mock_engine(
+        "postgresql://", lambda sql, *a, **k: rendered.append(str(sql.compile(dialect=engine.dialect))))
+    Base.metadata.create_all(engine, tables=[Base.metadata.tables["prediction_records"]], checkfirst=False)
+    for statement in PG_APPEND_ONLY_DDL:
+        assert "%" not in statement
+        assert statement in rendered

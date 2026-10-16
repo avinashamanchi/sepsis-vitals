@@ -41,7 +41,7 @@ _COLUMNS = (
 # never changes when application code does.
 _UPGRADE_SQL = (
     "CREATE OR REPLACE FUNCTION prediction_records_append_only() RETURNS trigger AS $$ "
-    "BEGIN RAISE EXCEPTION 'prediction_records is append-only (% refused)', TG_OP; END; "
+    "BEGIN RAISE EXCEPTION USING MESSAGE = 'prediction_records is append-only: ' || TG_OP || ' refused'; END; "
     "$$ LANGUAGE plpgsql",
     "CREATE TRIGGER prediction_records_no_change BEFORE UPDATE OR DELETE ON prediction_records "
     "FOR EACH ROW EXECUTE FUNCTION prediction_records_append_only()",

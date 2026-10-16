@@ -577,7 +577,7 @@ APPEND_ONLY_MESSAGE = "prediction_records is append-only"
 
 PG_APPEND_ONLY_DDL = (
     "CREATE OR REPLACE FUNCTION prediction_records_append_only() RETURNS trigger AS $$ "
-    "BEGIN RAISE EXCEPTION 'prediction_records is append-only (% refused)', TG_OP; END; "
+    "BEGIN RAISE EXCEPTION USING MESSAGE = 'prediction_records is append-only: ' || TG_OP || ' refused'; END; "
     "$$ LANGUAGE plpgsql",
     "CREATE TRIGGER prediction_records_no_change BEFORE UPDATE OR DELETE ON prediction_records "
     "FOR EACH ROW EXECUTE FUNCTION prediction_records_append_only()",
@@ -591,6 +591,8 @@ SQLITE_APPEND_ONLY_DDL = (
     f"BEGIN SELECT RAISE(ABORT, '{APPEND_ONLY_MESSAGE}'); END",
 )
 
+# No "%" in these statements: DDL() and pyformat drivers would treat it as
+# a format marker (CI on c615e03: a fresh create_all schema failed).
 for _statement in PG_APPEND_ONLY_DDL:
     event.listen(PredictionRecord.__table__, "after_create",
                  DDL(_statement).execute_if(dialect="postgresql"))
