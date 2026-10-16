@@ -428,6 +428,36 @@ def test_api_monitor_always_has_an_audit_writer(client):
         assert ingester.audit_writer is api._monitor_audit_writer
 
 
+# -- every scoring path applies the same site check ------------------------------
+
+@pytest.mark.parametrize("path, body", [
+    ("/predict", {"patient_id": "synthetic-other-site", "vitals": VITALS}),
+    ("/predict/timeseries", {"patient_id": "synthetic-other-site", "observations": [
+        {"timestamp": "2026-01-01T00:00:00Z", **VITALS}]}),
+    ("/predict/batch", {"patients": [{"patient_id": "synthetic-other-site", "vitals": VITALS}]}),
+    ("/copilot", {"patient_id": "synthetic-other-site", "vitals": VITALS}),
+])
+def test_foreign_patients_are_refused_before_scoring_or_recording(client, monkeypatch, path, body):
+    """Sibling-gate parity: the copilot records results too, so it must check the site."""
+    from fastapi import HTTPException
+
+    import sepsis_vitals.api as api
+
+    monkeypatch.setattr("sepsis_vitals.routes.copilot._copilot_enabled", True)
+    checked = []
+
+    async def foreign(patient_id, user):
+        checked.append(patient_id)
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    monkeypatch.setattr(api, "_ensure_not_foreign_patient_async", foreign)
+    before = _count_records()
+    resp = client.post(path, json=body)
+    assert resp.status_code == 404, resp.text
+    assert checked == ["synthetic-other-site"]
+    assert _count_records() == before
+
+
 # -- request log ------------------------------------------------------------------
 
 def test_request_log_has_route_and_outcome_but_no_identifiers(client, caplog):

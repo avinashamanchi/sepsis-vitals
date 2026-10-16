@@ -91,14 +91,16 @@ async def clinical_copilot(body: CopilotRequest, request: Request, user: Dict = 
     scores = compute_scores(vitals_dict)
     scores_dict = scores.as_dict()
 
-    # Model output if a model is loaded: scored and recorded like /predict
-    # (fails closed with 503 if it cannot be recorded).
+    # Model output if a model is loaded: scored and recorded like /predict,
+    # with the same site check (fails closed with 503 if it cannot be recorded).
     ml_risk = None
+    patient_id = sanitise_string(body.patient_id)
+    await _core()._ensure_not_foreign_patient_async(patient_id, user)
     predictor = await asyncio.to_thread(_core()._get_predictor)
     if predictor:
         ml_risk = await _core()._score_and_record(
             predictor=predictor, request=request, user=user,
-            patient_id=sanitise_string(body.patient_id), vitals=vitals_dict,
+            patient_id=patient_id, vitals=vitals_dict,
             age_years=body.age_years,
             comorbidities=body.comorbidities.model_dump() if body.comorbidities else None,
             history=[], source="copilot",
