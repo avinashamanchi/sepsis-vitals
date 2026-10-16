@@ -30,8 +30,14 @@ Until these items are resolved:
 
 | Where | Value | Origin | Replaced by |
 |---|---|---|---|
-| `ml/predictor.py`: model level cut-offs | "moderate" at the 95%-specificity threshold, "high" at 99%, "critical" at 99% + 0.15 | Chosen on synthetic validation data by the trainer, plus an arbitrary offset | P3 operating point, on representative data |
-| `ml/predictor.py`: alert | rule alert, or model level high/critical, or model output > 0.6 | Engineering default | P3 alerting criteria |
+| `ml/decision_policy.py`: model level cut-offs, policy `placeholder-bands-v1` (the committed artifact) | moderate ≥ 0.25, high ≥ 0.50, critical ≥ 0.75 | Engineering default | P3 operating point, on representative data |
+| `ml/decision_policy.py`: policy `artifact-operating-points-v1` (artifacts with `dual_thresholds`) | "moderate" at the 95%-specificity threshold, "high" at 99%, "critical" at 99% + 0.15 | Chosen on synthetic validation data by the trainer, plus an arbitrary offset | P3 |
+| `ml/decision_policy.py`: alert | rule alert, or combined level high/critical, or model output > 0.6 | Engineering default. Every result records the policy id and its SHA-256 | P3 alerting criteria |
+| `ml/monitor.py`: deterioration rule (`deterioration-placeholder-v1`) | rise ≥ 0.15 within 2 h with current output ≥ 0.50; recovery on a fall ≥ 0.15; 5-minute debounce | Engineering default; recorded with every monitor result | P3; alert routing (pilot requirement R5) |
+| Behaviour when the audit store is unavailable | The result is withheld (503 / "No risk calculated") | Engineering default (fail closed) | Clinical governance decision (pilot requirement R7) |
+| Per-patient attribution | Reference value is the training median | Method choice | Human-factors review (G7) |
+| `frontend/src/pages/Monitor.tsx` | Telemetry "stale" after 30 minutes; vital highlighting ranges | Display defaults | Clinical lead |
+| `schemas.TimeseriesPredictRequest` | 5-minute clock skew, at most 48 observations | Engineering limits, not clinical ones | — |
 | Combined `risk_level` | higher of the rule-based level and the model level | Safety convention so the model cannot lower a rule flag; it is ordinal, not a probability (documented in `PredictionResponse`) | Clinician review of whether and how the two signals should combine |
 | `scores.py`: rule-based levels | NEWS2-style banding, qSOFA, partial SIRS, shock index as implemented | Published score definitions, with the gaps listed in C7 | C7 decisions |
 | `schemas.VitalsInput` and FHIR ingestion | Plausibility bounds (for example HR 0-350, SBP 30-300) | Input validation against impossible values | Not a clinical threshold; review with the data-quality plan |

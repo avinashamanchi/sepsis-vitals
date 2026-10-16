@@ -1,11 +1,10 @@
 name: Deploy to GitHub Pages
 
-# Builds the public synthetic demo from source on every push to main that
-# touches the frontend. The build output is not committed to the repository.
+# Builds the public synthetic demo from source. Manual only: a person starts
+# each publication (Actions > "Deploy to GitHub Pages" > Run workflow), so a
+# merge to main never publishes by itself. The build output is not committed
+# to the repository.
 on:
-  push:
-    branches: [main]
-    paths: [frontend/**, scripts/check_published_site.sh, .github/workflows/pages.yml]
   workflow_dispatch:
 
 permissions:
