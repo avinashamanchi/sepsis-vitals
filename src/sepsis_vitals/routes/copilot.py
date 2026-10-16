@@ -19,6 +19,7 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Request,
 )
 
 from sepsis_vitals.dependencies import _copilot_limiter, check_rate_limit, verify_auth
@@ -65,7 +66,7 @@ def _deidentify_vitals(vitals: dict) -> dict:
 
 
 @router.post("/copilot", response_model=CopilotResponse, dependencies=[Depends(check_rate_limit)])
-async def clinical_copilot(body: CopilotRequest, user: Dict = Depends(verify_auth)):
+async def clinical_copilot(body: CopilotRequest, request: Request, user: Dict = Depends(verify_auth)):
     """Research-only observation summary.
 
     Disabled by default. Enabling it requires an explicit feature flag; enabling
@@ -90,19 +91,18 @@ async def clinical_copilot(body: CopilotRequest, user: Dict = Depends(verify_aut
     scores = compute_scores(vitals_dict)
     scores_dict = scores.as_dict()
 
-    # Get ML prediction if model loaded
+    # Model output if a model is loaded: scored and recorded like /predict
+    # (fails closed with 503 if it cannot be recorded).
     ml_risk = None
     predictor = await asyncio.to_thread(_core()._get_predictor)
     if predictor:
-        comorbidities = body.comorbidities.model_dump() if body.comorbidities else None
-        pred = await asyncio.to_thread(
-            predictor.predict,
-            vitals=vitals_dict,
-            patient_id=body.patient_id,
+        ml_risk = await _core()._score_and_record(
+            predictor=predictor, request=request, user=user,
+            patient_id=sanitise_string(body.patient_id), vitals=vitals_dict,
             age_years=body.age_years,
-            comorbidities=comorbidities,
+            comorbidities=body.comorbidities.model_dump() if body.comorbidities else None,
+            history=[], source="copilot",
         )
-        ml_risk = pred.to_dict()
 
     # LLM copilot: ONLY available under enterprise flag with BAA
     if _enterprise_llm_enabled:

@@ -31,7 +31,9 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    event,
 )
+from sqlalchemy.schema import DDL
 from sqlalchemy.dialects.postgresql import INET, JSONB, UUID as PG_UUID
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -526,6 +528,13 @@ class PredictionRecord(Base):
     created_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), server_default="now()" if not _is_sqlite else None
     )
+    # Traceability (migration 006). NULL on rows written before it: those
+    # rows are "unsealed" and verify_record() reports them as such.
+    request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    threshold_policy: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    input_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    record_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     __table_args__ = (
         Index("idx_predictions_patient_time", "patient_id", created_at.desc()),
@@ -537,6 +546,58 @@ class PredictionRecord(Base):
             f"<PredictionRecord id={self.id!r} patient={self.patient_id!r} "
             f"risk={self.risk_level!r} prob={self.risk_probability:.2f}>"
         )
+
+
+class ImmutableRecordError(RuntimeError):
+    """An attempt to change or remove an append-only audit record."""
+
+
+# prediction_records is append-only. The database refuses UPDATE, DELETE and
+# TRUNCATE (triggers below, and migration 006 for Alembic-managed
+# PostgreSQL); the ORM guards fail earlier with a clearer error. A retention
+# policy, once approved, needs a separate privileged procedure.
+APPEND_ONLY_MESSAGE = "prediction_records is append-only"
+
+PG_APPEND_ONLY_DDL = (
+    "CREATE OR REPLACE FUNCTION prediction_records_append_only() RETURNS trigger AS $$ "
+    "BEGIN RAISE EXCEPTION 'prediction_records is append-only (% refused)', TG_OP; END; "
+    "$$ LANGUAGE plpgsql",
+    "CREATE TRIGGER prediction_records_no_change BEFORE UPDATE OR DELETE ON prediction_records "
+    "FOR EACH ROW EXECUTE FUNCTION prediction_records_append_only()",
+    "CREATE TRIGGER prediction_records_no_truncate BEFORE TRUNCATE ON prediction_records "
+    "FOR EACH STATEMENT EXECUTE FUNCTION prediction_records_append_only()",
+)
+SQLITE_APPEND_ONLY_DDL = (
+    "CREATE TRIGGER prediction_records_no_update BEFORE UPDATE ON prediction_records "
+    f"BEGIN SELECT RAISE(ABORT, '{APPEND_ONLY_MESSAGE}'); END",
+    "CREATE TRIGGER prediction_records_no_delete BEFORE DELETE ON prediction_records "
+    f"BEGIN SELECT RAISE(ABORT, '{APPEND_ONLY_MESSAGE}'); END",
+)
+
+for _statement in PG_APPEND_ONLY_DDL:
+    event.listen(PredictionRecord.__table__, "after_create",
+                 DDL(_statement).execute_if(dialect="postgresql"))
+for _statement in SQLITE_APPEND_ONLY_DDL:
+    event.listen(PredictionRecord.__table__, "after_create",
+                 DDL(_statement).execute_if(dialect="sqlite"))
+
+
+@event.listens_for(PredictionRecord, "before_update")
+def _refuse_record_update(mapper: Any, connection: Any, target: Any) -> None:
+    raise ImmutableRecordError(APPEND_ONLY_MESSAGE)
+
+
+@event.listens_for(PredictionRecord, "before_delete")
+def _refuse_record_delete(mapper: Any, connection: Any, target: Any) -> None:
+    raise ImmutableRecordError(APPEND_ONLY_MESSAGE)
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _refuse_bulk_record_change(state: Any) -> None:
+    if (state.is_update or state.is_delete) and any(
+        m.class_ is PredictionRecord for m in state.all_mappers
+    ):
+        raise ImmutableRecordError(APPEND_ONLY_MESSAGE)
 
 
 # ---------------------------------------------------------------------------

@@ -166,6 +166,27 @@ def api_checks(tokens: Dict[str, Dict[str, str]]) -> None:
     check(code == 200 and pred.get("clinical_use") == "not-permitted"
           and pred.get("rule_risk_level") and pred.get("model_risk_level"),
           "prediction carries rule and model levels and clinical_use=not-permitted")
+    record_id = pred.get("audit_record_id", "") if isinstance(pred, dict) else ""
+    sealed = api_python(
+        "from sepsis_vitals.audit_records import verify_record\n"
+        "from sepsis_vitals.db import PredictionRecord, SessionLocal\n"
+        f"db = SessionLocal(); r = db.get(PredictionRecord, {record_id!r})\n"
+        "print(r is not None and r.source == 'api' and verify_record(r) is True); db.close()"
+    ) if record_id else "False"
+    check(sealed == "True", "prediction was recorded and sealed before it was returned")
+    refused = api_python(
+        "from sqlalchemy import text\n"
+        "from sepsis_vitals.db import SessionLocal\n"
+        "db = SessionLocal()\n"
+        "for sql in ('UPDATE prediction_records SET risk_level = risk_level', 'DELETE FROM prediction_records'):\n"
+        "    try:\n"
+        "        db.execute(text(sql)); db.commit(); print('allowed')\n"
+        "    except Exception as exc:\n"
+        "        db.rollback(); print('refused' if 'append-only' in str(exc) else 'error')\n"
+        "db.close()"
+    )
+    check(refused.split() == ["refused", "refused"],
+          f"the database refuses UPDATE and DELETE on prediction records ({refused.split()})")
     for method in ("POST", "PUT", "PATCH"):
         code = call(method, "/model/status", {"clinical_use": "permitted"}, a)[0]
         check(code in (404, 405), f"{method} /model/status cannot change clinical use (HTTP {code})")
@@ -275,6 +296,9 @@ def browser_checks() -> None:
         page.get_by_role("button", name="Run Prediction").click()
         expect(page.get_by_test_id("clinical-use")).to_have_text("Clinical use: not permitted")
         expect(page.get_by_label("Risk level sources")).to_contain_text("Rule-based scores")
+        expect(page.get_by_test_id("decision-support")).to_contain_text("not a diagnosis")
+        expect(page.get_by_test_id("uncertainty")).to_contain_text("No validated uncertainty")
+        expect(page.get_by_test_id("traceability")).to_contain_text("placeholder-bands-v1")
         check(True, "predict page separates rule and model levels and states clinical use is not permitted")
 
         page_b = new_page()

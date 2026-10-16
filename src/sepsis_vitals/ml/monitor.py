@@ -12,12 +12,13 @@ Three main components:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from sepsis_vitals.security import log_ref  # noqa: E402
 
@@ -73,9 +74,10 @@ def _prev_alert_state(current: str) -> str:
 class DeteriorationTracker:
     """Tracks deterioration over a 2-hour rolling window.
 
-    Clinically meaningful deterioration requires:
-    1. Risk increase >= 0.15 sustained over the window
-    2. Current risk above the risk floor (on-demand threshold)
+    A deterioration alert requires (engineering placeholders, not clinically
+    derived or approved; recorded with every monitor result via policy()):
+    1. Risk increase >= min_delta over the window
+    2. Current risk at or above risk_floor
 
     Single-reading spikes are noted but NOT escalated. The alert state
     machine progresses one level at a time: normal → elevated → escalated
@@ -217,6 +219,36 @@ class DeteriorationTracker:
         self._windows.pop(patient_id, None)
         self._alert_states.pop(patient_id, None)
 
+    def policy(self) -> Dict[str, Any]:
+        """Parameters of the deterioration rule (engineering placeholders)."""
+        return {
+            "id": "deterioration-placeholder-v1",
+            "status": "engineering-placeholder: not clinically derived or approved",
+            "window_seconds": self.window_seconds,
+            "min_delta": self.min_delta,
+            "risk_floor": self.risk_floor,
+            "recovery_delta": self.recovery_delta,
+        }
+
+    def snapshot(self, patient_id: str) -> tuple:
+        """State for one patient, so a withheld result can be undone."""
+        window = self._windows.get(patient_id)
+        return (
+            None if window is None else list(window),
+            self._alert_states.get(patient_id),
+        )
+
+    def restore(self, patient_id: str, snapshot: tuple) -> None:
+        window, state = snapshot
+        if window is None:
+            self._windows.pop(patient_id, None)
+        else:
+            self._windows[patient_id] = window
+        if state is None:
+            self._alert_states.pop(patient_id, None)
+        else:
+            self._alert_states[patient_id] = state
+
 
 # ─── PatientRegistry ───────────────────────────────────────────────────
 
@@ -227,8 +259,11 @@ class MonitoredPatient:
     demographics: Dict[str, Any] = field(default_factory=dict)
     comorbidities: Dict[str, int] = field(default_factory=dict)
     vitals: Dict[str, float] = field(default_factory=dict)
-    risk_probability: float = 0.0
+    # No score until one is calculated and recorded: never a default 0.0.
+    risk_probability: Optional[float] = None
     risk_level: str = "unknown"
+    risk_status: str = "not-scored"  # not-scored | scored | unavailable
+    risk_status_reason: Optional[str] = None
     trend_direction: str = "unknown"  # improving, stable, worsening
     last_prediction_time: float = 0.0
     last_vitals_time: float = 0.0
@@ -293,6 +328,8 @@ class PatientRegistry:
             "vitals": patient.vitals,
             "risk_probability": patient.risk_probability,
             "risk_level": patient.risk_level,
+            "risk_status": patient.risk_status,
+            "risk_status_reason": patient.risk_status_reason,
             "trend_direction": patient.trend_direction,
             "last_prediction_time": patient.last_prediction_time,
             "last_vitals_time": patient.last_vitals_time,
@@ -307,6 +344,24 @@ class PatientRegistry:
         if patient:
             patient.risk_probability = risk_probability
             patient.risk_level = risk_level
+            patient.risk_status = "scored"
+            patient.risk_status_reason = None
+
+    def mark_unavailable(self, patient_id: str, reason: str) -> None:
+        """The latest attempt produced no risk: clear the previous score."""
+        patient = self._patients.get(patient_id)
+        if patient:
+            patient.risk_probability = None
+            patient.risk_level = "unknown"
+            patient.risk_status = "unavailable"
+            patient.risk_status_reason = reason
+
+    def get_registration(self, patient_id: str) -> Dict[str, Any]:
+        """Demographics and comorbidities recorded at registration."""
+        patient = self._patients.get(patient_id)
+        if patient is None:
+            return {}
+        return {"demographics": dict(patient.demographics), "comorbidities": dict(patient.comorbidities)}
 
     def update_vitals(self, patient_id: str, vitals: Dict[str, float]) -> None:
         """Update cached vitals for a monitored patient."""
@@ -360,11 +415,17 @@ class VitalsIngester:
         registry: PatientRegistry,
         tracker: DeteriorationTracker,
         ws_manager: Any,
+        audit_writer: Optional[Callable[..., str]] = None,
     ) -> None:
         self.predictor = predictor
         self.registry = registry
         self.tracker = tracker
         self.ws_manager = ws_manager
+        # Writes the audit record for each result before it is broadcast;
+        # raises AuditWriteError on failure. The API always supplies one
+        # (sepsis_vitals.api._get_monitor_components); library callers that
+        # pass None own auditing themselves.
+        self.audit_writer = audit_writer
         # Recent observations per patient, so predictions use the same
         # deltas / rolling statistics / observation gap as training.
         self._recent: Dict[str, deque] = {}
@@ -408,38 +469,42 @@ class VitalsIngester:
             logger.debug("Debounced prediction for patient %s", log_ref(patient_id))
             return None
 
-        # Run prediction
+        # Use what was registered for this patient when the reading itself
+        # carries no demographics or comorbidities (FHIR/HL7 readings never do).
+        registered = self.registry.get_registration(patient_id)
+        demographics = demographics or registered.get("demographics") or None
+        comorbidities = comorbidities or registered.get("comorbidities") or None
         age_years = None
         if demographics:
             age_years = demographics.get("age") or demographics.get("age_years")
 
-        prediction = self.predictor.predict(
-            vitals=vitals,
-            patient_id=patient_id,
-            age_years=age_years,
-            comorbidities=comorbidities,
-            history=history,
-            observed_at=observed_at,
-        )
+        try:
+            prediction = await asyncio.to_thread(
+                self.predictor.predict,
+                vitals=vitals,
+                patient_id=patient_id,
+                age_years=age_years,
+                comorbidities=comorbidities,
+                history=history,
+                observed_at=observed_at,
+                track=False,
+            )
+        except Exception as exc:
+            logger.error("Monitor inference failed (%s); no risk calculated", type(exc).__name__)
+            await self._no_risk(patient_id, "model_error")
+            return None
 
-        # Record prediction time
-        self.registry.record_prediction_time(patient_id, now)
+        result = prediction.to_dict()
 
-        # Update registry risk
-        self.registry.update_risk(
-            patient_id, prediction.risk_probability, prediction.risk_level
-        )
-
-        # Feed to deterioration tracker
+        # Alert decision: the deterioration tracker's state machine. It is
+        # evaluated before the audit write so the record holds the decision;
+        # if the write fails the tracker is restored.
+        snapshot = self.tracker.snapshot(patient_id)
         self.tracker.add_prediction(
             patient_id, now, prediction.risk_probability, prediction.risk_level
         )
         deterioration = self.tracker.evaluate(patient_id)
 
-        # Build result
-        result = prediction.to_dict()
-
-        # Broadcast via WebSocket
         message = {
             "type": "patient_update",
             "patient_id": patient_id,
@@ -466,9 +531,52 @@ class VitalsIngester:
         elif prediction.risk_level in ("high", "critical"):
             message["type"] = "sepsis_alert"
 
+        result["monitor_decision"] = {
+            "message_type": message["type"],
+            "alert_type": deterioration["alert_type"],
+            "alert_state": deterioration.get("alert_state"),
+            "risk_delta": deterioration["risk_delta"],
+            "window_size": deterioration["window_size"],
+            "policy": self.tracker.policy(),
+        }
+
+        # Audit record before anything leaves: an alert or score that cannot
+        # be recorded is withheld and the patient shows "no risk calculated".
+        if self.audit_writer is not None:
+            from sepsis_vitals.audit_records import AuditWriteError, input_payload
+            payload = input_payload(vitals, history, age_years, comorbidities, result.get("observed_at"))
+            try:
+                result["audit_record_id"] = await asyncio.to_thread(
+                    self.audit_writer, patient_id=patient_id, result=result, payload=payload,
+                )
+            except AuditWriteError:
+                self.tracker.restore(patient_id, snapshot)
+                await self._no_risk(patient_id, "audit_unavailable")
+                return None
+            message["audit_record_id"] = result["audit_record_id"]
+
+        track = getattr(self.predictor, "track", None)
+        if callable(track):
+            track(prediction)
+        self.registry.record_prediction_time(patient_id, now)
+        self.registry.update_risk(
+            patient_id, prediction.risk_probability, prediction.risk_level
+        )
+
         await self.ws_manager.broadcast(message)
 
         return result
+
+    async def _no_risk(self, patient_id: str, reason: str) -> None:
+        """Show "no risk calculated" instead of the last (now stale) score."""
+        self.registry.mark_unavailable(patient_id, reason)
+        await self.ws_manager.broadcast({
+            "type": "risk_unavailable",
+            "patient_id": patient_id,
+            "reason": reason,
+            "message": "No risk calculated. This is not a low-risk result.",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
 
     async def ingest_batch(
         self,

@@ -17,7 +17,10 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
+import uuid
+from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -73,6 +76,7 @@ from sepsis_vitals.schemas import (  # noqa: F401
     ScoreResponse,
     SimulatorReplayRequest,
     SimulatorWardRequest,
+    TimeseriesPredictRequest,
     VitalsInput,
     _count_measurements,
 )
@@ -208,6 +212,22 @@ _monitor_tracker = None
 _monitor_ingester = None
 
 
+def _monitor_audit_writer(*, patient_id: str, result: Dict[str, Any], payload: Dict[str, Any]) -> str:
+    """Audit record for a continuous-monitor result (raises AuditWriteError)."""
+    from sepsis_vitals.audit_records import AuditWriteError, record_prediction
+
+    version = (result.get("versions") or {}).get("model_version")
+    try:
+        record_id = record_prediction(patient_id=patient_id, user_id=None, result=result,
+                                      payload=payload, source="monitor",
+                                      request_id=f"monitor-{uuid.uuid4().hex}")
+    except AuditWriteError as exc:
+        _note_inference(None, "audit_unavailable", error_class=str(exc), model_version=version)
+        raise
+    _note_inference(None, "scored", model_version=version)
+    return record_id
+
+
 def _get_monitor_components():
     """Lazy-initialize the monitoring components."""
     global _monitor_registry, _monitor_tracker, _monitor_ingester
@@ -229,6 +249,7 @@ def _get_monitor_components():
                 registry=_monitor_registry,
                 tracker=_monitor_tracker,
                 ws_manager=ws_manager,
+                audit_writer=_monitor_audit_writer,
             )
 
     return _monitor_registry, _monitor_tracker, _monitor_ingester
@@ -278,53 +299,126 @@ def _track_prediction(duration_ms: float, alert: bool):
     _metrics["avg_prediction_ms"] = sum(times) / len(times)
 
 
-def _persist_prediction(
-    patient_id: str,
-    user_id: Optional[str],
-    result: Dict[str, Any],
-    input_vitals: Dict[str, Any],
-    ip_address: str,
-    model_version: Optional[str] = None,
-) -> None:
-    """Write prediction to Postgres as immutable audit record.
+# Outcome of recent inference attempts, for /model/status. Holds no patient data.
+_recent_inferences: "deque[Dict[str, Any]]" = deque(maxlen=200)
 
-    Runs synchronously in a background-safe manner.  Failures are logged
-    but never block the API response — the prediction is the priority.
+NO_RISK_MODEL_ERROR = (
+    "No risk calculated: the model could not score this request. "
+    "This is not a low-risk result."
+)
+NO_RISK_AUDIT_UNAVAILABLE = (
+    "No risk calculated: the result could not be written to the audit trail, so it "
+    "was withheld. This is not a low-risk result."
+)
+
+
+def _request_id(request: Request) -> str:
+    rid = getattr(request.state, "request_id", None)
+    if not rid:
+        rid = uuid.uuid4().hex
+        request.state.request_id = rid
+    return rid
+
+
+def _note_inference(request: Optional[Request], outcome: str, **fields: Any) -> None:
+    """Record an inference outcome for the request log and /model/status.
+
+    ``fields`` must never contain patient data: model version, latency and
+    error class only.
     """
+    entry = {"outcome": outcome, "at": time.time(), **fields}
+    _recent_inferences.append(entry)
+    if request is not None:
+        notes = getattr(request.state, "inference", None) or []
+        notes.append(entry)
+        request.state.inference = notes
+
+
+async def _score_and_record(
+    *,
+    predictor: Any,
+    request: Request,
+    user: Dict[str, Any],
+    patient_id: str,
+    vitals: Dict[str, Any],
+    age_years: Optional[int],
+    comorbidities: Optional[Dict[str, Any]],
+    history: list,
+    source: str,
+    observed_at: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Score one observation and write its audit record; fail closed.
+
+    The result is returned only after its audit record is committed. A
+    model failure or an audit failure raises 503 "no risk calculated":
+    never a default, stale or partial score.
+    """
+    from sepsis_vitals.audit_records import AuditWriteError, input_payload, record_prediction
+
+    request_id = _request_id(request)
+    start = time.monotonic()
     try:
-        from sepsis_vitals.db import SessionLocal, PredictionRecord
-        db = SessionLocal()
-        try:
-            ci = result.get("confidence_interval", {})
-            record = PredictionRecord(
-                patient_id=patient_id,
-                user_id=user_id if user_id != "anonymous" else None,
-                risk_probability=result["risk_probability"],
-                risk_level=result["risk_level"],
-                alert_fired=result.get("alert", False),
-                input_vitals=json.dumps(input_vitals),
-                output_scores=json.dumps({
-                    "clinical_scores": result.get("clinical_scores", {}),
-                    "rule_risk_level": result.get("rule_risk_level"),
-                    "model_risk_level": result.get("model_risk_level"),
-                    "provenance": result.get("provenance", {}),
-                }),
-                top_risk_factors=json.dumps(result.get("top_risk_factors", [])),
-                confidence_lower=ci.get("lower"),
-                confidence_upper=ci.get("upper"),
-                model_version=model_version,
-                recommendation=result.get("recommendation"),
-                ip_address=ip_address,
-            )
-            db.add(record)
-            db.commit()
-        except Exception:
-            db.rollback()
-            logger.warning("Failed to persist prediction record", exc_info=True)
-        finally:
-            db.close()
-    except ImportError:
-        pass  # DB module not available (e.g., minimal install)
+        prediction = await asyncio.to_thread(
+            predictor.predict,
+            vitals=vitals,
+            patient_id=patient_id,
+            age_years=age_years,
+            comorbidities=comorbidities,
+            history=history,
+            observed_at=observed_at,
+            track=False,
+        )
+    except Exception as exc:
+        _note_inference(request, "model_error", error_class=type(exc).__name__)
+        logger.error("Inference failed (%s); no risk calculated [request %s]",
+                     type(exc).__name__, request_id)
+        raise HTTPException(status_code=503, detail=NO_RISK_MODEL_ERROR) from exc
+    elapsed_ms = (time.monotonic() - start) * 1000
+
+    result = prediction.to_dict()
+    result["validation_status"] = result["provenance"].get("validation_status") or "unvalidated"
+    payload = input_payload(vitals, history, age_years, comorbidities, result["observed_at"])
+    try:
+        record_id = await asyncio.to_thread(
+            record_prediction,
+            patient_id=patient_id,
+            user_id=user.get("id"),
+            result=result,
+            payload=payload,
+            source=source,
+            request_id=request_id,
+            ip_address=_client_ip(request),
+        )
+    except AuditWriteError as exc:
+        _note_inference(request, "audit_unavailable", error_class=str(exc),
+                        model_version=result["versions"]["model_version"])
+        raise HTTPException(status_code=503, detail=NO_RISK_AUDIT_UNAVAILABLE) from exc
+
+    predictor.track(prediction)
+    result["request_id"] = request_id
+    result["audit_record_id"] = record_id
+    _track_prediction(elapsed_ms, result.get("alert", False))
+    _note_inference(request, "scored", latency_ms=round(elapsed_ms, 1),
+                    model_version=result["versions"]["model_version"])
+
+    # Drift monitoring: rolling PSI buffer of the current observation
+    from sepsis_vitals.monitoring.drift_monitor import get_drift_monitor
+    get_drift_monitor().record_prediction(vitals)
+    return result
+
+
+async def _broadcast_alert(result: Dict[str, Any]) -> None:
+    """Send a recorded alert decision to WebSocket clients."""
+    if result.get("alert"):
+        await ws_manager.broadcast({
+            "type": "sepsis_alert",
+            "patient_id": result["patient_id"],
+            "risk_level": result["risk_level"],
+            "risk_probability": result["risk_probability"],
+            "recommendation": result["recommendation"],
+            "timestamp": result["timestamp"],
+            "audit_record_id": result["audit_record_id"],
+        })
 
 
 # ---------------------------------------------------------------------------
@@ -555,6 +649,47 @@ async def hipaa_audit_middleware(request: Request, call_next):
 
 
 # ---------------------------------------------------------------------------
+# Request IDs and structured request log (outermost middleware)
+# ---------------------------------------------------------------------------
+# One JSON line per request: request id, method, *route template* (never the
+# raw path, which can carry patient identifiers), status, latency, and for
+# inference requests the model version, outcome and error class. No bodies,
+# query strings, patient identifiers or user identifiers.
+
+_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{8,64}$")
+request_logger = logging.getLogger("sepsis_vitals.requests")
+
+
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+    incoming = request.headers.get("X-Request-ID", "")
+    request.state.request_id = incoming if _REQUEST_ID_PATTERN.match(incoming) else uuid.uuid4().hex
+    start = time.monotonic()
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+    finally:
+        route = request.scope.get("route")
+        entry: Dict[str, Any] = {
+            "request_id": request.state.request_id,
+            "method": request.method,
+            "route": getattr(route, "path", "unmatched"),
+            "status": status,
+            "latency_ms": round((time.monotonic() - start) * 1000, 1),
+        }
+        notes = getattr(request.state, "inference", None)
+        if notes:
+            entry["inference"] = [
+                {k: v for k, v in n.items() if k in ("outcome", "model_version", "latency_ms", "error_class")}
+                for n in notes
+            ]
+        request_logger.info("REQUEST %s", json.dumps(entry, sort_keys=True))
+    response.headers["X-Request-ID"] = request.state.request_id
+    return response
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -609,69 +744,75 @@ async def score_vitals(vitals: VitalsInput, user: Dict = Depends(verify_auth)):
 
 @app.post("/predict", response_model=PredictionResponse, dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
 async def predict_sepsis(body: PredictRequest, request: Request, user: Dict = Depends(verify_auth)):
-    """ML-powered sepsis risk prediction with SHAP explanations."""
+    """Score one observation. Decision support for research evaluation only.
+
+    History comes from the patient's recorded vitals (registered patients
+    only). Returns only after the audit record is written; otherwise 503
+    "no risk calculated".
+    """
     predictor = await asyncio.to_thread(_get_predictor)
     if predictor is None:
+        _note_inference(request, "model_unavailable")
         raise _model_unavailable()
 
     vitals_dict = {k: v for k, v in body.vitals.model_dump().items() if v is not None}
     if _count_measurements(vitals_dict) < 3:
         raise HTTPException(status_code=422, detail="Provide at least 3 vital signs for ML prediction.")
 
+    patient_id = sanitise_string(body.patient_id)
     comorbidities = body.comorbidities.model_dump() if body.comorbidities else None
-    await _ensure_not_foreign_patient_async(sanitise_string(body.patient_id), user)
-    history = await _recorded_history_async(sanitise_string(body.patient_id))
+    await _ensure_not_foreign_patient_async(patient_id, user)
+    history = await _recorded_history_async(patient_id)
 
-    start = time.monotonic()
-    prediction = await asyncio.to_thread(
-        predictor.predict,
-        vitals=vitals_dict,
-        patient_id=sanitise_string(body.patient_id),
-        age_years=body.age_years,
-        comorbidities=comorbidities,
-        history=history,
+    result = await _score_and_record(
+        predictor=predictor, request=request, user=user, patient_id=patient_id,
+        vitals=vitals_dict, age_years=body.age_years, comorbidities=comorbidities,
+        history=history, source="api",
     )
-    elapsed_ms = (time.monotonic() - start) * 1000
+    await _broadcast_alert(result)
+    return result
 
-    result = prediction.to_dict()
-    result["validation_status"] = result["provenance"].get("validation_status") or "unvalidated"
-    _track_prediction(elapsed_ms, result.get("alert", False))
 
-    # ── Drift monitoring — record vitals into rolling PSI buffer ──────
-    from sepsis_vitals.monitoring.drift_monitor import get_drift_monitor
-    get_drift_monitor().record_prediction(vitals_dict)
+@app.post("/predict/timeseries", response_model=PredictionResponse, dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
+async def predict_timeseries(body: TimeseriesPredictRequest, request: Request, user: Dict = Depends(verify_auth)):
+    """Score the last observation of a validated time series.
 
-    # ── Permanent audit trail (Postgres) ─────────────────────────────
-    # Redis handles ephemeral rolling windows; Postgres is the immutable
-    # ledger.  Every prediction is recorded so legal/risk-management can
-    # reconstruct the decision history for any patient at any time.
-    await asyncio.to_thread(
-        _persist_prediction,
-        patient_id=body.patient_id,
-        user_id=user.get("id"),
-        result=result,
-        input_vitals=vitals_dict,
-        ip_address=_client_ip(request),
-        model_version=predictor.metadata.get("version") if predictor.metadata else None,
+    The payload is the complete input: the earlier observations are the
+    history and no recorded vitals are added. Validation (units, order,
+    duplicates, timestamps, patient consistency, bounds) happens in
+    :class:`TimeseriesPredictRequest`; failures are 422 with the reason.
+    """
+    predictor = await asyncio.to_thread(_get_predictor)
+    if predictor is None:
+        _note_inference(request, "model_unavailable")
+        raise _model_unavailable()
+
+    patient_id = sanitise_string(body.patient_id)
+    await _ensure_not_foreign_patient_async(patient_id, user)
+    observations = [
+        {k: v for k, v in obs.model_dump().items() if v is not None and k != "patient_id"}
+        for obs in body.observations
+    ]
+    current = observations[-1]
+    observed_at = current.pop("timestamp")
+    comorbidities = body.comorbidities.model_dump() if body.comorbidities else None
+
+    result = await _score_and_record(
+        predictor=predictor, request=request, user=user, patient_id=patient_id,
+        vitals=current, age_years=body.age_years, comorbidities=comorbidities,
+        history=observations[:-1], observed_at=observed_at, source="api-timeseries",
     )
-
-    # Broadcast alert via WebSocket if high/critical
-    if result.get("alert"):
-        await ws_manager.broadcast({
-            "type": "sepsis_alert",
-            "patient_id": body.patient_id,
-            "risk_level": result["risk_level"],
-            "risk_probability": result["risk_probability"],
-            "recommendation": result["recommendation"],
-            "timestamp": result["timestamp"],
-        })
-
+    await _broadcast_alert(result)
     return result
 
 
 @app.post("/predict/batch", dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
 async def predict_batch(body: BatchPredictRequest, request: Request, user: Dict = Depends(verify_auth)):
-    """Batch prediction for multiple patients (max 10)."""
+    """Score up to 10 patients. Each result is returned only once recorded.
+
+    A patient that cannot be scored or recorded appears in ``errors`` with
+    "no risk calculated", never with a default score.
+    """
     # The check_ml_rate_limit dependency already consumed 1 token.
     # Consume additional tokens proportional to batch size so that a batch
     # of N patients costs N tokens, preventing rate-limit bypass via batching.
@@ -686,46 +827,36 @@ async def predict_batch(body: BatchPredictRequest, request: Request, user: Dict 
 
     predictor = await asyncio.to_thread(_get_predictor)
     if predictor is None:
+        _note_inference(request, "model_unavailable")
         raise _model_unavailable()
-
-    results = []
-    errors = []
-    model_version = predictor.metadata.get("version") if predictor.metadata else None
 
     for patient in body.patients:
         await _ensure_not_foreign_patient_async(sanitise_string(patient.patient_id), user)
 
+    results = []
+    errors = []
     for i, patient in enumerate(body.patients):
+        patient_id = sanitise_string(patient.patient_id)
+        vitals_dict = {k: v for k, v in patient.vitals.model_dump().items() if v is not None}
+        if _count_measurements(vitals_dict) < 3:
+            errors.append({"index": i, "error": "Provide at least 3 vital signs for ML prediction."})
+            continue
         try:
-            vitals_dict = {k: v for k, v in patient.vitals.model_dump().items() if v is not None}
-            comorbidities = patient.comorbidities.model_dump() if patient.comorbidities else None
-            prediction = await asyncio.to_thread(
-                predictor.predict,
-                vitals=vitals_dict,
-                patient_id=sanitise_string(patient.patient_id),
-                age_years=patient.age_years,
-                comorbidities=comorbidities,
-                history=await _recorded_history_async(sanitise_string(patient.patient_id)),
+            result = await _score_and_record(
+                predictor=predictor, request=request, user=user, patient_id=patient_id,
+                vitals=vitals_dict, age_years=patient.age_years,
+                comorbidities=patient.comorbidities.model_dump() if patient.comorbidities else None,
+                history=await _recorded_history_async(patient_id), source="api-batch",
             )
-            result = prediction.to_dict()
-            result["validation_status"] = result["provenance"].get("validation_status") or "unvalidated"
-            results.append(result)
+        except HTTPException as exc:
+            # Logged by _score_and_record (error class only, no identifiers).
+            errors.append({"index": i, "error": exc.detail})
+            continue
+        results.append(result)
+        await _broadcast_alert(result)
 
-            # Persist each prediction for audit trail (HIPAA compliance)
-            await asyncio.to_thread(
-                _persist_prediction,
-                patient_id=patient.patient_id,
-                user_id=user.get("id"),
-                result=result,
-                input_vitals=vitals_dict,
-                ip_address=ip,
-                model_version=model_version,
-            )
-        except Exception as exc:
-            logger.warning("Batch predict failed for patient %d (%s): %s", i, patient.patient_id, exc)
-            errors.append({"index": i, "patient_id": patient.patient_id, "error": str(exc)})
-
-    return {"predictions": results, "count": len(results), "errors": errors}
+    return {"predictions": results, "count": len(results), "errors": errors,
+            "request_id": _request_id(request)}
 
 
 async def _ensure_not_foreign_patient_async(patient_id: str, user: Dict[str, Any]) -> None:

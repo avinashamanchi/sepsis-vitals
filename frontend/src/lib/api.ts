@@ -145,9 +145,10 @@ function simulateDemoPrediction(body: {
     timestamp: new Date().toISOString(),
     risk_probability: probability,
     risk_level: riskLevel,
-    confidence_interval: {
-      lower: Math.max(0, probability - 0.12),
-      upper: Math.min(1, probability + 0.12),
+    confidence_interval: null,
+    uncertainty: {
+      method: 'none',
+      note: 'Interface simulator: no model ran, so there is no uncertainty estimate.',
     },
     alert: probability >= 0.5,
     clinical_scores: {
@@ -160,10 +161,19 @@ function simulateDemoPrediction(body: {
     },
     top_risk_factors: active.map(([feature], index) => ({
       feature,
-      importance: Number((0.32 - index * 0.04).toFixed(2)),
+      label: feature,
+      contribution: Number((0.14 - index * 0.02).toFixed(2)),
+      direction: 'raised' as const,
     })),
+    explanation: {
+      method: 'interface simulator',
+      note: 'Fixed illustrative values; not a model attribution.',
+    },
+    data_quality: { warnings: [] },
     recommendation:
       'Synthetic UI simulation only. Record the result for workflow evaluation; do not use it to guide diagnosis or treatment.',
+    decision_support_notice:
+      'Interface simulator only: no model ran. This is not a diagnosis and must not be used to guide patient care.',
     model: { name: 'Synthetic interface simulator', version: 'demo' },
     research_only: true,
     validation_status: 'Synthetic demonstration; not a model inference',
@@ -235,7 +245,12 @@ export const api = {
   score: (vitals: Record<string, number>) =>
     request('/score', { method: 'POST', body: JSON.stringify(vitals) }),
 
-  predict: (body: { vitals: Record<string, number>; patient_id: string; age_years?: number }) =>
+  predict: (body: {
+    vitals: Record<string, number>
+    patient_id: string
+    age_years?: number
+    comorbidities?: Record<string, number>
+  }) =>
     isDemo
       ? simulateDemoPrediction(body)
       : request('/predict', { method: 'POST', body: JSON.stringify(body) }),
@@ -319,8 +334,10 @@ export const api = {
         patient_id: string
         demographics: Record<string, string | number>
         vitals: Record<string, number>
-        risk_probability: number
+        risk_probability: number | null
         risk_level: string
+        risk_status?: 'scored' | 'not-scored' | 'unavailable'
+        risk_status_reason?: string | null
         trend_direction: string
         last_prediction_time: number
         last_vitals_time: number

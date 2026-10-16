@@ -32,3 +32,9 @@ export function probabilityToRisk(p: number): RiskLevel {
   if (p >= 0.25) return 'moderate'
   return 'low'
 }
+
+const RISK_LEVELS: readonly RiskLevel[] = ['low', 'moderate', 'high', 'critical']
+
+export function isRiskLevel(value: unknown): value is RiskLevel {
+  return typeof value === 'string' && (RISK_LEVELS as readonly string[]).includes(value)
+}

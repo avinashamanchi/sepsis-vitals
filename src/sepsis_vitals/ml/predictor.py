@@ -3,8 +3,10 @@ sepsis_vitals.ml.predictor
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 Investigational sepsis prediction engine.
 
-Loads a trained model and provides real-time sepsis risk predictions
-with SHAP explanations, confidence intervals, and clinical score integration.
+Loads a verified model artifact and scores observations for research
+evaluation: model output, rule-based scores, per-patient attribution, data-
+quality warnings and the threshold policy in force. Decision support only;
+not a diagnosis.
 """
 
 from __future__ import annotations
@@ -13,13 +15,39 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import joblib
 import numpy as np
 import pandas as pd
 
+from sepsis_vitals.ml.decision_policy import model_level as model_band
+from sepsis_vitals.ml.decision_policy import threshold_policy
 from sepsis_vitals.scores import compute_scores
+
+ATTRIBUTION_METHOD = "median substitution (per patient)"
+ATTRIBUTION_NOTE = (
+    "Each value is the change in this model output when that input is replaced by "
+    "its training median. It describes the model, not the patient's physiology, "
+    "and is not causal."
+)
+
+
+def _missing(value: Any) -> bool:
+    return value is None or (isinstance(value, float) and np.isnan(value))
+
+
+def _value(value: Any) -> Any:
+    """Pipeline value: None becomes NaN so numeric columns stay numeric."""
+    return np.nan if value is None else value
+
+
+def _utc_naive(value: Any) -> pd.Timestamp:
+    """Timestamp as naive UTC; naive input is taken to be UTC already."""
+    ts = pd.Timestamp(value)
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert("UTC").tz_localize(None)
+    return ts
 
 
 @dataclass
@@ -30,8 +58,9 @@ class SepsisPrediction:
     timestamp: str
     risk_probability: float
     risk_level: str
-    confidence_lower: float
-    confidence_upper: float
+    # None unless a validated interval exists; see SepsisPredictor._uncertainty.
+    confidence_lower: Optional[float]
+    confidence_upper: Optional[float]
     alert: bool
     clinical_scores: Dict[str, Any]
     top_risk_factors: List[Dict[str, Any]]
@@ -41,17 +70,40 @@ class SepsisPrediction:
     rule_risk_level: str = "unknown"
     model_risk_level: str = "unknown"
     provenance: Dict[str, Any] = field(default_factory=dict)
+    uncertainty: Dict[str, Any] = field(default_factory=dict)
+    explanation: Dict[str, Any] = field(default_factory=dict)
+    data_quality: Dict[str, Any] = field(default_factory=dict)
+    threshold_policy: Dict[str, Any] = field(default_factory=dict)
+    observed_at: Optional[str] = None
+
+    def versions(self) -> Dict[str, Any]:
+        """Everything needed to reproduce this result, in one place."""
+        return {
+            "model_version": self.model_version,
+            "artifact_sha256": self.provenance.get("artifact_sha256"),
+            "feature_schema_sha256": self.provenance.get("feature_schema_sha256"),
+            "preprocessing_version": self.provenance.get("pipeline_version"),
+            "threshold_policy_id": self.threshold_policy.get("id"),
+            "threshold_policy_sha256": self.threshold_policy.get("sha256"),
+        }
 
     def to_dict(self) -> Dict[str, Any]:
+        from sepsis_vitals.ml.decision_policy import DECISION_SUPPORT_NOTICE
+
+        interval = None
+        if self.confidence_lower is not None and self.confidence_upper is not None:
+            interval = {
+                "lower": round(self.confidence_lower, 4),
+                "upper": round(self.confidence_upper, 4),
+            }
         return {
             "patient_id": self.patient_id,
             "timestamp": self.timestamp,
+            "observed_at": self.observed_at,
             "risk_probability": round(self.risk_probability, 4),
             "risk_level": self.risk_level,
-            "confidence_interval": {
-                "lower": round(self.confidence_lower, 4),
-                "upper": round(self.confidence_upper, 4),
-            },
+            "confidence_interval": interval,
+            "uncertainty": self.uncertainty,
             "alert": self.alert,
             "clinical_scores": self.clinical_scores,
             "top_risk_factors": self.top_risk_factors,
@@ -65,6 +117,11 @@ class SepsisPrediction:
             "rule_risk_level": self.rule_risk_level,
             "model_risk_level": self.model_risk_level,
             "provenance": self.provenance,
+            "explanation": self.explanation,
+            "data_quality": self.data_quality,
+            "threshold_policy": self.threshold_policy,
+            "versions": self.versions(),
+            "decision_support_notice": DECISION_SUPPORT_NOTICE,
         }
 
 
@@ -182,11 +239,11 @@ class SepsisPredictor:
     """Investigational sepsis prediction engine.
 
     Loads a trained model and provides predictions with:
-    - ML risk probability
-    - Clinical score integration (qSOFA, SIRS, NEWS2, Shock Index)
-    - SHAP-based risk factor explanations
-    - Confidence intervals
-    - Deterioration detection (persisted to SQLite, survives restarts)
+    - the development-model output (synthetic data; not a patient probability)
+    - clinical score integration (qSOFA, SIRS, NEWS2, Shock Index)
+    - per-patient attribution by median substitution (not causal)
+    - uncertainty only where the artifact supports it (otherwise none)
+    - deterioration tracking (persisted to SQLite, survives restarts)
     """
 
     def __init__(self, model_dir: Optional[str] = None, state_dir: Optional[str] = None):
@@ -276,18 +333,21 @@ class SepsisPredictor:
         comorbidities: Optional[Dict[str, int]] = None,
         history: Optional[List[Dict[str, Any]]] = None,
         observed_at: Optional[Any] = None,
+        track: bool = True,
     ) -> SepsisPrediction:
-        """Generate a sepsis risk prediction from vital signs.
+        """Score one observation, with its recent history, for research evaluation.
 
         Parameters
         ----------
         vitals : dict
-            Vital signs: temperature, heart_rate, resp_rate, sbp, dbp,
-            spo2, gcs, map
+            The current observation: temperature, heart_rate, resp_rate, sbp,
+            dbp, spo2, gcs, map, lactate, wbc, procalcitonin (units as in
+            :class:`sepsis_vitals.schemas.VitalsInput`).
         patient_id : str
             Patient identifier
         age_years : int, optional
-            Patient age
+            Patient age. When missing the pipeline uses 55 and the result
+            carries a data-quality warning.
         comorbidities : dict, optional
             Dict of {has_hypertension, has_diabetes, has_ckd, has_copd, has_heart_failure}: 0/1
         history : list of dict, optional
@@ -296,7 +356,12 @@ class SepsisPredictor:
             observation gap are computed from them exactly as in training;
             without history the request is scored as a first observation.
         observed_at : datetime-like, optional
-            Time of the current observation (defaults to now).
+            Time of the current observation (defaults to now). Naive
+            timestamps are taken as UTC.
+        track : bool
+            Record the result in the patient-trend store. Callers that must
+            write an audit record first pass False and call :meth:`track`
+            once the record exists.
 
         Returns
         -------
@@ -305,58 +370,44 @@ class SepsisPredictor:
         if not self._loaded:
             self.load()
 
-        # Compute clinical scores
+        # Rule-based scores on the current observation
         scores = compute_scores(vitals)
 
-        # Build the feature vector with the training pipeline (no train/serve skew)
-        feature_vector = self._build_feature_vector(
+        # The training pipeline over this observation and its recent history
+        # (no train/serve skew). The attribution variants go through the same
+        # single pass: one feature build, one imputation, one scaling.
+        rows, now, ignored = self._observation_rows(
             vitals, age_years, comorbidities, history or [], observed_at
         )
+        variants = self._attribution_variants(rows, age_years, comorbidities)
+        inputs = self._model_inputs([rows] + [v["frame"] for v in variants])
+        probabilities = self.model.predict_proba(inputs)[:, 1]
+        risk_prob = float(probabilities[0])
 
-        # Impute NaN values using training medians
-        for i, feat_name in enumerate(self.feature_names):
-            if np.isnan(feature_vector[0, i]):
-                feature_vector[0, i] = self._imputation_medians.get(feat_name, 0.0)
-
-        # Scale if needed
-        if self.scaler is not None:
-            feature_vector = self.scaler.transform(feature_vector)
-
-        # Predict
-        risk_prob = float(self.model.predict_proba(feature_vector)[:, 1][0])
-
-        # Confidence interval using ensemble variance
-        ci_lower, ci_upper = self._compute_confidence_interval(
-            feature_vector, risk_prob
-        )
-
-        # Risk level: the model may raise the rule-based level, never lower it.
+        policy = self.threshold_policy()
         rule_level = scores.risk_level
-        model_level = self._model_risk_level(risk_prob)
+        model_level = model_band(risk_prob, policy)
+        # The model may raise the rule-based level, never lower it.
         risk_level = max(rule_level, model_level, key=_RISK_ORDER.index)
 
-        # Alert determination: a rule-based alert can never be suppressed.
+        # A rule-based alert can never be suppressed.
         alert = (
             bool(scores.alert_flag)
             or risk_level in ("high", "critical")
-            or risk_prob > 0.6
+            or risk_prob > policy["alert_cutoff"]
         )
 
-        # Top risk factors
-        top_factors = self._explain_prediction(feature_vector, vitals, scores)
-
-        # Clinical recommendation
+        top_factors = self._attributions(variants, risk_prob, probabilities[1:])
         recommendation = self._generate_recommendation(risk_level, risk_prob, scores, top_factors)
-
-        timestamp = pd.Timestamp.now().isoformat()
+        timestamp = pd.Timestamp.now(tz="UTC").isoformat()
 
         prediction = SepsisPrediction(
             patient_id=patient_id,
             timestamp=timestamp,
             risk_probability=risk_prob,
             risk_level=risk_level,
-            confidence_lower=ci_lower,
-            confidence_upper=ci_upper,
+            confidence_lower=None,
+            confidence_upper=None,
             alert=alert,
             clinical_scores=scores.as_dict(),
             top_risk_factors=top_factors,
@@ -366,18 +417,30 @@ class SepsisPredictor:
             rule_risk_level=rule_level,
             model_risk_level=model_level,
             provenance=self.artifact_status.provenance() if self.artifact_status else {},
+            uncertainty=self._uncertainty(risk_prob),
+            explanation={"method": ATTRIBUTION_METHOD, "note": ATTRIBUTION_NOTE},
+            data_quality=self._data_quality(vitals, age_years, comorbidities, rows, ignored),
+            threshold_policy=policy,
+            observed_at=now.isoformat() + "Z",
         )
 
-        # Track in persistent state store (survives restarts)
+        if track:
+            self.track(prediction)
+        return prediction
+
+    def track(self, prediction: SepsisPrediction) -> None:
+        """Add a result to the persistent patient-trend store (survives restarts)."""
         if self._state_store is not None:
             self._state_store.add_prediction(
-                patient_id=patient_id,
-                timestamp=timestamp,
-                risk_probability=risk_prob,
-                risk_level=risk_level,
+                patient_id=prediction.patient_id,
+                timestamp=prediction.timestamp,
+                risk_probability=prediction.risk_probability,
+                risk_level=prediction.risk_level,
             )
 
-        return prediction
+    def threshold_policy(self) -> Dict[str, Any]:
+        """The cut-offs in force for this artifact, with id and digest."""
+        return threshold_policy(self.dual_thresholds)
 
     def get_patient_trend(self, patient_id: str) -> Optional[Dict[str, Any]]:
         """Get the monitoring trend for a patient (from persistent storage)."""
@@ -392,8 +455,71 @@ class SepsisPredictor:
     _COMORBIDITIES = (
         "has_hypertension", "has_diabetes", "has_ckd", "has_copd", "has_heart_failure",
     )
+    _VITALS = ("temperature", "heart_rate", "resp_rate", "sbp", "dbp", "spo2", "gcs", "map")
+    _LABS = ("lactate", "wbc", "procalcitonin")
+    # Used by the pipeline when the caller gives no age (reported as a warning).
+    _DEFAULT_AGE = 55
     # Rolling window 3 plus a margin; only the last three rows affect features.
     _HISTORY_ROWS = 4
+
+    def _observation_rows(
+        self,
+        vitals: Dict[str, Any],
+        age_years: Optional[int],
+        comorbidities: Optional[Dict[str, int]],
+        history: List[Dict[str, Any]],
+        observed_at: Optional[Any] = None,
+    ) -> Tuple[List[Dict[str, Any]], pd.Timestamp, int]:
+        """Pipeline rows: recent history (oldest first) plus the current observation.
+
+        Returns the rows, the time of the current observation (naive UTC) and
+        the number of history entries ignored because they had no timestamp
+        or were not strictly earlier than the current observation.
+        """
+        now = _utc_naive(observed_at) if observed_at is not None else _utc_naive(pd.Timestamp.now(tz="UTC"))
+        static: Dict[str, Any] = {
+            "age_years": age_years if age_years is not None else self._DEFAULT_AGE,
+        }
+        for name in self._COMORBIDITIES:
+            static[name] = int((comorbidities or {}).get(name, 0) or 0)
+
+        def _row(obs: Dict[str, Any], ts: pd.Timestamp) -> Dict[str, Any]:
+            row = {col: _value(obs.get(col)) for col in self._INPUT_COLUMNS}
+            return {**row, **static, "timestamp": ts}
+
+        rows = []
+        ignored = 0
+        for obs in history:
+            raw_ts = obs.get("timestamp")
+            if raw_ts is None:
+                ignored += 1  # an observation without a time cannot be ordered
+                continue
+            ts = _utc_naive(raw_ts)
+            if ts < now:  # only observations strictly before the current one
+                rows.append(_row(obs, ts))
+            else:
+                ignored += 1
+        rows = sorted(rows, key=lambda r: r["timestamp"])[-self._HISTORY_ROWS:]
+        rows.append(_row(vitals, now))
+        return rows, now, ignored
+
+    def _raw_features(self, frames: List[List[Dict[str, Any]]]) -> np.ndarray:
+        """Feature rows (before imputation) for the last observation of each frame.
+
+        Each frame is one sequence of pipeline rows; frames are scored as
+        separate patients, so they cannot affect each other's deltas or
+        rolling statistics.
+        """
+        from sepsis_vitals.ml.trainer import prepare_features
+
+        ids = [f"f{i:05d}" for i in range(len(frames))]
+        tagged = [{**row, "patient_id": pid} for pid, rows in zip(ids, frames) for row in rows]
+        frame = pd.DataFrame(tagged)
+        for col in ("on_supplemental_o2", "spo2_scale2"):
+            frame[col] = frame[col].astype(object).where(frame[col].notna(), False).astype(bool)
+        features, _ = prepare_features(frame)
+        last = features.groupby("patient_id", sort=False).tail(1).set_index("patient_id").loc[ids]
+        return last.reindex(columns=self.feature_names).to_numpy(dtype=np.float64)
 
     def _build_feature_vector(
         self,
@@ -412,122 +538,107 @@ class SepsisPredictor:
         request as a first observation, which lowered AUROC and roughly halved
         predicted risk (see reports/synthetic_pipeline_audit.md).
         """
-        from sepsis_vitals.ml.trainer import prepare_features
+        rows, _, _ = self._observation_rows(vitals, age_years, comorbidities, history, observed_at)
+        return self._raw_features([rows])
 
-        now = pd.Timestamp(observed_at) if observed_at is not None else pd.Timestamp.now()
-        if now.tzinfo is not None:
-            now = now.tz_convert("UTC").tz_localize(None)
-        static: Dict[str, Any] = {
-            "patient_id": "_",
-            "age_years": age_years if age_years is not None else 55,
-        }
-        for name in self._COMORBIDITIES:
-            static[name] = int((comorbidities or {}).get(name, 0) or 0)
-
-        def _row(obs: Dict[str, Any], ts: pd.Timestamp) -> Dict[str, Any]:
-            row = {col: obs.get(col, np.nan) for col in self._INPUT_COLUMNS}
-            return {**row, **static, "timestamp": ts}
-
-        rows = []
-        for obs in history:
-            raw_ts = obs.get("timestamp")
-            if raw_ts is None:
-                continue  # an observation without a time cannot be ordered
-            ts = pd.Timestamp(raw_ts)
-            if ts.tzinfo is not None:
-                ts = ts.tz_convert("UTC").tz_localize(None)
-            if ts < now:  # only observations strictly before the current one
-                rows.append(_row(obs, ts))
-        rows = sorted(rows, key=lambda r: r["timestamp"])[-self._HISTORY_ROWS:]
-        rows.append(_row(vitals, now))
-
-        frame = pd.DataFrame(rows)
-        for col in ("on_supplemental_o2", "spo2_scale2"):
-            frame[col] = frame[col].fillna(False).astype(bool)
-        features, _ = prepare_features(frame)
-        last = features.iloc[-1]
-        return np.array(
-            [[float(last.get(name, np.nan)) for name in self.feature_names]],
+    def _model_inputs(self, frames: List[List[Dict[str, Any]]]) -> np.ndarray:
+        """Model input matrix: training medians for missing values, then the
+        artifact's scaler (if any). Each row is preprocessed exactly once."""
+        X = self._raw_features(frames)
+        medians = np.array(
+            [self._imputation_medians.get(name, 0.0) for name in self.feature_names],
             dtype=np.float64,
         )
+        X = np.where(np.isnan(X), medians, X)
+        if self.scaler is not None:
+            X = self.scaler.transform(X)
+        return X
 
-    def _compute_confidence_interval(
-        self, feature_vector: np.ndarray, risk_prob: float
-    ) -> tuple:
-        """Compute confidence interval for the predicted risk probability.
+    def _uncertainty(self, risk_prob: float) -> Dict[str, Any]:
+        """Uncertainty that this artifact can actually support, or none.
 
-        Priority:
-        1. Conformal predictor (statistically valid coverage guarantee at
-           the alpha level used during calibration) — used when available.
-        2. Ensemble stage variance for GradientBoosting models.
-        3. ECE-based heuristic — final fallback for all other models.
+        Only a calibrated split-conformal predictor gives a statement with a
+        stated coverage, and what it gives is a set of outcome labels, not an
+        interval for the patient's probability. Without one there is no
+        validated estimate, and none is shown. (Earlier versions reported the
+        spread of the last boosting stages as a "95% CI"; it was not one.)
         """
-        # --- 1. Conformal prediction interval ---
-        if self.conformal_predictor is not None and self.conformal_predictor._calibrated:
-            try:
-                lower, upper, _ = self.conformal_predictor.predict_interval(
-                    self.model, feature_vector
-                )
-                return float(lower[0]), float(upper[0])
-            except Exception:
-                pass  # fall through to heuristics
+        cp = self.conformal_predictor
+        quantile = getattr(cp, "_quantile", None)
+        if cp is not None and getattr(cp, "_calibrated", False) and quantile is not None:
+            labels = []
+            if risk_prob <= quantile:
+                labels.append("negative")
+            if risk_prob >= 1 - quantile:
+                labels.append("positive")
+            return {
+                "method": "split-conformal label set",
+                "coverage_target": round(1 - float(cp.alpha), 4),
+                "label_set": labels,
+                "note": (
+                    "Outcome labels consistent with this output at the stated coverage on "
+                    "the calibration data (synthetic). Not an interval for this patient's risk."
+                ),
+            }
+        return {
+            "method": "none",
+            "note": (
+                "No validated uncertainty estimate is available for this model. "
+                "The score is a single model output."
+            ),
+        }
 
-        # --- 2. Ensemble stage variance (GradientBoosting only) ---
-        try:
-            if hasattr(self.model, "staged_predict_proba"):
-                # Use last 20% of stages to estimate prediction variance
-                staged = list(self.model.staged_predict_proba(feature_vector))
-                n_stages = len(staged)
-                tail_start = max(0, int(n_stages * 0.8))
-                tail_probs = [float(s[:, 1][0]) for s in staged[tail_start:]]
-                if len(tail_probs) > 1:
-                    std = float(np.std(tail_probs))
-                    # 95% CI using ~2 standard deviations
-                    ci_lower = max(0.0, risk_prob - 1.96 * std)
-                    ci_upper = min(1.0, risk_prob + 1.96 * std)
-                    return ci_lower, ci_upper
-        except Exception:
-            pass
+    def _data_quality(
+        self,
+        vitals: Dict[str, Any],
+        age_years: Optional[int],
+        comorbidities: Optional[Dict[str, int]],
+        rows: List[Dict[str, Any]],
+        ignored: int,
+    ) -> Dict[str, Any]:
+        """Facts about the input that limit how far the output can be read.
 
-        # --- 3. Fallback: use ECE from model metadata as uncertainty width ---
-        ece = 0.02  # default
-        if self.metadata:
-            cal = self.metadata.get("calibration", {})
-            if isinstance(cal, dict):
-                ece = cal.get("ece", 0.02)
-            else:
-                metrics = self.metadata.get("metrics", {})
-                ece = metrics.get("val_brier", 0.08) ** 0.5
-
-        # Scale uncertainty: wider at mid-range, narrower at extremes
-        base_width = max(ece, 0.01) * 3
-        distance_from_edge = min(risk_prob, 1.0 - risk_prob)
-        width = base_width * (0.5 + distance_from_edge)
-        ci_lower = max(0.0, risk_prob - width)
-        ci_upper = min(1.0, risk_prob + width)
-        return ci_lower, ci_upper
-
-    def _model_risk_level(self, prob: float) -> str:
-        """Risk band from the model probability alone.
-
-        Uses the artifact's dual operating points when present, otherwise the
-        project's fixed bands. Neither set of cut-offs has clinical approval;
-        callers combine this with the rule-based level and never let it lower
-        that level.
+        Descriptive only: no clinical judgement about whether the input is
+        adequate is made here.
         """
-        if self.dual_thresholds:
-            return classify_risk_dual(prob, self.dual_thresholds, mode="continuous")
-        if prob >= 0.75:
-            return "critical"
-        if prob >= 0.50:
-            return "high"
-        if prob >= 0.25:
-            return "moderate"
-        return "low"
+        warnings: List[Dict[str, Any]] = []
 
-    def _classify_risk(self, prob: float, scores: Any) -> str:
-        """Combined level: the higher of the rule-based and model levels."""
-        return max(scores.risk_level, self._model_risk_level(prob), key=_RISK_ORDER.index)
+        def warn(code: str, message: str, fields: Optional[List[str]] = None) -> None:
+            warnings.append({"code": code, "message": message, "fields": fields or []})
+
+        absent_vitals = [v for v in self._VITALS if _missing(vitals.get(v))]
+        absent_labs = [v for v in self._LABS if _missing(vitals.get(v))]
+        if absent_vitals:
+            warn("vitals_not_measured",
+                 "Not in this observation; the model substituted typical training values.",
+                 absent_vitals)
+        if absent_labs:
+            warn("labs_not_measured",
+                 "Not in this observation; the model substituted typical training values.",
+                 absent_labs)
+        if age_years is None:
+            warn("age_not_supplied",
+                 f"Age not supplied; the pipeline used {self._DEFAULT_AGE} years.", ["age_years"])
+        if comorbidities is None:
+            warn("comorbidities_not_supplied",
+                 "Comorbidities not supplied; all were treated as absent.", list(self._COMORBIDITIES))
+        history_used = len(rows) - 1
+        if history_used == 0:
+            warn("no_history",
+                 "No earlier observations; changes and rolling statistics could not be computed.")
+        if ignored:
+            warn("history_ignored",
+                 f"{ignored} earlier observation(s) ignored: no timestamp, or not before the "
+                 "current observation.")
+        span = None
+        if history_used:
+            span = round((rows[-1]["timestamp"] - rows[0]["timestamp"]).total_seconds() / 60, 1)
+        return {
+            "warnings": warnings,
+            "observations_used": len(rows),
+            "history_span_minutes": span,
+            "imputed_fields": absent_vitals + absent_labs,
+        }
 
     def model_info(self) -> Dict[str, Any]:
         """Return model information for the /model/info API endpoint."""
@@ -545,76 +656,96 @@ class SepsisPredictor:
             info["dual_thresholds"] = self.dual_thresholds
         return info
 
-    def _explain_prediction(
+    _LABELS = {
+        "heart_rate": "Heart rate",
+        "resp_rate": "Respiratory rate",
+        "sbp": "Systolic blood pressure",
+        "dbp": "Diastolic blood pressure",
+        "map": "Mean arterial pressure",
+        "temperature": "Temperature",
+        "spo2": "Oxygen saturation",
+        "gcs": "Glasgow Coma Scale",
+        "lactate": "Serum lactate",
+        "wbc": "White blood cell count",
+        "procalcitonin": "Procalcitonin",
+        "age_years": "Age",
+        "comorbidities": "Comorbidities",
+    }
+
+    def _attribution_variants(
         self,
-        feature_vector: np.ndarray,
-        vitals: Dict[str, Any],
-        scores: Any,
+        rows: List[Dict[str, Any]],
+        age_years: Optional[int],
+        comorbidities: Optional[Dict[str, int]],
     ) -> List[Dict[str, Any]]:
-        """Generate risk factor explanations."""
+        """One counterfactual sequence per input this patient actually supplied.
+
+        In each, that input's measured values (current and earlier) are
+        replaced by its training median; missing values stay missing, so
+        missingness indicators do not change.
+        """
+        variants: List[Dict[str, Any]] = []
+        for name in self._VITALS + self._LABS:
+            if all(_missing(r.get(name)) for r in rows):
+                continue
+            reference = self._imputation_medians.get(name)
+            if reference is None or _missing(reference):
+                continue
+            frame = [
+                {**r, name: r[name] if _missing(r.get(name)) else reference} for r in rows
+            ]
+            current = rows[-1].get(name)
+            variants.append({
+                "feature": name,
+                "current_value": None if current is None or _missing(current) else float(current),
+                "reference_value": float(reference),
+                "frame": frame,
+            })
+        reference_age = self._imputation_medians.get("age_years")
+        if age_years is not None and reference_age is not None:
+            variants.append({
+                "feature": "age_years",
+                "current_value": float(age_years),
+                "reference_value": float(reference_age),
+                "frame": [{**r, "age_years": reference_age} for r in rows],
+            })
+        present = [c for c in self._COMORBIDITIES if int((comorbidities or {}).get(c, 0) or 0)]
+        if present:
+            variants.append({
+                "feature": "comorbidities",
+                "current_value": present,
+                "reference_value": [],
+                "frame": [{**r, **{c: 0 for c in self._COMORBIDITIES}} for r in rows],
+            })
+        return variants
+
+    def _attributions(
+        self,
+        variants: List[Dict[str, Any]],
+        risk_prob: float,
+        variant_probs: np.ndarray,
+    ) -> List[Dict[str, Any]]:
+        """Per-patient attribution: how much each supplied input moved the output.
+
+        ``contribution`` = this output minus the output with that input set
+        to its training median (probability units). Positive means this
+        patient's values raised the model output relative to a typical
+        training value. It describes the model's behaviour, not physiology,
+        and inputs interact, so contributions need not sum to the output.
+        """
         factors = []
-
-        # Use feature importance from metadata
-        importance = self.metadata.get("feature_importance", {})
-
-        # Map feature importance to readable explanations
-        vital_labels = {
-            "heart_rate": "Heart Rate",
-            "resp_rate": "Respiratory Rate",
-            "sbp": "Systolic Blood Pressure",
-            "temperature": "Temperature",
-            "spo2": "Oxygen Saturation",
-            "gcs": "Glasgow Coma Scale",
-            "map": "Mean Arterial Pressure",
-            "dbp": "Diastolic Blood Pressure",
-            "shock_index_computed": "Shock Index",
-            "qsofa": "qSOFA Score",
-            "news2_computed": "NEWS2 Score",
-            "sirs_computed": "SIRS Criteria",
-            "lactate": "Serum Lactate",
-            "wbc": "White Blood Cell Count",
-            "procalcitonin": "Procalcitonin",
-        }
-
-        # Normal ranges for context
-        normal_ranges = {
-            "heart_rate": (60, 100),
-            "resp_rate": (12, 20),
-            "sbp": (90, 140),
-            "temperature": (36.1, 37.2),
-            "spo2": (95, 100),
-            "gcs": (15, 15),
-            "map": (70, 105),
-            "lactate": (0.5, 2.0),
-            "wbc": (4.5, 11.0),
-            "procalcitonin": (0.0, 0.1),
-        }
-
-        for feat_name, imp_value in list(importance.items())[:10]:
-            base_name = feat_name.replace("_delta", "").replace("_roll_mean", "").replace("_roll_std", "")
-            label = vital_labels.get(feat_name, vital_labels.get(base_name, feat_name))
-            value = vitals.get(feat_name, vitals.get(base_name))
-
-            factor = {
-                "feature": feat_name,
-                "label": label,
-                "importance": round(float(imp_value), 4),
-            }
-
-            if value is not None and base_name in normal_ranges:
-                lo, hi = normal_ranges[base_name]
-                factor["current_value"] = value
-                factor["normal_range"] = f"{lo}-{hi}"
-                if value > hi:
-                    factor["status"] = "elevated"
-                elif value < lo:
-                    factor["status"] = "low"
-                else:
-                    factor["status"] = "normal"
-
-            factors.append(factor)
-
-        return factors[:5]
+        for variant, prob in zip(variants, variant_probs):
+            contribution = risk_prob - float(prob)
+            factors.append({
+                "feature": variant["feature"],
+                "label": self._LABELS.get(variant["feature"], variant["feature"]),
+                "contribution": round(contribution, 4),
+                "direction": "raised" if contribution > 0 else "lowered" if contribution < 0 else "none",
+                "current_value": variant["current_value"],
+                "reference_value": variant["reference_value"],
+            })
+        factors.sort(key=lambda f: abs(f["contribution"]), reverse=True)
+        return factors
 
     def _generate_recommendation(
         self,

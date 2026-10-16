@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useStore } from '../stores/useStore'
 import { isDemo } from '../lib/api'
+import { isRiskLevel } from '../lib/risk'
 
 const WS_RECONNECT_DELAY = 3000
 const WS_MAX_RECONNECT_DELAY = 30000
@@ -99,10 +100,26 @@ export function useWebSocket() {
             }
 
             if (data.type === 'patient_update' || data.type === 'deterioration_alert' || data.type === 'recovery_alert') {
+              // Only a complete, recorded result updates the risk; a missing
+              // value is never filled in as 0% or "low".
+              if (typeof data.risk_probability === 'number' && isRiskLevel(data.risk_level)) {
+                updatePatientRisk(data.patient_id, {
+                  risk_probability: data.risk_probability,
+                  risk_level: data.risk_level,
+                  risk_status: 'scored',
+                  risk_status_reason: null,
+                  last_prediction_time: Date.now() / 1000,
+                })
+              }
+            }
+
+            if (data.type === 'risk_unavailable') {
+              // The latest attempt produced no recorded risk: clear the old score.
               updatePatientRisk(data.patient_id, {
-                risk_probability: data.risk_probability ?? 0,
-                risk_level: data.risk_level ?? 'low',
-                last_prediction_time: Date.now() / 1000,
+                risk_probability: null,
+                risk_level: 'unknown',
+                risk_status: 'unavailable',
+                risk_status_reason: typeof data.reason === 'string' ? data.reason : null,
               })
             }
 

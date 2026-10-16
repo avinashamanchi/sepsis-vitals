@@ -37,15 +37,54 @@ export interface Alert {
   note?: string
 }
 
+/** Per-patient attribution: change in the model output when this input is
+ * replaced by its training median. Describes the model, not physiology. */
+export interface RiskFactor {
+  feature: string
+  label?: string
+  contribution: number
+  direction?: 'raised' | 'lowered' | 'none'
+  current_value?: number | string[] | null
+  reference_value?: number | string[] | null
+}
+
+export interface DataQualityWarning {
+  code: string
+  message: string
+  fields: string[]
+}
+
 export interface Prediction {
   patient_id: string
   timestamp: string
+  observed_at?: string | null
   risk_probability: number
   risk_level: RiskLevel
-  confidence_interval: { lower: number; upper: number }
+  /** Null unless the model supports a validated interval (see uncertainty). */
+  confidence_interval: { lower: number; upper: number } | null
+  uncertainty?: { method: string; note?: string; coverage_target?: number; label_set?: string[] }
   alert: boolean
   clinical_scores: Record<string, number>
-  top_risk_factors: Array<{ feature: string; importance: number }>
+  top_risk_factors: RiskFactor[]
+  explanation?: { method: string; note: string }
+  data_quality?: {
+    warnings: DataQualityWarning[]
+    observations_used?: number
+    history_span_minutes?: number | null
+    imputed_fields?: string[]
+  }
+  threshold_policy?: {
+    id: string
+    status: string
+    model_bands: Record<string, number>
+    alert_cutoff: number
+    alert_rule: string
+    sha256: string
+  }
+  versions?: Record<string, string | null>
+  decision_support_notice?: string
+  request_id?: string
+  audit_record_id?: string
   recommendation: string
   model: { name?: string; version?: string }
   research_only?: boolean
@@ -75,8 +114,12 @@ export interface MonitoredPatient {
   patient_id: string
   demographics: Record<string, string | number>
   vitals: Record<string, number>
-  risk_probability: number
-  risk_level: RiskLevel
+  /** Null until a risk has been calculated and recorded, or after a failed attempt. */
+  risk_probability: number | null
+  risk_level: RiskLevel | 'unknown'
+  /** 'scored' only when the latest attempt produced a recorded result. */
+  risk_status?: 'scored' | 'not-scored' | 'unavailable'
+  risk_status_reason?: string | null
   trend_direction: 'improving' | 'stable' | 'worsening' | 'unknown'
   last_prediction_time: number
   last_vitals_time: number
@@ -84,7 +127,7 @@ export interface MonitoredPatient {
   alert_state: 'normal' | 'elevated' | 'escalated' | 'critical'
   deterioration_rate: number
   window_hours: number
-  risk_history: Array<{ timestamp: number; risk_probability: number }>
+  risk_history: Array<{ timestamp: number; risk_probability: number | null }>
 }
 
 export interface SimSession {
