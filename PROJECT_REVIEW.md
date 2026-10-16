@@ -862,7 +862,7 @@ a clinical decision, are in `compliance/clinical_requirements_needed.md`.
 Re-checked on 2026-10-15/16 on branch `review/independent-review-fixes`.
 
 - Baseline: `28e1e0a` (CI run 38788526838, 25/25 jobs green).
-- Final code head and its CI: §10.6.
+- Final code head: `89d4532`; CI 25/25 green (§10.6).
 
 This section is authoritative; §9 is history. Statuses use the seven
 categories in §8. **The software is not approved for clinical use.** It
@@ -904,7 +904,7 @@ has not been deployed, and no real patient data was used.
 | N63 | **New.** Access-audit (`audit_log`) write failures were silently swallowed | Fixed and verified | 7b29185 | Logged by error class and counted (`sepsis_audit_log_failures_total`). Persistence stays after-response (best effort, with a stdout copy) |
 | N64 | **New.** Monitor readings ignored the registered age and comorbidities (FHIR readings carry none), so the age default of 55 was used | Fixed and verified | 765a17c | `test_monitor_uses_registered_demographics_for_later_readings` |
 | N65 | **New.** `/predict/batch` logged patient ids and exception text, and returned `str(exc)` | Fixed and verified | 765a17c | Error text is fixed; only the index is returned |
-| N66 | **New.** The default observation time was local time while history is UTC, so on a non-UTC host history looked hours off | Fixed and verified | this commit | `test_default_observation_time_is_utc` |
+| N66 | **New.** The default observation time was local time while history is UTC, so on a non-UTC host history looked hours off | Fixed and verified | 765a17c (fix), c615e03 (test) | `test_default_observation_time_is_utc` |
 | M6a | **New.** d7a2d00 and §9 attributed the ablation shift (0.9158→0.9136) to the generator fix (M4) without evidence | Fixed and verified | e91cf18 | The earlier run recorded no commit, environment or candidates, and `f4d6df3` is not an ancestor of `a0565a6`. Now stated as consistent with, not caused by. README numbers updated |
 | P-1 | Report provenance (commit, environment, packages, lock digest, backends, seeds, dataset hash, candidates, runtime) | Fixed and verified | e91cf18 | `tests/test_provenance.py`; the reduced CI run checks a candidate-complete record |
 | P-2 | Unexpected test skips could hide tests | Fixed and verified | e91cf18 | `SEPSIS_STRICT_SKIPS=1` in CI; `tests/test_skip_guard.py` |
@@ -950,3 +950,58 @@ New items:
 | 13 | Candidate-complete reports | After merge: run "Candidate-complete reports" (`workflow_dispatch`, defaults) and review the artifact before committing anything | Actions minutes only | Nothing is committed automatically |
 | 14 | Retention periods | The privacy officer sets them (`docs/pilot/security_checklist.md`); then implement a privileged, audited purge | Deleting records | Backups |
 
+### 10.5 Skipped tests (clean checkout, by ID)
+
+All 19 need the MIMIC-IV or FHIR demo files, which are not in the
+repository. In CI, `SEPSIS_STRICT_SKIPS=1` fails the run if any other
+reason appears. On a workstation with the demo files, nothing is skipped.
+
+- `tests/test_fhir_loader.py::TestStreamingParsing::test_stream_ndjson_gzipped` (FHIR demo data)
+- `tests/test_layer1_integration.py::TestCSVPipelineIntegration::test_full_pipeline_produces_training_data`
+- `tests/test_layer1_integration.py::TestCSVPipelineIntegration::test_sepsis3_labels_not_all_same`
+- `tests/test_layer1_integration.py::TestFHIRPipelineIntegration::test_fhir_loads_100_patients`
+- `tests/test_layer1_integration.py::TestFHIRPipelineIntegration::test_fhir_loads_vitals`
+- `tests/test_layer1_integration.py::TestFHIRPipelineIntegration::test_fhir_loads_labs`
+- `tests/test_layer1_integration.py::TestUnifiedPipeline::test_unify_csv_and_fhir` (both sources)
+- `tests/test_mimic_itemids.py::test_mappings_match_local_dictionaries`
+- `tests/test_mimic_loader_demo.py::TestMIMICLoaderDemo::` `test_from_demo_creates_loader`, `test_load_demographics`, `test_load_vitals`, `test_load_sofa_labs`, `test_load_antibiotics`, `test_load_cultures`, `test_derive_sepsis3_labels`, `test_build_training_dataset_small`, `test_build_training_dataset_has_epoch_column`, `test_build_training_dataset_no_duplicate_epochs` (10)
+- `tests/test_trainer_mimic.py::TestMIMICDemoTraining::test_train_mimic_demo_small`
+
+§9.6 said that one of the 19 needed a loaded model artifact. At
+`af45686` and later, all 19 are demo-data skips.
+
+### 10.6 Verification on the final head
+
+| Check | Commit | Result |
+|---|---|---|
+| Full local `pytest`, clean worktree (no demo data), `SEPSIS_STRICT_SKIPS=1`, Python 3.11, macOS | 89d4532 | **913 passed, 0 failed, 19 skipped** (§10.5), 180 s |
+| ruff, mypy (95 files), bandit `-ll`, `check_lock.py` | 89d4532 | clean |
+| CI, all jobs | 89d4532 | **25/25 passed** ([run 38953002898](https://github.com/avinashamanchi/sepsis-vitals/actions/runs/38953002898)). Each test job: 913 passed, 19 skipped (strict skip guard on). PostgreSQL: migrations 005/006 up, down and up, plus the audited-inference tests. compose E2E: records are sealed and the database refuses UPDATE and DELETE |
+| Candidate-complete reports (reduced, PR trigger) | c615e03 (merge ref f134432) | Passed: all 5 candidate backends loaded and compared; provenance recorded (run 38951990351) |
+| Live demo against a local server | working tree of a8eacc3 | Every case passed (`docs/demo.md`); no synthetic identifiers in the server log |
+
+**Failures that CI found during this stage, all fixed:**
+- On af45686, the PostgreSQL job failed (N62).
+- On c615e03, the PostgreSQL startup stress failed: the trigger DDL contained `%`, fixed in 89d4532.
+- 765a17c was cancelled by a newer push.
+
+Not run locally: Node, Docker, PostgreSQL and Terraform. Those are the CI
+jobs above.
+
+**Test changes (stage 5, 28e1e0a → 89d4532):**
+- New files: `test_mfa_replay` (22, in 2258b7c), `test_audited_inference` (48 cases), `test_provenance` (3), `test_model_evaluation` (2), `test_skip_guard` (3), `test_ecs_migrate` (4).
+- Two source-string tests in `test_new_systems.py` were replaced by one that checks every endpoint uses the audited helper. Their behaviour is covered in `test_audited_inference`.
+- Frontend: `Predict.test.tsx` has 3 new tests and an updated fixture.
+
+### 10.7 Readiness (blunt)
+
+- **Functional prototype:** yes, on synthetic data. It ingests single observations, validated time series and FHIR/HL7 readings. It scores once through a verified artifact, explains per patient, applies a versioned (placeholder) threshold policy, records every result and alert decision append-only before release, fails closed, and shows decision-support language. Health checks and PHI-free logs are in place.
+- **Pilot-ready:** **no.**
+  - The model is synthetic-only, and its vital-sign behaviour is clinically inverted (N53).
+  - There is no label, horizon or operating point (R1–R10).
+  - No evaluation on real data exists.
+  - MFA is not enforced, `main` is unprotected and the two credentials are not revoked.
+  - Nothing is deployed, and the migration and rollback steps have not been rehearsed against AWS.
+  - There is no DPIA, ethics approval or retention policy.
+- **Hospital-ready:** **no.** Beyond the pilot gaps it needs prospective validation, a regulatory determination, human-factors evaluation and an operational support model.
+- **Clinical use:** **not permitted.** That is enforced in the API, the UI and the audit records.
