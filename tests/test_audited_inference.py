@@ -546,3 +546,24 @@ def test_audit_cli_verifies_and_shows_without_content_by_default(client, capsys)
     assert "synthetic-cli" not in shown and "observation" not in shown
     assert _cli(["show", body["audit_record_id"], "--include-content"]) == 0
     assert "synthetic-cli" in capsys.readouterr().out
+
+
+def test_default_observation_time_is_utc(model_dir, tmp_path, monkeypatch):
+    """Regression: "now" was local time while recorded history is UTC, so on a
+    non-UTC host history looked hours older or newer than it was."""
+    import time as _time
+
+    from sepsis_vitals.ml.predictor import SepsisPredictor
+
+    monkeypatch.setenv("TZ", "America/Los_Angeles")
+    if hasattr(_time, "tzset"):
+        _time.tzset()
+    predictor = SepsisPredictor(model_dir=str(model_dir), state_dir=str(tmp_path / "state"))
+    predictor.load()
+    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+    result = predictor.predict(VITALS, patient_id="synthetic-utc",
+                               history=[{"timestamp": one_hour_ago, **VITALS}])
+    assert result.data_quality["history_span_minutes"] == pytest.approx(60, abs=1)
+    monkeypatch.delenv("TZ")
+    if hasattr(_time, "tzset"):
+        _time.tzset()

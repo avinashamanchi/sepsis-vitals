@@ -856,3 +856,97 @@ ACVPU, P3 acceptance and alerting criteria, N18 emergency-access policy, M5
 authorized MIMIC access, M7 representative data. The exact decisions and
 evidence needed, and every engineering placeholder that must not be read as
 a clinical decision, are in `compliance/clinical_requirements_needed.md`.
+
+## 10. Stage 5 register and pilot-readiness work
+
+Re-checked on 2026-10-15/16 on branch `review/independent-review-fixes`.
+
+- Baseline: `28e1e0a` (CI run 38788526838, 25/25 jobs green).
+- Final code head and its CI: §10.6.
+
+This section is authoritative; §9 is history. Statuses use the seven
+categories in §8. **The software is not approved for clinical use.** It
+has not been deployed, and no real patient data was used.
+
+### 10.1 Stage 5 checklist
+
+| # | Item | Result |
+|---|---|---|
+| 1 | CI on `28e1e0a` | 25/25 passed (run 38788526838) |
+| 2 | Provenance in report scripts; existing reports annotated | Done (`e91cf18`). Annotations say "recorded after generation" and list unknowns |
+| 3 | Ablation attribution | Corrected (`e91cf18`, M6a below) |
+| 4 | Linux candidate-complete workflow | Added (`e91cf18`). A reduced run on this PR; the full run needs `workflow_dispatch`, which works only once the workflow is on `main` |
+| 5 | Skip guard; skipped tests by ID | Done (`e91cf18`); list in §10.5 |
+| 6 | `files/` against `3b289c1` | Reconfirmed on 2026-10-16: all 11 files are byte-identical to their paths in `3b289c1` (SHA-256 per file). Untouched; discarding them is §10.4 item 6 |
+| 7 | Branch protection | Draft only: `docs/pilot/branch_protection_main.json` (25 required checks). Not applied |
+| 8 | Pages | Manual only (`workflow_dispatch`); merging no longer publishes (`a8eacc3`) |
+| 9 | ECS pre-serve migration | `scripts/ecs_migrate.py` (dry run by default) and Terraform outputs (`a8eacc3`). Not run against AWS |
+| 10 | Clinical requirements | `docs/pilot/clinical_requirements.md` (R1–R10, owners, no invented values) |
+| 11 | Full final verification | §10.6 |
+| 12 | This section | — |
+| 13 | PR description | Updated with this summary |
+
+### 10.2 Register: items changed or added in stage 5
+
+| # | Finding | Status | Commit(s) | Evidence |
+|---|---|---|---|---|
+| N52 | TOTP codes reusable within their window | Fixed and verified | 2258b7c | `users.totp_last_step` (migration 005); a conditional UPDATE consumes each step once on every path; recovery codes use compare-and-set. 22 tests including 4 processes and 6 threads; browser E2E replay check; PostgreSQL CI |
+| N53 | **New.** In the legacy synthetic generator, septic observations are no more abnormal in vital signs than non-septic ones (less fever and tachycardia, higher SBP); procalcitonin and age carry the signal. The committed model's output falls with fever in 97% of febrile observations | Awaiting authorized data or external access | e91cf18 (found) | `reports/committed_model_evaluation.md` failure probes; per-label means. Needs retraining on approved representative data (M7); the model is documented as unsuitable for any clinical evaluation |
+| N54 | **New.** Prediction audit persistence failed open: a failed write logged a warning and the prediction was still returned | Fixed and verified | 765a17c, 7b29185 | `_score_and_record` releases a result only after its record commits; 503 "No risk calculated" otherwise. `test_audit_failure_withholds_the_result`; PostgreSQL CI |
+| N55 | **New.** The continuous monitor (FHIR/HL7 readings) scored and broadcast alerts with no prediction record | Fixed and verified | 765a17c | The monitor records the result and its alert decision (tracker policy included) before broadcasting; on failure it broadcasts `risk_unavailable` and restores the tracker. `test_monitor_*` |
+| N56 | **New.** The "95% CI" was ±1.96 × the spread of the last boosting stages, not a confidence interval | Fixed and verified | 765a17c | `confidence_interval` is null unless the artifact supports a validated statement; `uncertainty.method: none`. API and vitest tests |
+| N57 | **New.** Global feature importance (the same for every patient) was shown as the patient's "Model drivers" | Fixed and verified | 765a17c | Per-patient median-substitution attribution in the same preprocessing pass (scaling-once test unchanged); labelled not causal. `test_explanation_is_per_patient` |
+| N58 | **New.** The UI kept a previous result after a failed request; the monitor defaulted missing risk to 0% / "low" | Fixed and verified | 765a17c | Results cleared on submit; "No risk calculated" states; `currentRisk()` never defaults. vitest (`Predict.test.tsx`) |
+| N59 | **New.** Unknown request fields were silently dropped; the UI's comorbidity checkboxes sent `hypertension` instead of `has_hypertension`, so they never had any effect | Fixed and verified | 765a17c | `extra="forbid"`; the UI sends `has_*`. `test_unknown_fields_are_rejected`; vitest |
+| N60 | **New.** No time-series input contract | Fixed and verified | 765a17c | `POST /predict/timeseries` (units, ordering, duplicates, offsets, future, patient consistency, bounds, size). 11 refusal cases tested |
+| N61 | **New (introduced and fixed in this stage).** The copilot recorded results without the cross-site patient check | Fixed and verified | af45686 | Found by the background security review of 765a17c. The parity test fails without the fix. The copilot is off by default |
+| N62 | **New.** On PostgreSQL every audit write failed when the client address was not an IP ("testclient", "unknown", forwarded junk); hidden before by the fail-open writer | Fixed and verified | 7b29185 | Found by the PostgreSQL CI job on af45686 (7 failures). `inet_or_none`; regression tests |
+| N63 | **New.** Access-audit (`audit_log`) write failures were silently swallowed | Fixed and verified | 7b29185 | Logged by error class and counted (`sepsis_audit_log_failures_total`). Persistence stays after-response (best effort, with a stdout copy) |
+| N64 | **New.** Monitor readings ignored the registered age and comorbidities (FHIR readings carry none), so the age default of 55 was used | Fixed and verified | 765a17c | `test_monitor_uses_registered_demographics_for_later_readings` |
+| N65 | **New.** `/predict/batch` logged patient ids and exception text, and returned `str(exc)` | Fixed and verified | 765a17c | Error text is fixed; only the index is returned |
+| N66 | **New.** The default observation time was local time while history is UTC, so on a non-UTC host history looked hours off | Fixed and verified | this commit | `test_default_observation_time_is_utc` |
+| M6a | **New.** d7a2d00 and §9 attributed the ablation shift (0.9158→0.9136) to the generator fix (M4) without evidence | Fixed and verified | e91cf18 | The earlier run recorded no commit, environment or candidates, and `f4d6df3` is not an ancestor of `a0565a6`. Now stated as consistent with, not caused by. README numbers updated |
+| P-1 | Report provenance (commit, environment, packages, lock digest, backends, seeds, dataset hash, candidates, runtime) | Fixed and verified | e91cf18 | `tests/test_provenance.py`; the reduced CI run checks a candidate-complete record |
+| P-2 | Unexpected test skips could hide tests | Fixed and verified | e91cf18 | `SEPSIS_STRICT_SKIPS=1` in CI; `tests/test_skip_guard.py` |
+| N44 / item 8 | Migration step before serving (ECS) | Implemented; verification blocked | a8eacc3 | Script and outputs tested offline; running it needs AWS access and approval |
+| A7 | Pages | Awaiting explicit approval | a8eacc3 | Now manual-only; publishing remains the owner's decision |
+| N49 | `main` unprotected | Awaiting explicit approval | a8eacc3 | Draft JSON ready; not applied |
+
+Items not listed keep their §9 status. N52 has moved from Unresolved to
+Fixed. No item is Unresolved.
+
+### 10.3 Pilot-readiness package
+
+`docs/pilot/` contains:
+
+- clinical requirements R1–R10;
+- the model card;
+- the data provenance and privacy assessment;
+- the security checklist, with a draft retention structure and incident process;
+- the runbook (deploy, migration, health, degradation, rollback);
+- pilot entry, success and stop criteria;
+- the risk register (13 risks);
+- the draft branch protection;
+- the sign-off table.
+
+The evaluation report is `reports/committed_model_evaluation.md`. The
+inference contract is `docs/inference_contract.md`, the state before this
+work is `docs/current_state.md`, and the demo is `docs/demo.md`.
+
+### 10.4 Approvals requested
+
+The §9.4 items stand, with these changes:
+
+- Item 6 (`files/`) is reconfirmed.
+- Item 8 now has `scripts/ecs_migrate.py`.
+- Item 10 has a ready JSON.
+- Item 2 no longer needs the Pages workflow disabled before merging (it is manual-only).
+
+New items:
+
+| # | Target | Action | Risk | Rollback |
+|---|---|---|---|---|
+| 12 | Use of real or de-identified patient data | None until written approval, a data-use agreement, ethics approval and a DPIA (pilot entry E3, E6) | PHI exposure | — |
+| 13 | Candidate-complete reports | After merge: run "Candidate-complete reports" (`workflow_dispatch`, defaults) and review the artifact before committing anything | Actions minutes only | Nothing is committed automatically |
+| 14 | Retention periods | The privacy officer sets them (`docs/pilot/security_checklist.md`); then implement a privileged, audited purge | Deleting records | Backups |
+
