@@ -172,7 +172,7 @@ def test_alembic_head_is_found_from_the_working_directory(monkeypatch, tmp_path)
 
     root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(root)
-    assert api._alembic_head() == "a7b8c9d0e1f2"
+    assert api._alembic_head() == "b8c9d0e1f2a3"
 
 
 def test_readiness_distinguishes_unmanaged_schema(client_with_models, model_copy):

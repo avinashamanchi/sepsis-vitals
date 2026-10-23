@@ -1004,6 +1004,7 @@ def _include_routers():
         ("sepsis_vitals.patients.router", "patients", [Depends(check_rate_limit)]),
         ("sepsis_vitals.alerts.router", "alerts", [Depends(check_rate_limit)]),
         ("sepsis_vitals.fhir.router", "fhir", [Depends(check_rate_limit)]),
+        ("sepsis_vitals.study.router", "study", [Depends(check_rate_limit)]),
     ]
     if os.getenv("SEPSIS_ENABLE_BILLING", "false").lower() == "true":
         routers.append(("sepsis_vitals.billing.router", "billing", []))

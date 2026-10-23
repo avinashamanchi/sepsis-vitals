@@ -569,6 +569,32 @@ class PredictionRecord(Base):
         )
 
 
+class StudyOutcome(Base):
+    """Adjudicated outcome for one patient, for a local silent-mode study.
+
+    Append-only: a correction is a new row, and the most recent row per
+    patient is the one used. No free text, so no PHI beyond the patient link.
+    ``definition`` names the site's reference standard and its version (for
+    example "Sepsis-3 site protocol v1"), decided by the clinical lead (R2).
+    """
+
+    __tablename__ = "study_outcomes"
+
+    id: Mapped[str] = mapped_column(UUIDType, primary_key=True, default=_uuid_default)
+    patient_id: Mapped[str] = mapped_column(UUIDType, ForeignKey("patients.id"), nullable=False)
+    site_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    sepsis: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    onset_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    died_in_hospital: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    definition: Mapped[str] = mapped_column(String(64), nullable=False)
+    recorded_by: Mapped[Optional[str]] = mapped_column(UUIDType, ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default="now()" if not _is_sqlite else None
+    )
+
+    __table_args__ = (Index("idx_study_outcomes_patient_time", "patient_id", created_at.desc()),)
+
+
 class ImmutableRecordError(RuntimeError):
     """An attempt to change or remove an append-only audit record."""
 

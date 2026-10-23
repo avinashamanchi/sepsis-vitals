@@ -60,3 +60,6 @@ Thumbs.db
 
 # Archived model artifacts (retrain.py --replace); recoverable from git history
 models/archive/
+
+# Local study results (aggregates from a hospital database): never commit
+local-study-report/
