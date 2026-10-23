@@ -117,3 +117,13 @@ def test_insufficient_outcomes_are_reported_not_computed():
     finally:
         db.close()
     assert report["status"].startswith("insufficient")
+
+
+def test_study_cli_writes_aggregates_only(tmp_path):
+    import json
+
+    from sepsis_vitals.study.__main__ import main
+
+    assert main(["--site", "NO-SUCH-SITE", "--bootstrap", "10", "--output-dir", str(tmp_path)]) == 0
+    report = json.loads((tmp_path / "local_study_evaluation.json").read_text())
+    assert report["status"].startswith("insufficient") and "provenance" in report

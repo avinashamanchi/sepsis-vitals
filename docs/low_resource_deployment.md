@@ -96,6 +96,18 @@ Add `SEPSIS_MODEL_DISPLAY=silent` to `docker/.env` and restart.
 - Staff see only the published rule-based scores. The model output is withheld everywhere: dashboard, monitor, alerts and API.
 - An unrecognised value is treated as silent.
 
+### Recording outcomes and evaluating
+
+1. After discharge, a researcher records each patient's adjudicated outcome under the site's reference standard (`POST /study/outcomes`: sepsis yes or no, optional onset time and in-hospital death, and the definition's name and version). There is no free text. A correction is a new entry.
+2. Progress: `GET /study/summary` (counts only).
+3. Evaluate, locally and only under the approved analysis plan:
+
+```bash
+docker compose exec api python -m sepsis_vitals.study --site WARD-A --output-dir /app/state/local-study-report
+```
+
+The output is aggregates only: AUROC and AUPRC with confidence intervals for the model, UVA, NEWS2-style and qSOFA; alerts before onset; lead time. It contains no patient identifiers. Keep it outside the code repository.
+
 ## 6. Daily use
 
 1. A nurse records vital signs per patient on each round, on any phone or PC on the ward network.
