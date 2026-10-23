@@ -1400,25 +1400,19 @@ class TestPredictionAuditTrail:
         assert any("patient" in name for name in index_names)
         assert any("risk" in name for name in index_names)
 
-    @pytest.mark.skipif(
-        not (HAS_FASTAPI and HAS_EMAIL_VALIDATOR),
-        reason="FastAPI email validation dependencies not installed",
-    )
-    def test_predict_endpoint_calls_persist(self):
-        """predict endpoint source must call _persist_prediction."""
-        import inspect
-        from sepsis_vitals.api import predict_sepsis
-        source = inspect.getsource(predict_sepsis)
-        assert "_persist_prediction" in source
-
     @pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
-    def test_persist_prediction_function_exists(self):
-        """_persist_prediction helper must exist and write to PredictionRecord."""
+    def test_predict_endpoints_record_before_returning(self):
+        """Every scoring endpoint goes through the fail-closed audited helper.
+
+        Behaviour (record per result, 503 when it cannot be written) is
+        tested in tests/test_audited_inference.py.
+        """
         import inspect
-        from sepsis_vitals.api import _persist_prediction
-        source = inspect.getsource(_persist_prediction)
-        assert "PredictionRecord" in source
-        assert "db.commit()" in source
+
+        from sepsis_vitals import api
+        for endpoint in (api.predict_sepsis, api.predict_timeseries, api.predict_batch):
+            assert "_score_and_record" in inspect.getsource(endpoint)
+        assert "record_prediction" in inspect.getsource(api._score_and_record)
 
     def test_state_py_documents_redis_vs_postgres(self):
         """state.py must clearly document Redis = ephemeral, Postgres = legal truth."""

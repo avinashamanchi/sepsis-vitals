@@ -15,6 +15,10 @@ import threading
 import time
 from dataclasses import dataclass
 from functools import wraps
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sepsis_vitals.pii_keys import Keyring
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -465,11 +469,14 @@ class FieldEncryptionError(Exception):
 class FieldEncryptor:
     """AES-256-GCM field-level encryption for PII columns.
 
-    Reads the 32-byte key from ``SEPSIS_PII_KEY`` (base64-encoded).
-    Each encrypted value gets a unique 12-byte nonce prepended to the
-    ciphertext, so the same plaintext encrypts to different ciphertexts.
+    Keys come from the PII keyring (:mod:`sepsis_vitals.pii_keys`):
+    ``SEPSIS_PII_KEY`` (current, base64 of 32 bytes), ``SEPSIS_PII_KEY_ID``
+    and ``SEPSIS_PII_PREVIOUS_KEYS`` (decrypt-only, during a rotation).
+    Each value gets a unique 12-byte nonce, so the same plaintext encrypts
+    to different ciphertexts.
 
-    Wire format: ``b64(nonce || ciphertext || tag)``
+    Wire formats: ``enc:<b64(nonce|ct|tag)>`` (key ID ``legacy``) and
+    ``enc:v2:<key id>:<b64(nonce|ct|tag)>``.
 
     Usage::
 
@@ -479,47 +486,48 @@ class FieldEncryptor:
     """
 
     _instance: "FieldEncryptor | None" = None
+    # Raw secret of the current key (None when encryption is disabled), and
+    # the keyring it belongs to. Class-level: reset both, or _key alone, to reload.
     _key: bytes | None = None
+    _keyring: "Keyring | None" = None
 
     def __init__(self, key: bytes | None = None) -> None:
         if key is not None:
+            from sepsis_vitals.pii_keys import LEGACY_ID, Keyring, PIIKey
+
             self._key = key
-        elif self._key is None:
+            self._keyring = Keyring(PIIKey(LEGACY_ID, key))
+        elif self._key is None or self._keyring is None:
             self._load_key()
 
     @classmethod
     def _load_key(cls) -> None:
-        import base64
         import logging
+
+        from sepsis_vitals.pii_keys import KeyringError, keyring_from_env
 
         _logger = logging.getLogger(__name__)
         _production = os.getenv("SEPSIS_ENV", "development") == "production"
 
-        raw = os.environ.get("SEPSIS_PII_KEY", "")
-        if not raw or raw == "REPLACE_ME_BASE64_32_BYTES":
+        try:
+            keyring = keyring_from_env()
+        except KeyringError as exc:
+            if _production:
+                raise RuntimeError(f"SEPSIS_PII_KEY not usable in production: {exc}") from exc
+            cls._key, cls._keyring = None, None
+            _logger.warning("SEPSIS_PII_KEY not usable, field encryption disabled: %s", exc)
+            return
+        if keyring is None:
             if _production:
                 raise RuntimeError(
                     "SEPSIS_PII_KEY must be set in production. "
                     "PII encryption cannot be disabled in production mode."
                 )
             _logger.warning("SEPSIS_PII_KEY not set — field encryption disabled (dev only)")
-            cls._key = None
+            cls._key, cls._keyring = None, None
             return
-        try:
-            cls._key = base64.b64decode(raw)
-            if len(cls._key) != 32:
-                raise ValueError(
-                    f"SEPSIS_PII_KEY must decode to 32 bytes, got {len(cls._key)}"
-                )
-        except Exception as exc:
-            if _production:
-                raise RuntimeError(
-                    f"SEPSIS_PII_KEY not usable in production: {exc}"
-                ) from exc
-            cls._key = None
-            _logger.warning(
-                "SEPSIS_PII_KEY not usable, field encryption disabled: %s", exc
-            )
+        cls._keyring = keyring
+        cls._key = keyring.current.secret
 
     @classmethod
     def get(cls) -> "FieldEncryptor":
@@ -531,28 +539,24 @@ class FieldEncryptor:
     @property
     def enabled(self) -> bool:
         """True when a valid encryption key is configured."""
-        return self._key is not None
+        return self._key is not None and self._keyring is not None
+
+    @property
+    def keyring(self) -> "Keyring | None":
+        return self._keyring if self.enabled else None
 
     def encrypt(self, plaintext: str) -> str:
-        """Encrypt a string value. Returns base64-encoded ciphertext.
+        """Encrypt a string value with the current key.
 
         If no key is configured, returns the plaintext unchanged (dev mode).
         """
         if not self.enabled or not plaintext:
             return plaintext
-
-        import base64
-
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-        assert self._key is not None
-        nonce = os.urandom(12)
-        aesgcm = AESGCM(self._key)
-        ct = aesgcm.encrypt(nonce, plaintext.encode("utf-8"), None)
-        return "enc:" + base64.b64encode(nonce + ct).decode("ascii")
+        assert self._keyring is not None
+        return self._keyring.encrypt(plaintext)
 
     def decrypt(self, token: str) -> str:
-        """Decrypt a previously encrypted value.
+        """Decrypt a previously encrypted value with whichever configured key wrote it.
 
         If the value does not have the ``enc:`` prefix, it is returned
         as-is (plaintext fallback for unencrypted legacy data).
@@ -564,20 +568,10 @@ class FieldEncryptor:
             raise FieldEncryptionError(
                 "Cannot decrypt: SEPSIS_PII_KEY is not configured"
             )
-
-        import base64
-
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
+        assert self._keyring is not None
         try:
-            assert self._key is not None
-            raw = base64.b64decode(token[4:])
-            nonce = raw[:12]
-            ciphertext = raw[12:]
-            aesgcm = AESGCM(self._key)
-            plaintext = aesgcm.decrypt(nonce, ciphertext, None)
-            return plaintext.decode("utf-8")
-        except Exception as exc:
+            return self._keyring.decrypt(token)
+        except ValueError as exc:
             raise FieldEncryptionError(f"Decryption failed: {exc}") from exc
 
 
@@ -711,14 +705,35 @@ class SecurityAlertTracker:
 def compute_blind_index(value: str) -> str:
     """Compute an HMAC-SHA256 blind index for encrypted-field lookups.
 
-    Uses ``SEPSIS_PII_KEY`` as the HMAC key. The index is deterministic
-    so ``WHERE email_hash = compute_blind_index('x')`` works, but cannot
-    be reversed to recover the plaintext.
+    Uses the current PII key (its blind-index subkey). The index is
+    deterministic so ``WHERE email_hash = compute_blind_index('x')`` works,
+    but cannot be reversed to recover the plaintext. Use this when
+    *writing*; use :func:`blind_index_candidates` when *looking up*, so rows
+    indexed under a previous key are still found during a key rotation.
 
     If no key is configured, returns a plain SHA-256 hash (dev fallback).
     """
-    enc = FieldEncryptor.get()
-    if enc.enabled and enc._key is not None:
-        digest = hmac.new(enc._key, value.lower().encode("utf-8"), hashlib.sha256)
-        return digest.hexdigest()
+    keyring = FieldEncryptor.get().keyring
+    if keyring is not None:
+        return keyring.blind_index(value)
     return hashlib.sha256(value.lower().encode("utf-8")).hexdigest()
+
+
+def blind_index_candidates(value: str) -> list[str]:
+    """Blind index of *value* under every configured key, current first."""
+    keyring = FieldEncryptor.get().keyring
+    if keyring is not None:
+        return keyring.blind_index_candidates(value)
+    return [compute_blind_index(value)]
+
+
+def log_ref(identifier: object) -> str:
+    """Short, keyed, irreversible reference for an identifier in log lines.
+
+    Lets operators correlate log entries for one patient without writing the
+    MRN or internal ID itself to logs. Uses the blind-index HMAC, so it cannot
+    be reversed with a dictionary of MRNs when SEPSIS_PII_KEY is set.
+    """
+    if identifier is None:
+        return "ref:none"
+    return "ref:" + compute_blind_index(str(identifier))[:12]

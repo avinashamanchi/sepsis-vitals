@@ -248,7 +248,7 @@ class TestVitalsIngester:
             ws_manager=mock_ws_manager,
         )
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             ingester.ingest_single("P001", {"heart_rate": 95, "temperature": 38.1})
         )
 
@@ -272,13 +272,13 @@ class TestVitalsIngester:
         )
 
         # First call — should predict
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             ingester.ingest_single("P001", {"heart_rate": 95})
         )
         assert mock_predictor.predict.call_count == 1
 
         # Second call within debounce window — should skip prediction
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             ingester.ingest_single("P001", {"heart_rate": 96})
         )
         assert mock_predictor.predict.call_count == 1
@@ -301,7 +301,7 @@ class TestVitalsIngester:
             {"patient_id": "P002", "vitals": {"heart_rate": 110}},
         ]
 
-        results = asyncio.get_event_loop().run_until_complete(
+        results = asyncio.run(
             ingester.ingest_batch(records)
         )
 
@@ -333,7 +333,7 @@ class TestVitalsIngester:
             ws_manager=mock_ws_manager,
         )
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             ingester.ingest_single("P001", {"heart_rate": 130})
         )
 
@@ -377,7 +377,7 @@ class TestFHIRIngestion:
             "spo2": 93,
         }
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             ingester.ingest_single("fhir-123", fhir_vitals)
         )
 
@@ -425,7 +425,7 @@ class TestMonitorIntegration:
 
         # Ingest 4 sets of vitals
         for i in range(4):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 ingester.ingest_single("P001", {"heart_rate": 80 + i * 10})
             )
 

@@ -1,0 +1,102 @@
+{
+  "_comment": [
+    "DRAFT - NOT APPLIED. Proposed branch protection for main.",
+    "Apply only with the owner's explicit approval, for example:",
+    "gh api -X PUT repos/avinashamanchi/sepsis-vitals/branches/main/protection --input <this file without _comment>",
+    "Check names must match the CI job names; update this list when jobs change."
+  ],
+  "required_status_checks": {
+    "strict": true,
+    "checks": [
+      {
+        "context": "lint"
+      },
+      {
+        "context": "typecheck"
+      },
+      {
+        "context": "security"
+      },
+      {
+        "context": "test (3.10)"
+      },
+      {
+        "context": "test (3.11)"
+      },
+      {
+        "context": "test (3.12)"
+      },
+      {
+        "context": "frontend"
+      },
+      {
+        "context": "postgres-migrations"
+      },
+      {
+        "context": "docker"
+      },
+      {
+        "context": "terraform-validate"
+      },
+      {
+        "context": "compose-smoke"
+      },
+      {
+        "context": "extras (3.10)"
+      },
+      {
+        "context": "extras (3.10, api)"
+      },
+      {
+        "context": "extras (3.10, api,ml)"
+      },
+      {
+        "context": "extras (3.10, copilot)"
+      },
+      {
+        "context": "extras (3.10, integrations)"
+      },
+      {
+        "context": "extras (3.10, ml)"
+      },
+      {
+        "context": "extras (3.10, ml,train)"
+      },
+      {
+        "context": "extras (3.12)"
+      },
+      {
+        "context": "extras (3.12, api)"
+      },
+      {
+        "context": "extras (3.12, api,ml)"
+      },
+      {
+        "context": "extras (3.12, copilot)"
+      },
+      {
+        "context": "extras (3.12, integrations)"
+      },
+      {
+        "context": "extras (3.12, ml)"
+      },
+      {
+        "context": "extras (3.12, ml,train)"
+      }
+    ]
+  },
+  "enforce_admins": true,
+  "required_pull_request_reviews": {
+    "dismiss_stale_reviews": true,
+    "require_code_owner_reviews": false,
+    "required_approving_review_count": 1,
+    "require_last_push_approval": true
+  },
+  "restrictions": null,
+  "required_linear_history": false,
+  "allow_force_pushes": false,
+  "allow_deletions": false,
+  "required_conversation_resolution": true,
+  "required_signatures": false,
+  "lock_branch": false
+}

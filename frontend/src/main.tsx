@@ -5,6 +5,7 @@ import './index.css'
 import './i18n'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { routerBasename } from './lib/basePath'
 
 // Catch unhandled promise rejections globally so they never crash the page
 window.addEventListener('unhandledrejection', (event) => {
@@ -26,7 +27,7 @@ if ('indexedDB' in window) {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
-      <BrowserRouter basename="/sepsis-vitals">
+      <BrowserRouter basename={routerBasename(import.meta.env.BASE_URL)}>
         <App />
       </BrowserRouter>
     </ErrorBoundary>

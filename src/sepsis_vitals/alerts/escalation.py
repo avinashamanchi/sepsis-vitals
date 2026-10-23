@@ -15,6 +15,7 @@ as ``sepsis_vitals.ml.state_store``).
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 import threading
 import uuid
@@ -24,7 +25,37 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
+from sepsis_vitals.security import log_ref  # noqa: E402
+
 logger = logging.getLogger(__name__)
+
+#: Versioned: the legacy ``alert_escalation.db`` stored identifiers in
+#: plaintext and is never rewritten automatically.
+STORE_FILENAME = "alert_escalation.v1.db"
+LEGACY_FILENAME = "alert_escalation.db"
+_DEFAULT_DB = "__state_dir_default__"
+
+
+def default_escalation_path() -> Path:
+    return Path(os.getenv("SEPSIS_STATE_DIR") or "models") / STORE_FILENAME
+
+
+def _seal(value: Optional[str]) -> Optional[str]:
+    """Encrypt identifiers and free text at rest (AES-GCM, SEPSIS_PII_KEY)."""
+    if value is None:
+        return None
+    from sepsis_vitals.security import FieldEncryptor
+
+    return FieldEncryptor.get().encrypt(str(value))
+
+
+def _open(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    from sepsis_vitals.security import FieldEncryptor
+
+    return FieldEncryptor.get().decrypt(value)
+
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +127,7 @@ class AlertEscalationManager:
     def __init__(
         self,
         escalation_timeout_minutes: int = DEFAULT_ESCALATION_TIMEOUT_MINUTES,
-        db_path: Optional[str] = "models/alert_escalation.db",
+        db_path: Optional[str] = _DEFAULT_DB,
     ) -> None:
         self.escalation_timeout_minutes = escalation_timeout_minutes
         self._lock = threading.Lock()
@@ -104,12 +135,18 @@ class AlertEscalationManager:
 
         # Optional SQLite persistence
         self._conn: Optional[sqlite3.Connection] = None
+        if db_path == _DEFAULT_DB:
+            db_path = str(default_escalation_path())
         if db_path is not None:
+            from sepsis_vitals.ml.state_store import secure_sqlite_file, warn_if_legacy
+
             p = Path(db_path)
             p.parent.mkdir(parents=True, exist_ok=True)
+            warn_if_legacy(p, LEGACY_FILENAME)
             self._conn = sqlite3.connect(
                 str(p), check_same_thread=False, timeout=10.0
             )
+            secure_sqlite_file(p)
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.row_factory = sqlite3.Row
             self._init_db()
@@ -160,7 +197,7 @@ class AlertEscalationManager:
         for row in rows:
             alert = TrackedAlert(
                 alert_id=row["alert_id"],
-                patient_id=row["patient_id"],
+                patient_id=_open(row["patient_id"]) or "",
                 risk_level=row["risk_level"],
                 created_at=datetime.fromisoformat(row["created_at"]),
                 status=AlertStatus(row["status"]),
@@ -180,8 +217,8 @@ class AlertEscalationManager:
             alert.audit_trail = [
                 {
                     "action": r["action"],
-                    "user_id": r["user_id"],
-                    "detail": r["detail"],
+                    "user_id": _open(r["user_id"]),
+                    "detail": _open(r["detail"]),
                     "timestamp": r["timestamp"],
                 }
                 for r in trail_rows
@@ -204,7 +241,7 @@ class AlertEscalationManager:
             """,
             (
                 alert.alert_id,
-                alert.patient_id,
+                _seal(alert.patient_id),
                 alert.risk_level,
                 alert.created_at.isoformat(),
                 alert.status.value,
@@ -226,8 +263,8 @@ class AlertEscalationManager:
                 uuid.uuid4().hex,
                 alert_id,
                 entry["action"],
-                entry.get("user_id"),
-                entry.get("detail"),
+                _seal(entry.get("user_id")),
+                _seal(entry.get("detail")),
                 entry["timestamp"],
             ),
         )
@@ -282,7 +319,7 @@ class AlertEscalationManager:
             self._persist_alert(alert)
             logger.info(
                 "Alert registered for escalation tracking: %s (patient=%s, risk=%s)",
-                alert_id, patient_id, risk_level,
+                alert_id, log_ref(patient_id), risk_level,
             )
             return alert
 
@@ -460,7 +497,7 @@ class AlertEscalationManager:
                     "Alert escalated: %s → %s (patient=%s, elapsed=%.1fm)",
                     alert.alert_id,
                     TIER_LABELS[target_tier],
-                    alert.patient_id,
+                    log_ref(alert.patient_id),
                     elapsed.total_seconds() / 60,
                 )
 
@@ -488,8 +525,8 @@ class AlertEscalationManager:
                 return [
                     {
                         "action": r["action"],
-                        "user_id": r["user_id"],
-                        "detail": r["detail"],
+                        "user_id": _open(r["user_id"]),
+                        "detail": _open(r["detail"]),
                         "timestamp": r["timestamp"],
                     }
                     for r in rows

@@ -1,0 +1,95 @@
+# Candidate-complete synthetic reports on Linux.
+#
+# The committed ablation report was generated on a host where LightGBM and
+# XGBoost could not load (no OpenMP runtime), so it compared three of the
+# five candidate models. This workflow regenerates the reports where every
+# candidate loads, and fails if any is missing (SEPSIS_REQUIRE_ALL_BACKENDS).
+#
+# It never commits anything: the reports are uploaded as an artifact for a
+# person to review. Synthetic data only; nothing here is clinical evidence.
+#
+# - Run on demand (Actions > "Candidate-complete reports" > Run workflow).
+#   Defaults reproduce the committed report's protocol.
+# - On pull requests that change this file, a reduced run checks that the
+#   workflow itself works.
+
+name: Candidate-complete reports
+
+on:
+  workflow_dispatch:
+    inputs:
+      patients:
+        description: Synthetic patients for the ablation
+        default: "20000"
+      bootstrap:
+        description: Bootstrap replicates
+        default: "1000"
+      horizon_hours:
+        description: Example horizon for the profile evaluation (label mechanics only, not a clinical choice)
+        default: "12"
+  pull_request:
+    paths:
+      - .github/workflows/reports-candidate-complete.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reports-candidate-complete-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reports:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      SEPSIS_REQUIRE_ALL_BACKENDS: "1"
+      PATIENTS: ${{ github.event_name == 'workflow_dispatch' && inputs.patients || '2000' }}
+      BOOTSTRAP: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap || '100' }}
+      CV_FOLDS: ${{ github.event_name == 'workflow_dispatch' && '5' || '3' }}
+      HORIZON: ${{ github.event_name == 'workflow_dispatch' && inputs.horizon_hours || '12' }}
+      PROFILE_PATIENTS: ${{ github.event_name == 'workflow_dispatch' && '4000' || '600' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements/dev.txt
+      - name: Install locked dependencies
+        run: |
+          pip install --require-hashes -r requirements/dev.txt
+          pip install --no-deps -e .
+      - name: Every candidate backend loads
+        run: |
+          python - <<'PY'
+          from sepsis_vitals.ml import trainer
+          trainer._get_model_configs()  # raises if any backend is missing or broken
+          print(trainer.BACKEND_STATUS)
+          assert all(s == "available" for s in trainer.BACKEND_STATUS.values()), trainer.BACKEND_STATUS
+          PY
+      - name: No-labs ablation (all candidates)
+        run: |
+          python scripts/run_no_labs_ablation.py --patients "$PATIENTS" --bootstrap "$BOOTSTRAP" \
+            --cv-folds "$CV_FOLDS" --work-dir "$RUNNER_TEMP/ablation" --report-dir out
+      - name: Generator profile evaluation
+        run: |
+          python scripts/evaluate_synthetic_profiles.py --horizon-hours "$HORIZON" \
+            --patients "$PROFILE_PATIENTS" --output-dir out
+      - name: Reports record a candidate-complete run
+        run: |
+          python - <<'PY'
+          import json
+          report = json.load(open("out/no_labs_ablation.json"))
+          prov = report["provenance"]
+          assert all(s == "available" for s in prov["optional_backends"].values()), prov["optional_backends"]
+          for arm, names in report["candidate_models"].items():
+              assert {"LightGBM", "XGBoost", "RandomForest", "GradientBoosting", "LogisticRegression"} <= set(names), (arm, names)
+          assert prov["code"]["commit"] and prov["dataset"]["sha256"] and prov["runtime_seconds"] is not None
+          print(json.dumps({k: prov[k] for k in ("code", "optional_backends", "seeds", "runtime_seconds")}, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-complete-reports-${{ github.sha }}
+          path: out/
+          retention-days: 30

@@ -1,0 +1,89 @@
+{
+  "manifest_version": 1,
+  "model_id": "GradientBoosting-2.0.0",
+  "model_version": "2.0.0",
+  "pipeline_version": "2.0.0",
+  "artifacts": {
+    "sepsis_model.joblib": {
+      "sha256": "93dedb4ff761b6502a44c238802e9373260dd84b36aa0659cd22fcbf90412cf1",
+      "bytes": 381652
+    },
+    "model_metadata.json": {
+      "sha256": "cceaa355567136ee1580eca536254acf1dd73d8bab656a5127cfe2b6d9c7768c",
+      "bytes": 6853
+    },
+    "imputation_medians.json": {
+      "sha256": "32a3851f709fba7d515a2737562298ac5db61de5a3fce989096cd10f9dc52a31",
+      "bytes": 1583
+    }
+  },
+  "feature_schema": {
+    "names": [
+      "temperature",
+      "heart_rate",
+      "resp_rate",
+      "sbp",
+      "dbp",
+      "spo2",
+      "gcs",
+      "map",
+      "temperature_delta",
+      "heart_rate_delta",
+      "resp_rate_delta",
+      "sbp_delta",
+      "spo2_delta",
+      "gcs_delta",
+      "temperature_roll_mean",
+      "heart_rate_roll_mean",
+      "resp_rate_roll_mean",
+      "sbp_roll_mean",
+      "spo2_roll_mean",
+      "gcs_roll_mean",
+      "temperature_roll_std",
+      "heart_rate_roll_std",
+      "resp_rate_roll_std",
+      "sbp_roll_std",
+      "spo2_roll_std",
+      "gcs_roll_std",
+      "temperature_missing",
+      "heart_rate_missing",
+      "resp_rate_missing",
+      "sbp_missing",
+      "spo2_missing",
+      "gcs_missing",
+      "n_vitals_missing",
+      "lactate",
+      "wbc",
+      "procalcitonin",
+      "lactate_delta",
+      "wbc_delta",
+      "procalcitonin_delta",
+      "lactate_roll_mean",
+      "wbc_roll_mean",
+      "procalcitonin_roll_mean",
+      "lactate_missing",
+      "wbc_missing",
+      "procalcitonin_missing",
+      "n_labs_missing",
+      "qsofa",
+      "news2_computed",
+      "sirs_computed",
+      "shock_index_computed",
+      "age_years",
+      "has_hypertension",
+      "has_diabetes",
+      "has_ckd",
+      "has_copd",
+      "has_heart_failure",
+      "obs_gap_min",
+      "risk_level_numeric"
+    ],
+    "sha256": "713c9d45436a26808b97c67a9df3a6da0415c445d44360ef39798b3734e1bad5"
+  },
+  "runtime": {
+    "scikit_learn": "1.6.1"
+  },
+  "validation_status": "synthetic-development",
+  "training_data": "synthetic",
+  "known_issues": []
+}

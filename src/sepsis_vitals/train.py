@@ -326,6 +326,19 @@ def main(args=None):
         json.dump(meta, f, indent=2, default=str)
     print("    - dual_thresholds added to model_metadata.json")
 
+    # Manifest last, after every artifact is final: the API refuses models
+    # without one. Training data decides the evidence level; neither choice
+    # permits clinical use.
+    from pathlib import Path
+
+    from sepsis_vitals.ml.artifacts import write_manifest
+    write_manifest(
+        Path(opts.output),
+        "synthetic-development" if opts.data_source == "synthetic" else "unvalidated",
+        training_data=opts.data_source,
+    )
+    print("    - manifest.json (checksums, feature schema, validation status)")
+
     # ── LOPOCV evaluation (for small MIMIC datasets) ────────────────────
     if opts.data_source == "mimic-demo" and use_lopocv:
         print("\n" + "─" * 70)

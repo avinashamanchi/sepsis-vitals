@@ -3,7 +3,7 @@
 retrain.py — Unified retraining pipeline for sepsis identification model.
 
 Supports two data sources:
-  1. Synthetic (NHANES-calibrated) — for development and baseline metrics
+  1. Hand-authored heuristic synthetic data — for development and baseline metrics
   2. MIMIC-IV (real ICU data)      — for clinical validation and pitch deck
 
 Usage:
@@ -21,13 +21,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import sys
 import time
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -50,22 +48,25 @@ def load_synthetic_data(
     n_patients: int,
     prevalence: float,
     seed: int,
+    **generator_options: Any,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Dict[str, Any]]:
-    """Generate synthetic training data."""
+    """Generate synthetic training data (legacy generator unless options are given)."""
     from sepsis_vitals.ml.synthetic_data import generate_train_val_test
 
     train_df, val_df, test_df = generate_train_val_test(
         n_patients=n_patients,
         sepsis_prevalence=prevalence,
         seed=seed,
+        **generator_options,
     )
 
     provenance = {
         "source": "synthetic",
-        "generator": "NHANES-calibrated synthetic (sepsis_vitals.ml.synthetic_data)",
+        "generator": "Hand-authored heuristic synthetic generator (sepsis_vitals.ml.synthetic_data)",
         "n_patients": n_patients,
         "sepsis_prevalence": prevalence,
         "seed": seed,
+        "generator_options": generator_options,
         "clinical_validation": "NONE — synthetic data only. Requires MIMIC-IV or institutional EHR validation.",
         "regulatory_note": "NOT suitable for clinical claims. Research use only.",
     }
@@ -131,6 +132,7 @@ def run_pipeline(
     output_dir: str = "models",
     cv_folds: int = 5,
     skip_shap: bool = False,
+    feature_set: str = "full",
 ) -> Dict[str, Any]:
     """Execute the full training pipeline."""
     from sepsis_vitals.ml.trainer import (
@@ -145,6 +147,11 @@ def run_pipeline(
 
     total_start = time.time()
     source = provenance["source"]
+    run_provenance = {
+        **provenance,
+        "feature_set": feature_set,
+        "lab_features_available": feature_set == "full",
+    }
 
     print("=" * 70)
     print("  SEPSIS VITALS — MODEL RETRAINING PIPELINE v" + PIPELINE_VERSION)
@@ -156,6 +163,7 @@ def run_pipeline(
     else:
         print(f"  Patients:           {provenance.get('n_patients', 'N/A'):,}")
     print(f"  Model version:      {MODEL_VERSION}")
+    print(f"  Feature set:        {feature_set}")
     print(f"  Output:             {output_dir}")
 
     # ── Step 1: Data summary ────────────────────────────────────────────
@@ -172,9 +180,9 @@ def run_pipeline(
     # ── Step 2: Feature engineering ─────────────────────────────────────
     _banner("STEP 2: Feature engineering")
 
-    train_features, feature_cols = prepare_features(train_df)
-    val_features, _ = prepare_features(val_df)
-    test_features, _ = prepare_features(test_df)
+    train_features, feature_cols = prepare_features(train_df, feature_set=feature_set)
+    val_features, _ = prepare_features(val_df, feature_set=feature_set)
+    test_features, _ = prepare_features(test_df, feature_set=feature_set)
 
     print(f"\n  Features: {len(feature_cols)}")
     print(f"  Sample:   {', '.join(feature_cols[:8])}...")
@@ -226,7 +234,7 @@ def run_pipeline(
 
     X_val_scaled = best.scaler.transform(X_val) if best.scaler else X_val
     best = calibrate_model(best, X_val_scaled, y_val)
-    print(f"  Calibrated: Yes (Platt scaling)")
+    print("  Calibrated: Yes (Platt scaling)")
 
     # ── Step 5: SHAP explanations ───────────────────────────────────────
     shap_importance = {}
@@ -240,7 +248,7 @@ def run_pipeline(
                 feature_names=feature_cols,
                 max_samples=min(1000, len(X_test)),
             )
-            print(f"\n  Top 5 SHAP features:")
+            print("\n  Top 5 SHAP features:")
             for i, (feat, imp) in enumerate(list(shap_importance.items())[:5]):
                 print(f"    {i+1}. {feat}: {imp:.4f}")
         except Exception as e:
@@ -253,12 +261,12 @@ def run_pipeline(
     # ── Step 6: Evaluation report ───────────────────────────────────────
     _banner("STEP 6: Generating evaluation report")
 
-    X_test_final = best.scaler.transform(X_test) if best.scaler else X_test
-
+    # generate_evaluation_report applies best.scaler itself: pass unscaled
+    # features (passing scaled ones scaled them twice for scaler-based models).
     report_path = generate_evaluation_report(
         results=results,
         best=best,
-        X_test=X_test_final,
+        X_test=X_test,
         y_test=y_test,
         feature_names=feature_cols,
         shap_importance=shap_importance,
@@ -270,7 +278,9 @@ def run_pipeline(
         report = json.load(f)
 
     # Inject provenance and version into report
-    report["data_provenance"] = provenance
+    report["data_provenance"] = run_provenance
+    report["feature_set"] = feature_set
+    report["feature_names"] = feature_cols
     report["model_version"] = MODEL_VERSION
     report["pipeline_version"] = PIPELINE_VERSION
 
@@ -298,7 +308,8 @@ def run_pipeline(
 
     # Inject version and provenance
     metadata["version"] = MODEL_VERSION
-    metadata["data_provenance"] = provenance
+    metadata["data_provenance"] = run_provenance
+    metadata["feature_set"] = feature_set
     metadata["retrained_at"] = datetime.now(timezone.utc).isoformat()
     metadata["pipeline_version"] = PIPELINE_VERSION
 
@@ -328,7 +339,8 @@ def run_pipeline(
     else:
         card["training_data"] = (
             f"Synthetic dataset ({provenance.get('n_patients', 'N/A'):,} patients) "
-            f"calibrated to NHANES population distributions. "
+            f"generated from hand-authored distributions partially informed by public "
+            f"clinical reference ranges. "
             f"NOT trained on real patient data. "
             f"Clinical validation on MIMIC-IV or institutional EHR data is REQUIRED."
         )
@@ -350,6 +362,15 @@ def run_pipeline(
 
     print(f"  Metadata updated: {metadata_file}")
 
+    # Manifest last, once every artifact is final (the API refuses models without one).
+    from sepsis_vitals.ml.artifacts import write_manifest
+    source = metadata.get("data_provenance", {}).get("source", "unknown")
+    write_manifest(
+        Path(output_dir),
+        "synthetic-development" if source == "synthetic" else "unvalidated",
+    )
+    print(f"  Manifest written: {Path(output_dir) / 'manifest.json'}")
+
     # ── Summary ─────────────────────────────────────────────────────────
     total_time = time.time() - total_start
 
@@ -359,6 +380,7 @@ def run_pipeline(
     print("  RETRAINING COMPLETE")
     print("=" * 70)
     print(f"\n  Data Source:      {source}")
+    print(f"  Feature Set:      {feature_set}")
     print(f"  Model Version:    {MODEL_VERSION}")
     print(f"  Best Model:       {best.name}")
     print(f"  Test AUROC:       {test_metrics.get('test_auroc', 0):.4f}")
@@ -369,20 +391,48 @@ def run_pipeline(
     print(f"  Calibration ECE:  {report.get('calibration', {}).get('ece', 0):.4f}")
     print(f"  Total Time:       {total_time:.1f}s")
     print(f"  Output:           {output_dir}/")
-    print(f"\n" + "=" * 70)
+    print("\n" + "=" * 70)
 
     return {
         "best_model": best.name,
         "test_metrics": test_metrics,
         "report": report,
-        "provenance": provenance,
+        "provenance": run_provenance,
+        "feature_set": feature_set,
         "feature_cols": feature_cols,
         "shap_importance": shap_importance,
         "total_time": total_time,
+        # Held-out predictions of the final (calibrated) model, row-aligned with
+        # test_df, for paired uncertainty estimates (sepsis_vitals.ml.uncertainty).
+        "test_predictions": {
+            "patient_id": test_features["patient_id"].tolist(),
+            "y_true": y_test.tolist(),
+            "y_prob": best.model.predict_proba(
+                best.scaler.transform(X_test) if best.scaler else X_test
+            )[:, 1].tolist(),
+        },
     }
 
 
-def main():
+def archive_existing_model(output_dir: Path) -> Path:
+    """Copy the model in *output_dir* (per its manifest) to archive/<sha>/.
+
+    Restoring means copying the archived files back; the manifest pins every
+    file's SHA-256, so a partial or mixed restore is refused at load time.
+    """
+    import shutil
+
+    manifest = json.loads((output_dir / "manifest.json").read_text())
+    sha = manifest["artifacts"]["sepsis_model.joblib"]["sha256"][:12]
+    dest = output_dir / "archive" / sha
+    dest.mkdir(parents=True, exist_ok=True)
+    for name in list(manifest["artifacts"]) + ["manifest.json"]:
+        if (output_dir / name).exists() and not (dest / name).exists():
+            shutil.copy2(output_dir / name, dest / name)
+    return dest
+
+
+def main(argv: list | None = None):
     parser = argparse.ArgumentParser(
         description="Retrain sepsis identification model (synthetic or MIMIC-IV)"
     )
@@ -422,8 +472,34 @@ def main():
         "--skip-shap", action="store_true",
         help="Skip SHAP computation (faster)"
     )
+    parser.add_argument(
+        "--feature-set", choices=["full", "no_labs"], default="full",
+        help="Feature set: 'full' or 'no_labs' ablation (default: full)"
+    )
+    parser.add_argument(
+        "--generator-profile", choices=["legacy", "decoupled"], default="legacy",
+        help="Synthetic generator profile (sepsis_vitals.ml.profile_evaluation.PROFILES)",
+    )
+    parser.add_argument(
+        "--label-mode", choices=["current_state", "onset_within_horizon"], default="current_state",
+        help="Training label; onset_within_horizon needs --horizon-hours (a clinical choice, no default)",
+    )
+    parser.add_argument("--horizon-hours", type=float, default=None)
+    parser.add_argument(
+        "--replace", action="store_true",
+        help="Allow replacing a model already in --output (it is archived to <output>/archive/<sha>/ first)",
+    )
 
-    opts = parser.parse_args()
+    opts = parser.parse_args(argv)
+
+    if opts.label_mode == "onset_within_horizon" and opts.horizon_hours is None:
+        parser.error("--label-mode onset_within_horizon requires --horizon-hours (a clinical decision)")
+    output = Path(opts.output)
+    if (output / "manifest.json").exists():
+        if not opts.replace:
+            parser.error(f"{output} already holds a model (manifest.json); "
+                         "pass --replace to archive it and write a new one")
+        print(f"Archived the current model to {archive_existing_model(output)}")
 
     if opts.source == "mimic":
         if opts.mimic_path is None:
@@ -434,10 +510,16 @@ def main():
             seed=opts.seed,
         )
     else:
+        from sepsis_vitals.ml.profile_evaluation import PROFILES
+
+        options = dict(PROFILES[opts.generator_profile])
+        if opts.label_mode != "current_state":
+            options.update(label_mode=opts.label_mode, horizon_hours=opts.horizon_hours)
         train_df, val_df, test_df, provenance = load_synthetic_data(
             n_patients=opts.patients,
             prevalence=opts.prevalence,
             seed=opts.seed,
+            **options,
         )
 
     result = run_pipeline(
@@ -448,6 +530,7 @@ def main():
         output_dir=opts.output,
         cv_folds=opts.cv_folds,
         skip_shap=opts.skip_shap,
+        feature_set=opts.feature_set,
     )
 
     return result

@@ -300,3 +300,54 @@ class TestComputeScores:
         result = compute_scores({"heart_rate": 130, "sbp": 75})
         assert isinstance(result, ScoreBundle)
         assert result.shock_index is not None
+
+
+# ---------------------------------------------------------------------------
+# Published-definition boundary tests (NEWS2: RCP 2017; SIRS: ACCP/SCCM 1992)
+# ---------------------------------------------------------------------------
+
+import pytest  # noqa: E402
+
+from sepsis_vitals.scores import news2_style as _news2, partial_sirs as _sirs  # noqa: E402
+
+
+@pytest.mark.parametrize("rr,points", [(8, 3), (9, 1), (11, 1), (12, 0), (20, 0), (21, 2), (24, 2), (25, 3)])
+def test_news2_resp_rate_bands(rr, points):
+    assert _news2({"resp_rate": rr}) == points
+
+
+@pytest.mark.parametrize("sbp,points", [(90, 3), (91, 2), (100, 2), (101, 1), (110, 1), (111, 0), (219, 0), (220, 3)])
+def test_news2_sbp_bands(sbp, points):
+    assert _news2({"sbp": sbp}) == points
+
+
+@pytest.mark.parametrize("hr,points", [(40, 3), (41, 1), (50, 1), (51, 0), (90, 0), (91, 1), (110, 1), (111, 2), (130, 2), (131, 3)])
+def test_news2_heart_rate_bands(hr, points):
+    assert _news2({"heart_rate": hr}) == points
+
+
+@pytest.mark.parametrize("temp,points", [(35.0, 3), (35.1, 1), (36.0, 1), (36.1, 0), (38.0, 0), (38.1, 1), (39.0, 1), (39.1, 2)])
+def test_news2_temperature_bands(temp, points):
+    assert _news2({"temperature": temp}) == points
+
+
+@pytest.mark.parametrize("temp,fires", [(35.9, True), (36.0, False), (38.0, False), (38.1, True)])
+def test_sirs_temperature_threshold(temp, fires):
+    assert _sirs({"temperature": temp})[1]["sirs_temp"] is fires
+
+
+def test_score_api_reports_news2_limitations(monkeypatch):
+    """C7: until a clinical specification exists, every NEWS2 output carries its gaps."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    import sepsis_vitals.api as api
+
+    monkeypatch.setattr("sepsis_vitals.dependencies._auth_enabled", False)
+    api.app.dependency_overrides[api.check_rate_limit] = lambda: None
+    try:
+        body = TestClient(api.app).post("/score", json={"heart_rate": 120, "resp_rate": 24}).json()
+    finally:
+        api.app.dependency_overrides.clear()
+    joined = " ".join(body["news2_limitations"])
+    assert "ACVPU" in joined and "red score" in joined

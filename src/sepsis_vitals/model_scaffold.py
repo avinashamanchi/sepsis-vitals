@@ -77,7 +77,8 @@ def train_lightgbm(X: pd.DataFrame, y: pd.Series) -> tuple[Any, ModelCard]:
         verbose=-1,
     )
     model.fit(X, y)
-    y_prob = model.predict_proba(X)[:, 1]
+    # LightGBM's stubs type predict_proba loosely; normalise to an ndarray.
+    y_prob = np.asarray(model.predict_proba(X))[:, 1]
     auc = roc_auc_score(y, y_prob)
 
     card = ModelCard(

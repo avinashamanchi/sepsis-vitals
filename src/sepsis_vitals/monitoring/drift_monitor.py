@@ -205,7 +205,9 @@ class DriftMonitor:
 
     async def start(self) -> None:
         """Start the periodic background check loop."""
-        self._stop_event.clear()
+        # A fresh Event per start: the singleton outlives event loops (e.g. an
+        # app restarted in the same process), and an Event is loop-bound.
+        self._stop_event = asyncio.Event()
         self._task = asyncio.create_task(self._run_loop(), name="drift_monitor")
         logger.info(
             "DriftMonitor started — checking every %ds, buffer %d observations",

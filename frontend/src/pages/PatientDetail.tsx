@@ -9,9 +9,8 @@ import { useStore } from '../stores/useStore'
 import type { RiskLevel } from '../types'
 import clsx from 'clsx'
 import {
-  AreaChart, Area, LineChart, Line, BarChart, Bar, Cell,
+  LineChart, Line, BarChart, Bar, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceLine,
 } from 'recharts'
 import { useTranslation } from 'react-i18next'
 
@@ -161,8 +160,6 @@ export function PatientDetail() {
   const chartData = trend.map((t) => ({
     time: t.timestamp,
     risk: Math.round(t.risk_probability * 100),
-    riskUpper: Math.min(100, Math.round(t.risk_probability * 100) + 8),
-    riskLower: Math.max(0, Math.round(t.risk_probability * 100) - 8),
     hr: t.vitals.heart_rate,
     temp: t.vitals.temperature,
     sbp: t.vitals.sbp,
@@ -219,7 +216,11 @@ export function PatientDetail() {
             )}
           </div>
         </div>
-        <RiskBadge level={currentRisk} size="md" pulse={currentRisk === 'critical'} />
+        {latest ? (
+          <RiskBadge level={currentRisk} size="md" pulse={currentRisk === 'critical'} />
+        ) : (
+          <span className="text-xs text-text-muted" data-testid="not-scored">Not scored</span>
+        )}
       </div>
 
       {loading && <LoadingSpinner size="lg" label={t('patientDetail.loadingPatient')} className="py-12" />}
@@ -282,18 +283,15 @@ export function PatientDetail() {
             <div className="p-4 h-[300px]">
               <div role="img" aria-label={t('patientDetail.riskTrajectoryLabel', { id })}>
               <ResponsiveContainer width="100%" height={268}>
-                <AreaChart data={chartData}>
+                <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                   <XAxis dataKey="time" stroke="#4a6080" tick={{ fill: '#4a6080', fontSize: 11 }} tickLine={false} interval={3} />
                   <YAxis stroke="#4a6080" tick={{ fill: '#4a6080', fontSize: 11 }} tickLine={false} axisLine={false} domain={[0, 100]} unit="%" />
                   <Tooltip contentStyle={tooltipStyle} />
-                  <ReferenceLine y={25} stroke="#ffb830" strokeDasharray="4 4" label={{ value: 'Moderate', fill: '#ffb830', fontSize: 10, position: 'left' }} />
-                  <ReferenceLine y={50} stroke="#ff6b35" strokeDasharray="4 4" label={{ value: 'High', fill: '#ff6b35', fontSize: 10, position: 'left' }} />
-                  <ReferenceLine y={75} stroke="#ff3b5c" strokeDasharray="4 4" label={{ value: 'Critical', fill: '#ff3b5c', fontSize: 10, position: 'left' }} />
-                  <Area type="monotone" dataKey="riskUpper" stackId="ci" stroke="none" fill="transparent" />
-                  <Area type="monotone" dataKey="riskLower" stackId="ci" stroke="none" fill="#ff3b5c" fillOpacity={0.08} />
-                  <Line type="monotone" dataKey="risk" stroke="#ff3b5c" strokeWidth={2} dot={{ fill: '#ff3b5c', r: 3 }} name="Risk %" />
-                </AreaChart>
+                  {/* No band or threshold lines: the model output has no interval here, and
+                      the risk level comes from the API (rule floor plus model), not fixed cut-offs. */}
+                  <Line type="monotone" dataKey="risk" stroke="#ff3b5c" strokeWidth={2} dot={{ fill: '#ff3b5c', r: 3 }} name="Model output %" />
+                </LineChart>
               </ResponsiveContainer>
               </div>
             </div>

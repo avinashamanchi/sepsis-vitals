@@ -8,7 +8,7 @@ SHAP feature importance, and data provenance documentation.
 
 Usage:
     python generate_validation_report.py
-    python generate_validation_report.py --output docs/validation-report.html
+    python generate_validation_report.py --output reports/validation-report.html
 """
 
 from __future__ import annotations
@@ -507,7 +507,7 @@ def main():
         help="Model artifacts directory (default: models)"
     )
     parser.add_argument(
-        "--output", default="docs/validation-report.html",
+        "--output", default="reports/validation-report.html",
         help="Output HTML path (default: docs/validation-report.html)"
     )
     opts = parser.parse_args()

@@ -1,5 +1,3 @@
-version: "3.9"
-
 # ── Global log rotation ─────────────────────────────────────────────────────
 # Prevents disk exhaustion on edge devices (NUCs, district hospital servers).
 # Each container retains at most 150MB of logs (3 x 50MB rotated files).
@@ -13,9 +11,13 @@ x-logging: &default-logging
 networks:
   sepsis_net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16   # referenced by TRUSTED_PROXIES below
 
 # ── Named volumes ─────────────────────────────────────────────────────────────
 volumes:
+  api_state:
   postgres_data:
   redis_data:
   prometheus_data:
@@ -36,7 +38,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"   # loopback only; never expose the clinical DB
     networks: [sepsis_net]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sepsis -d sepsis_vitals"]
@@ -58,7 +60,7 @@ services:
     volumes:
       - redis_data:/data
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     networks: [sepsis_net]
     healthcheck:
       test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
@@ -79,11 +81,13 @@ services:
     environment:
       DATABASE_URL:         postgresql+asyncpg://sepsis:${POSTGRES_PASSWORD}@db:5432/sepsis_vitals
       REDIS_URL:            redis://:${REDIS_PASSWORD}@redis:6379/0
-      ANTHROPIC_API_KEY:    ${ANTHROPIC_API_KEY:?Set ANTHROPIC_API_KEY in .env}
+      ANTHROPIC_API_KEY:    ${ANTHROPIC_API_KEY:-}   # copilot is frozen by default
       JWT_PRIVATE_KEY:      ${JWT_PRIVATE_KEY:?Set JWT_PRIVATE_KEY in .env}
       JWT_PUBLIC_KEY:       ${JWT_PUBLIC_KEY:?Set JWT_PUBLIC_KEY in .env}
       SEPSIS_PII_KEY:       ${SEPSIS_PII_KEY:?Set SEPSIS_PII_KEY in .env}
-      SEPSIS_WEBHOOK_SECRET:${SEPSIS_WEBHOOK_SECRET:?Set SEPSIS_WEBHOOK_SECRET in .env}
+      SEPSIS_WEBHOOK_SECRET: ${SEPSIS_WEBHOOK_SECRET:?Set SEPSIS_WEBHOOK_SECRET in .env}
+      # HMAC key for password-reset and email-verification tokens (JWTs use the RSA keys).
+      SEPSIS_TOKEN_SECRET:  ${SEPSIS_TOKEN_SECRET:?Set SEPSIS_TOKEN_SECRET in .env}
       SEPSIS_CONFIG_KEY:    ${SEPSIS_CONFIG_KEY}
       SEPSIS_ENV:           ${SEPSIS_ENV:-production}
       SEPSIS_ALLOWED_ORIGINS: http://localhost:8000,http://localhost:3000
@@ -92,9 +96,19 @@ services:
       MLLP_TLS_CA:          ${MLLP_TLS_CA:-}
       BREAK_GLASS_TOKEN_HASH: ${BREAK_GLASS_TOKEN_HASH:-}
       LOG_LEVEL:            INFO
+      # nginx (dashboard) forwards X-Forwarded-For from inside this network
+      TRUSTED_PROXIES:      172.28.0.0/16
+      SEPSIS_RUN_MIGRATIONS: "true"
+    volumes:
+      # The committed model is a SYNTHETIC development artifact
+      # (validation_status: synthetic-development; clinical use not permitted).
+      # Replace this mount with a verified artifact directory when one exists.
+      - ../models:/models:ro
+      - api_state:/app/state
     ports:
-      - "8080:8080"
-      - "2575:2575"
+      - "127.0.0.1:8080:8080"   # reach the API through the dashboard proxy on :8000
+      # MLLP: bind to a hospital-network interface only after enabling MLLP_TLS_*
+      - "127.0.0.1:2575:2575"
     networks: [sepsis_net]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -115,7 +129,7 @@ services:
       - --storage.tsdb.retention.time=30d
       - --web.enable-lifecycle
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     networks: [sepsis_net]
 
   # ── Grafana ────────────────────────────────────────────────────────────────
@@ -133,7 +147,7 @@ services:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     networks: [sepsis_net]
 
   # ── PostgreSQL Backup (nightly encrypted pg_dump) ───────────────────────────
@@ -215,7 +229,7 @@ services:
       - "8000:80"
     networks: [sepsis_net]
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
       interval: 30s
       timeout: 5s
       retries: 3

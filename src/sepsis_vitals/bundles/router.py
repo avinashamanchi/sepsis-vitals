@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from sepsis_vitals.api import verify_auth, verify_patient_org
+from sepsis_vitals.dependencies import verify_auth, verify_patient_org
 from sepsis_vitals.bundles import service
 from sepsis_vitals.bundles.protocol import list_task_keys
 from sepsis_vitals.db import get_db
