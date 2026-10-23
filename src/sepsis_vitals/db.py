@@ -388,6 +388,10 @@ class Score(Base):
     uva_style: Mapped[Optional[int]] = mapped_column(
         SmallInteger, nullable=True
     )
+    # Published UVA score (Moore 2017) and its band; NULL on rows scored
+    # before migration 007. uva_style above is the legacy project score.
+    uva_score: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
+    uva_risk_band: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     risk_level: Mapped[str] = mapped_column(String(16), nullable=False)
     alert_flag: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false"
@@ -563,6 +567,32 @@ class PredictionRecord(Base):
             f"<PredictionRecord id={self.id!r} patient={self.patient_id!r} "
             f"risk={self.risk_level!r} prob={self.risk_probability:.2f}>"
         )
+
+
+class StudyOutcome(Base):
+    """Adjudicated outcome for one patient, for a local silent-mode study.
+
+    Append-only: a correction is a new row, and the most recent row per
+    patient is the one used. No free text, so no PHI beyond the patient link.
+    ``definition`` names the site's reference standard and its version (for
+    example "Sepsis-3 site protocol v1"), decided by the clinical lead (R2).
+    """
+
+    __tablename__ = "study_outcomes"
+
+    id: Mapped[str] = mapped_column(UUIDType, primary_key=True, default=_uuid_default)
+    patient_id: Mapped[str] = mapped_column(UUIDType, ForeignKey("patients.id"), nullable=False)
+    site_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    sepsis: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    onset_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    died_in_hospital: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    definition: Mapped[str] = mapped_column(String(64), nullable=False)
+    recorded_by: Mapped[Optional[str]] = mapped_column(UUIDType, ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default="now()" if not _is_sqlite else None
+    )
+
+    __table_args__ = (Index("idx_study_outcomes_patient_time", "patient_id", created_at.desc()),)
 
 
 class ImmutableRecordError(RuntimeError):

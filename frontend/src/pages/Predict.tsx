@@ -229,7 +229,9 @@ export function Predict() {
                 </p>
                 <div className="text-center py-4">
                   <p className="text-5xl font-bold font-heading text-text-primary">
-                    {(result.risk_probability * 100).toFixed(1)}%
+                    {result.risk_probability != null
+                      ? `${(result.risk_probability * 100).toFixed(1)}%`
+                      : <span className="text-base" data-testid="model-withheld">Model output withheld (silent mode)</span>}
                   </p>
                   <p className="text-sm text-text-secondary mt-2">
                     Development-model output (not a calibrated probability for patients)

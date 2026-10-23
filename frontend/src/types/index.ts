@@ -58,7 +58,10 @@ export interface Prediction {
   patient_id: string
   timestamp: string
   observed_at?: string | null
-  risk_probability: number
+  /** Null in silent mode (model output recorded but withheld). */
+  risk_probability: number | null
+  display_mode?: 'research' | 'silent'
+  model_output_withheld?: boolean
   risk_level: RiskLevel
   /** Null unless the model supports a validated interval (see uncertainty). */
   confidence_interval: { lower: number; upper: number } | null
@@ -104,7 +107,12 @@ export interface ScoreResult {
   sirs_count: number
   news2_style: number
   shock_index: number | null
+  /** Published UVA score (Moore et al. 2017): in-hospital mortality risk, 0-13. */
   uva: number
+  uva_risk_band?: 'low' | 'medium' | 'high'
+  uva_missing_inputs?: string[]
+  uva_outcome?: string
+  uva_reference?: string
   risk_level: RiskLevel
   alert_flag: boolean
   explanations: string[]
@@ -118,7 +126,7 @@ export interface MonitoredPatient {
   risk_probability: number | null
   risk_level: RiskLevel | 'unknown'
   /** 'scored' only when the latest attempt produced a recorded result. */
-  risk_status?: 'scored' | 'not-scored' | 'unavailable'
+  risk_status?: 'scored' | 'not-scored' | 'rules-only' | 'unavailable'
   risk_status_reason?: string | null
   trend_direction: 'improving' | 'stable' | 'worsening' | 'unknown'
   last_prediction_time: number

@@ -11,6 +11,16 @@ from pathlib import Path
 
 import pytest
 
+
+def _model_files():
+    """Every file the committed manifest lists, plus the manifest itself."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    models = _Path(__file__).resolve().parents[1] / "models"
+    return list(_json.loads((models / "manifest.json").read_text())["artifacts"]) + ["manifest.json"]
+
+
 pytest.importorskip("sklearn")
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +31,7 @@ sys.path.insert(0, str(ROOT))
 def model_dir(tmp_path):
     dest = tmp_path / "models"
     dest.mkdir()
-    for name in ("sepsis_model.joblib", "model_metadata.json", "imputation_medians.json", "manifest.json"):
+    for name in _model_files():
         shutil.copy(ROOT / "models" / name, dest / name)
     return dest
 

@@ -297,6 +297,11 @@ class SepsisPredictor:
             self.metadata = json.load(f)
 
         self.feature_names = self.metadata["feature_names"]
+        # Raw inputs this artifact actually reads (a vitals-only model reads no labs).
+        self.inputs_used = {
+            name for name in self._VITALS + self._LABS
+            if any(f == name or f.startswith(name + "_") for f in self.feature_names)
+        }
         self.dual_thresholds = self.metadata.get("dual_thresholds")
         check_feature_compatibility(self.feature_names)
         self.artifact_status = status
@@ -571,14 +576,20 @@ class SepsisPredictor:
                 labels.append("negative")
             if risk_prob >= 1 - quantile:
                 labels.append("positive")
+            note = (
+                "Outcome labels consistent with this output at the stated coverage on "
+                "the calibration data (synthetic). Not an interval for this patient's risk."
+            )
+            if not labels:
+                note += (" Empty set: at this coverage the output supports neither label, "
+                         "so it should not be read as either high or low risk.")
+            elif len(labels) == 2:
+                note += " Both labels: the output cannot separate them at this coverage."
             return {
                 "method": "split-conformal label set",
                 "coverage_target": round(1 - float(cp.alpha), 4),
                 "label_set": labels,
-                "note": (
-                    "Outcome labels consistent with this output at the stated coverage on "
-                    "the calibration data (synthetic). Not an interval for this patient's risk."
-                ),
+                "note": note,
             }
         return {
             "method": "none",
@@ -606,8 +617,10 @@ class SepsisPredictor:
         def warn(code: str, message: str, fields: Optional[List[str]] = None) -> None:
             warnings.append({"code": code, "message": message, "fields": fields or []})
 
-        absent_vitals = [v for v in self._VITALS if _missing(vitals.get(v))]
-        absent_labs = [v for v in self._LABS if _missing(vitals.get(v))]
+        used = getattr(self, "inputs_used", set(self._VITALS + self._LABS))
+        absent_vitals = [v for v in self._VITALS if v in used and _missing(vitals.get(v))]
+        absent_labs = [v for v in self._LABS if v in used and _missing(vitals.get(v))]
+        unused_inputs = [v for v in self._VITALS + self._LABS if v not in used and not _missing(vitals.get(v))]
         if absent_vitals:
             warn("vitals_not_measured",
                  "Not in this observation; the model substituted typical training values.",
@@ -616,6 +629,10 @@ class SepsisPredictor:
             warn("labs_not_measured",
                  "Not in this observation; the model substituted typical training values.",
                  absent_labs)
+        if unused_inputs:
+            warn("inputs_not_used_by_model",
+                 "Recorded, but this model does not use them; the rule-based scores still do.",
+                 unused_inputs)
         if age_years is None:
             warn("age_not_supplied",
                  f"Age not supplied; the pipeline used {self._DEFAULT_AGE} years.", ["age_years"])
@@ -685,8 +702,9 @@ class SepsisPredictor:
         missingness indicators do not change.
         """
         variants: List[Dict[str, Any]] = []
+        used = getattr(self, "inputs_used", set(self._VITALS + self._LABS))
         for name in self._VITALS + self._LABS:
-            if all(_missing(r.get(name)) for r in rows):
+            if name not in used or all(_missing(r.get(name)) for r in rows):
                 continue
             reference = self._imputation_medians.get(name)
             if reference is None or _missing(reference):

@@ -158,6 +158,8 @@ async def model_status():
         policy = predictor.threshold_policy()
         status["threshold_policy"] = {k: policy[k] for k in ("id", "status", "sha256")}
     status["recent_inference"] = recent_inference_summary(list(_core()._recent_inferences))
+    from sepsis_vitals.ml.decision_policy import model_display_mode
+    status["model_display"] = model_display_mode()
     return status
 
 

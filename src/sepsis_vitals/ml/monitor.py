@@ -262,7 +262,7 @@ class MonitoredPatient:
     # No score until one is calculated and recorded: never a default 0.0.
     risk_probability: Optional[float] = None
     risk_level: str = "unknown"
-    risk_status: str = "not-scored"  # not-scored | scored | unavailable
+    risk_status: str = "not-scored"  # not-scored | scored | rules-only | unavailable
     risk_status_reason: Optional[str] = None
     trend_direction: str = "unknown"  # improving, stable, worsening
     last_prediction_time: float = 0.0
@@ -346,6 +346,15 @@ class PatientRegistry:
             patient.risk_level = risk_level
             patient.risk_status = "scored"
             patient.risk_status_reason = None
+
+    def update_rules_only(self, patient_id: str, rule_level: str) -> None:
+        """Silent mode: show the rule-based level; the model output is withheld."""
+        patient = self._patients.get(patient_id)
+        if patient:
+            patient.risk_probability = None
+            patient.risk_level = rule_level
+            patient.risk_status = "rules-only"
+            patient.risk_status_reason = "model output withheld (silent mode)"
 
     def mark_unavailable(self, patient_id: str, reason: str) -> None:
         """The latest attempt produced no risk: clear the previous score."""
@@ -559,6 +568,25 @@ class VitalsIngester:
         if callable(track):
             track(prediction)
         self.registry.record_prediction_time(patient_id, now)
+
+        from sepsis_vitals.ml.decision_policy import model_display_mode
+        if model_display_mode() == "silent":
+            # Recorded in full above; users see the rule-based level only, and
+            # no model-driven deterioration or recovery alert is broadcast.
+            scores = result.get("clinical_scores") or {}
+            rule_level = result.get("rule_risk_level") or scores.get("risk_level") or "unknown"
+            self.registry.update_rules_only(patient_id, rule_level)
+            await self.ws_manager.broadcast({
+                "type": "sepsis_alert" if scores.get("alert_flag") else "patient_update",
+                "patient_id": patient_id,
+                "risk_level": rule_level,
+                "risk_probability": None,
+                "model_output_withheld": True,
+                "timestamp": result.get("timestamp"),
+                "audit_record_id": result.get("audit_record_id"),
+            })
+            return result
+
         self.registry.update_risk(
             patient_id, prediction.risk_probability, prediction.risk_level
         )

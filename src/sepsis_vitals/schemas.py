@@ -40,7 +40,20 @@ class VitalsInput(BaseModel):
     )
 
 
-_NEWS2_FLAGS = ("on_supplemental_o2", "spo2_scale2")
+class ScoreInput(VitalsInput):
+    """``/score`` only. HIV status is accepted here and nowhere else, so it is
+    never stored, logged or sent to the model, the audit trail or the copilot."""
+
+    hiv_positive: Optional[bool] = Field(
+        None,
+        description=(
+            "Known HIV-positive serostatus, used only by the published UVA score "
+            "(true adds 2 points; false or omitted scores as 'no/unknown'). Not stored."
+        ),
+    )
+
+
+_NEWS2_FLAGS = ("on_supplemental_o2", "spo2_scale2", "hiv_positive")  # context, not measurements
 
 
 def _count_measurements(vitals: Dict[str, Any]) -> int:
@@ -172,7 +185,9 @@ class PredictionResponse(BaseModel):
     patient_id: str
     timestamp: str
     observed_at: Optional[str] = Field(None, description="Time of the scored observation (UTC)")
-    risk_probability: float = Field(..., description="Development-model output; not calibrated for patients")
+    risk_probability: Optional[float] = Field(
+        ..., description="Development-model output; not calibrated for patients. Null in silent mode"
+    )
     risk_level: str = Field(..., description="Higher of rule_risk_level and model_risk_level (ordinal, not a probability)")
     confidence_interval: Optional[ConfidenceInterval] = Field(
         None, description="Always null unless the artifact supports a validated interval; see uncertainty"
@@ -193,6 +208,8 @@ class PredictionResponse(BaseModel):
     decision_support_notice: str = ""
     request_id: str = ""
     audit_record_id: str = Field("", description="The append-only record written before this response")
+    display_mode: str = Field("research", description="research, or silent (model output withheld)")
+    model_output_withheld: bool = False
     research_only: bool = True
     clinical_use: str = "not-permitted"
     validation_status: str = "Synthetic development baseline; no clinical validation"
@@ -225,7 +242,12 @@ class ScoreResponse(BaseModel):
     sirs_count: int
     news2_style: int
     shock_index: Optional[float]
-    uva: int
+    uva: int = Field(..., description="Published UVA score (0-13); see uva_reference")
+    uva_risk_band: str = Field(..., description="low 0-1, medium 2-4, high >4 (published bands)")
+    uva_missing_inputs: List[str] = Field(default_factory=list,
+                                          description="UVA items not measured; they added no points")
+    uva_outcome: str = "in-hospital mortality, adult inpatients, sub-Saharan Africa (derivation cohort)"
+    uva_reference: str = ""
     risk_level: str
     alert_flag: bool
     explanations: List[str]

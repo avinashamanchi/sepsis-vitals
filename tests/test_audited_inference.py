@@ -22,6 +22,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+
+def _model_files():
+    """Every file the committed manifest lists, plus the manifest itself."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    models = _Path(__file__).resolve().parents[1] / "models"
+    return list(_json.loads((models / "manifest.json").read_text())["artifacts"]) + ["manifest.json"]
+
+
 MODELS = Path(__file__).resolve().parents[1] / "models"
 pytestmark = pytest.mark.skipif(
     importlib.util.find_spec("sklearn") is None or not (MODELS / "manifest.json").exists(),
@@ -35,7 +45,7 @@ VITALS = {"heart_rate": 118, "resp_rate": 24, "sbp": 96, "temperature": 38.6, "s
 def model_dir(tmp_path):
     dest = tmp_path / "models"
     dest.mkdir()
-    for name in ("sepsis_model.joblib", "model_metadata.json", "imputation_medians.json", "manifest.json"):
+    for name in _model_files():
         shutil.copy(MODELS / name, dest / name)
     return dest
 
@@ -119,8 +129,11 @@ def test_response_states_decision_support_and_no_invalid_interval(client):
     body = client.post("/predict", json={"patient_id": "synthetic-ds", "vitals": VITALS}).json()
     assert "not a diagnosis" in body["decision_support_notice"]
     assert body["clinical_use"] == "not-permitted"
-    assert body["confidence_interval"] is None
-    assert body["uncertainty"]["method"] == "none"
+    assert body["confidence_interval"] is None  # never an invalid "95% CI"
+    assert body["uncertainty"]["method"] in ("none", "split-conformal label set")
+    if body["uncertainty"]["method"] != "none":
+        assert "synthetic" in body["uncertainty"]["note"]
+        assert "Not an interval" in body["uncertainty"]["note"]
     assert body["explanation"]["method"].startswith("median substitution")
     assert body["threshold_policy"]["status"].startswith("engineering-placeholder")
     codes = {w["code"] for w in body["data_quality"]["warnings"]}
@@ -133,11 +146,18 @@ def test_explanation_is_per_patient(client):
         "patient_id": "synthetic-b",
         "vitals": {"heart_rate": 72, "resp_rate": 14, "sbp": 130, "lactate": 4.1}, "age_years": 30,
     }).json()
+    import sepsis_vitals.api as api
+
+    used = api._predictor.inputs_used
     features_a = {f["feature"] for f in a["top_risk_factors"]}
     features_b = {f["feature"] for f in b["top_risk_factors"]}
-    # Only inputs the patient supplied are attributed
-    assert features_a == {"heart_rate", "resp_rate", "sbp", "temperature", "spo2", "age_years"}
-    assert features_b == {"heart_rate", "resp_rate", "sbp", "lactate", "age_years"}
+    # Only inputs the patient supplied, and the model reads, are attributed
+    assert features_a == ({"heart_rate", "resp_rate", "sbp", "temperature", "spo2"} & used) | {"age_years"}
+    assert features_b == ({"heart_rate", "resp_rate", "sbp", "lactate"} & used) | {"age_years"}
+    if "lactate" not in used:  # a vitals-only model says so instead of hiding it
+        codes = {w["code"]: w["fields"] for w in b["data_quality"]["warnings"]}
+        assert codes["inputs_not_used_by_model"] == ["lactate"]
+        assert "labs_not_measured" not in codes
     for factor in a["top_risk_factors"]:
         assert set(factor) >= {"contribution", "direction", "current_value", "reference_value"}
 
@@ -583,3 +603,71 @@ def test_postgres_create_all_renders_the_trigger_ddl_verbatim():
     for statement in PG_APPEND_ONLY_DDL:
         assert "%" not in statement
         assert statement in rendered
+
+
+# -- silent mode (approved silent-mode study) --------------------------------------
+
+@pytest.mark.parametrize("mode", ["silent", "SILENT ", "typo-not-a-mode"])
+def test_silent_mode_records_everything_but_shows_only_rules(client, monkeypatch, mode):
+    import sepsis_vitals.api as api
+
+    monkeypatch.setenv("SEPSIS_MODEL_DISPLAY", mode)  # unknown values fail safe to silent
+    resp = client.post("/predict", json={"patient_id": "synthetic-silent", "vitals": VITALS, "age_years": 70})
+    assert resp.status_code == 200, resp.text
+    shown = resp.json()
+    assert shown["display_mode"] == "silent" and shown["model_output_withheld"] is True
+    assert shown["risk_probability"] is None and shown["model_risk_level"] == "withheld"
+    assert shown["risk_level"] == shown["rule_risk_level"]
+    assert shown["alert"] == shown["clinical_scores"]["alert_flag"]
+    assert shown["top_risk_factors"] == [] and "Silent mode" in shown["recommendation"]
+    message = api.ws_manager.broadcast.await_args.args[0] if api.ws_manager.broadcast.await_count else None
+    if message is not None:
+        assert message["risk_probability"] is None
+
+    record = _record(shown["audit_record_id"])  # the study still gets the full output
+    output = json.loads(record.output_scores)
+    assert isinstance(record.risk_probability, float)
+    assert output["model_risk_level"] in {"low", "moderate", "high", "critical"}
+    assert client.get("/model/status").json()["model_display"] == "silent"
+
+
+def test_research_mode_is_the_default(client, monkeypatch):
+    monkeypatch.delenv("SEPSIS_MODEL_DISPLAY", raising=False)
+    shown = client.post("/predict", json={"patient_id": "synthetic-research", "vitals": VITALS}).json()
+    assert shown["display_mode"] == "research" and shown["model_output_withheld"] is False
+    assert isinstance(shown["risk_probability"], float)
+
+
+def test_monitor_silent_mode_broadcasts_rules_only(ingester, monkeypatch):
+    monkeypatch.setenv("SEPSIS_MODEL_DISPLAY", "silent")
+    result = asyncio.run(ingester.ingest_single("synthetic-mon-silent", VITALS))
+    message = ingester.ws_manager.broadcast.await_args.args[0]
+    assert message["risk_probability"] is None and message["model_output_withheld"] is True
+    assert message["type"] in {"patient_update", "sepsis_alert"}
+    info = ingester.registry.get_patient_info("synthetic-mon-silent")
+    assert info["risk_status"] == "rules-only" and info["risk_probability"] is None
+    assert isinstance(ingester.written[0]["result"]["risk_probability"], float)  # recorded in full
+    assert result["audit_record_id"] == "record-1"
+
+
+def test_access_audit_with_an_invalid_token_is_still_stored(client):
+    """Regression (compose E2E): a non-UUID actor such as "unauthenticated" was
+    stored as users.id, broke the foreign key, and the audit event was lost."""
+    import sepsis_vitals.api as api
+    from sepsis_vitals.db import AuditLog, SessionLocal
+
+    import uuid
+
+    marker = f"/predict/probe-{uuid.uuid4().hex}"
+    before = api._metrics["audit_log_failures_total"]
+    api._emit_audit_event(action="ml_prediction", user_id="unauthenticated", ip_address="127.0.0.1",
+                          path=marker, status_code=401)
+    assert api._metrics["audit_log_failures_total"] == before
+    db = SessionLocal()
+    try:
+        rows = [json.loads(r.details) | {"_user": r.user_id} for r in db.query(AuditLog).all()
+                if marker in str(r.details)]
+        assert len(rows) == 1
+        assert rows[0]["_user"] is None and rows[0]["actor"] == "unauthenticated"
+    finally:
+        db.close()

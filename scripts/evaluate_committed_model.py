@@ -133,27 +133,39 @@ def _md(r: dict) -> str:
         *[f"| {name} | {g['rows']:,} | {g['positive_rows']:,} | {g['auroc'] if g['auroc'] is not None else 'n/a'} |"
           f" {g['mean_output']} | {g['observed_rate']} |" for name, g in r["subgroups"].items()],
         "",
-        "## Failure modes",
+        "## Behaviour checks (does an abnormal finding raise the output?)",
         "",
-        *[f"- **{name}** ({p['rows']:,} observations): in {_pct(p['share_where_value_lowered_output'])} of them"
-          f" the recorded value *lowered* the model output compared with the training median (median change"
-          f" {p['median_change_in_output']:+.3f})." for name, p in r["failure_probes"].items()],
-        "- The cause is in the training data, not in the serving code. In the legacy generator, septic"
-        " observations are no more abnormal in vital signs than non-septic ones: they have less fever and"
-        " tachycardia, and a higher systolic pressure. What separates them is mainly procalcitonin and age"
-        " (finding N53, PROJECT_REVIEW.md). The model's signal is therefore age and procalcitonin, and its"
-        " response to core vital signs runs against clinical expectation.",
-        "- Age alone reaches the AUROC shown above (M1).",
-        "- With no labs in the observation, or on a patient's first observation, performance differs (see"
-        " Subgroups). At the API, unregistered patients are always scored as first observations.",
-        "- Rule-based scores produce most alerts. In the deployed rule, the model mostly adds alerts and"
-        " cannot remove any.",
+        f"Gate: {r['behaviour_gate']['rule']}. **Result: {'PASSED' if r['behaviour_gate']['passed'] else 'FAILED'}.**"
+        " The cut-offs are the SIRS and qSOFA criteria already in `scores.py`. This is an engineering"
+        " plausibility check, not clinical validation.",
+        "",
+        "| Finding | Observations | Share where it lowered the output | Mean change | Median change | Gate |",
+        "| --- | ---: | ---: | ---: | ---: | --- |",
+        *[f"| {name} | {p['rows']:,} | {_pct(p['share_where_value_lowered_output'])} | "
+          f"{p['mean_change_in_output']:+.4f} | {p['median_change_in_output']:+.4f} | "
+          f"{'pass' if r['behaviour_gate']['results'][name] else 'FAIL'} |" for name, p in r["failure_probes"].items()],
+        "",
+        "## Known limitations",
+        "",
+        "- Every number comes from the synthetic generator, which encodes assumptions written by hand."
+        " The cohort profile is shown above.",
+        "- Discrimination from vital signs alone is modest. That is expected for vital-sign screening; the"
+        " published UVA score reached AUC 0.77 for in-hospital mortality on real data (Moore 2017).",
+        "- Temperature is not constrained (fever and hypothermia both matter), so its effect is learned"
+        " from the generator only.",
+        "- Unregistered patients are scored as first observations at the API, which uses less"
+        " information than the trend-based training rows (see Subgroups).",
+        "- Rule-based scores produce most alerts. The model can add an alert but never remove one.",
+        "- History: the previous committed model (GradientBoosting 2.0.0, legacy generator, with labs)"
+        " failed every behaviour check, because its training data made septic vital signs look *less*"
+        " abnormal (finding N53). It is archived; see PROJECT_REVIEW.md.",
         "",
         "## What this means",
         "",
-        "The committed model is not suitable for any clinical evaluation, including silent mode,"
-        " without retraining on approved real data. The serving pipeline, auditing and failure handling"
-        " can be exercised with it, which is the purpose of the prototype.",
+        "This model behaves plausibly on synthetic data and is suitable for exercising the software, for"
+        " demonstrations, and for the silent-mode data-collection workflow. **It is not suitable for clinical"
+        " decisions.** That requires retraining and validation on approved local data, with the clinical"
+        " decisions listed in docs/pilot/clinical_requirements.md.",
         "",
         *provenance_markdown(r["provenance"]),
     ]
@@ -165,6 +177,8 @@ def main() -> None:
     parser.add_argument("--patients", type=int, default=4000)
     parser.add_argument("--seed", type=int, default=20261015)
     parser.add_argument("--bootstrap", type=int, default=1000)
+    parser.add_argument("--generator-profile", default="physiologic",
+                        help="synthetic cohort profile (sepsis_vitals.ml.profile_evaluation.PROFILES)")
     parser.add_argument("--model-dir", default=str(ROOT / "models"))
     parser.add_argument("--output-dir", default=str(ROOT / "reports"))
     opts = parser.parse_args()
@@ -172,10 +186,10 @@ def main() -> None:
     started = time.monotonic()
 
     report = evaluate_committed_model(opts.model_dir, n_patients=opts.patients, seed=opts.seed,
-                                      n_boot=opts.bootstrap)
+                                      n_boot=opts.bootstrap, generator_profile=opts.generator_profile)
     report["provenance"] = run_provenance(
         seeds={"cohort": opts.seed, "bootstrap": opts.seed % 100000},
-        dataset={"description": f"synthetic generator (legacy profile), {opts.patients:,} patients;",
+        dataset={"description": f"synthetic generator ({opts.generator_profile} profile), {opts.patients:,} patients;",
                  **report["dataset"]},
         candidates="not applicable: evaluates the committed artifact",
         runtime_seconds=time.monotonic() - started,

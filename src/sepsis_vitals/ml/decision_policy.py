@@ -73,3 +73,50 @@ def model_level(prob: float, policy: Dict[str, Any]) -> str:
     if prob >= bands["moderate"]:
         return "moderate"
     return "low"
+
+
+# ---------------------------------------------------------------------------
+# Model display mode
+# ---------------------------------------------------------------------------
+# "research" (default): the model output is shown with its research labels.
+# "silent": every result is still scored and recorded in full, but users see
+# only the rule-based level and alert; the model output is withheld. This
+# is the mode for an approved silent-mode study. Any other value is treated
+# as "silent" (fail safe: never show what was not meant to be shown).
+
+DISPLAY_MODES = ("research", "silent")
+
+
+def model_display_mode() -> str:
+    import os
+
+    mode = os.getenv("SEPSIS_MODEL_DISPLAY", "research").strip().lower()
+    return mode if mode in DISPLAY_MODES else "silent"
+
+
+SILENT_NOTICE = (
+    "Silent mode: the model output was recorded for the study and is not shown. "
+    "The level and alert shown come from the rule-based scores only."
+)
+
+
+def for_display(result: dict) -> dict:
+    """The result as users may see it under the current display mode."""
+    if model_display_mode() != "silent":
+        return {**result, "display_mode": "research", "model_output_withheld": False}
+    scores = result.get("clinical_scores") or {}
+    rule_level = result.get("rule_risk_level") or scores.get("risk_level") or "unknown"
+    return {
+        **result,
+        "display_mode": "silent",
+        "model_output_withheld": True,
+        "risk_probability": None,
+        "model_risk_level": "withheld",
+        "risk_level": rule_level,
+        "alert": bool(scores.get("alert_flag", False)),
+        "top_risk_factors": [],
+        "explanation": {},
+        "uncertainty": {},
+        "confidence_interval": None,
+        "recommendation": SILENT_NOTICE,
+    }

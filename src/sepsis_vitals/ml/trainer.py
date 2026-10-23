@@ -29,7 +29,11 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+from sklearn.ensemble import (
+    GradientBoostingClassifier,
+    HistGradientBoostingClassifier,
+    RandomForestClassifier,
+)
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
@@ -549,6 +553,55 @@ def train_single_model(
     )
 
 
+# Physiological direction of each feature for the constrained model:
+# +1 the output may only rise with the feature, -1 only fall, 0 free.
+# Directions, not thresholds: faster heart and breathing rates and higher
+# early-warning scores raise risk; lower blood pressure, SpO2 and GCS raise
+# risk; more instability (rolling standard deviation) raises risk.
+# Temperature level is left free because fever and hypothermia both matter.
+_RISES_WITH = ("heart_rate", "resp_rate")
+_FALLS_WITH = ("sbp", "dbp", "map", "spo2", "gcs")
+_VITALS = ("temperature",) + _RISES_WITH + _FALLS_WITH
+_SCORE_FEATURES_UP = ("qsofa", "news2_computed", "sirs_computed", "shock_index_computed",
+                      "risk_level_numeric")
+
+
+def clinical_monotonic_constraints(feature_names: List[str]) -> List[int]:
+    """Monotonic constraint per feature (see the table above)."""
+    constraints = []
+    for name in feature_names:
+        base, suffix = name, ""
+        for candidate in ("_roll_mean", "_roll_std", "_delta"):
+            if name.endswith(candidate):
+                base, suffix = name[: -len(candidate)], candidate
+        if name in _SCORE_FEATURES_UP or (suffix == "_roll_std" and base in _VITALS):
+            constraints.append(1)
+        elif base in _RISES_WITH:
+            constraints.append(1)
+        elif base in _FALLS_WITH:
+            constraints.append(-1)
+        else:
+            constraints.append(0)
+    return constraints
+
+
+def _monotone_configs(feature_names: List[str]) -> Dict[str, Dict[str, Any]]:
+    cst = clinical_monotonic_constraints(feature_names)
+    return {
+        "MonotoneHistGradientBoosting": {
+            "model_class": HistGradientBoostingClassifier,
+            "param_grid": [
+                {"max_iter": 300, "learning_rate": 0.05, "max_leaf_nodes": 31,
+                 "l2_regularization": 1.0, "monotonic_cst": cst, "random_state": 42},
+                {"max_iter": 500, "learning_rate": 0.03, "max_leaf_nodes": 15,
+                 "l2_regularization": 2.0, "monotonic_cst": cst, "random_state": 42},
+            ],
+            "needs_scaling": False,
+            "tree_model": True,
+        }
+    }
+
+
 def train_all_models(
     X_train: np.ndarray,
     y_train: np.ndarray,
@@ -556,9 +609,15 @@ def train_all_models(
     y_val: np.ndarray,
     feature_names: List[str],
     n_cv_folds: int = 5,
+    monotone: bool = False,
 ) -> List[ModelResult]:
-    """Train all 5 model types and return results."""
-    configs = _get_model_configs()
+    """Train every candidate and return results.
+
+    ``monotone=True`` trains only the physiologically constrained model
+    (:func:`clinical_monotonic_constraints`), so an unconstrained candidate
+    cannot be selected.
+    """
+    configs = _monotone_configs(feature_names) if monotone else _get_model_configs()
     results = []
 
     for name, config in configs.items():

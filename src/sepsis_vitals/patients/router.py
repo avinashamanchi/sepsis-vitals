@@ -139,6 +139,8 @@ class ScoreOut(BaseModel):
     shock_index: Optional[float] = None
     news2_style: Optional[int] = None
     uva_style: Optional[int] = None
+    uva_score: Optional[int] = None
+    uva_risk_band: Optional[str] = None
     risk_level: str
     alert_flag: bool
     created_at: Optional[datetime] = None

@@ -105,6 +105,9 @@ async def clinical_copilot(body: CopilotRequest, request: Request, user: Dict = 
             comorbidities=body.comorbidities.model_dump() if body.comorbidities else None,
             history=[], source="copilot",
         )
+        from sepsis_vitals.ml.decision_policy import model_display_mode
+        if model_display_mode() == "silent":
+            ml_risk = None  # recorded for the study, never shown or sent onward
 
     # LLM copilot: ONLY available under enterprise flag with BAA
     if _enterprise_llm_enabled:

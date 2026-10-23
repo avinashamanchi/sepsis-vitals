@@ -34,7 +34,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 # Version tracking
-MODEL_VERSION = "2.0.0"
+MODEL_VERSION = "3.0.0"
 PIPELINE_VERSION = "2.0.0"
 
 
@@ -133,6 +133,7 @@ def run_pipeline(
     cv_folds: int = 5,
     skip_shap: bool = False,
     feature_set: str = "full",
+    monotone: bool = False,
 ) -> Dict[str, Any]:
     """Execute the full training pipeline."""
     from sepsis_vitals.ml.trainer import (
@@ -151,6 +152,7 @@ def run_pipeline(
         **provenance,
         "feature_set": feature_set,
         "lab_features_available": feature_set == "full",
+        "monotonic_constraints": monotone,
     }
 
     print("=" * 70)
@@ -223,6 +225,7 @@ def run_pipeline(
         y_val=y_val,
         feature_names=feature_cols,
         n_cv_folds=cv_folds,
+        monotone=monotone,
     )
 
     # ── Step 4: Select and calibrate ────────────────────────────────────
@@ -310,6 +313,9 @@ def run_pipeline(
     metadata["version"] = MODEL_VERSION
     metadata["data_provenance"] = run_provenance
     metadata["feature_set"] = feature_set
+    if monotone:
+        from sepsis_vitals.ml.trainer import clinical_monotonic_constraints
+        metadata["monotonic_constraints"] = dict(zip(feature_cols, clinical_monotonic_constraints(feature_cols)))
     metadata["retrained_at"] = datetime.now(timezone.utc).isoformat()
     metadata["pipeline_version"] = PIPELINE_VERSION
 
@@ -477,7 +483,7 @@ def main(argv: list | None = None):
         help="Feature set: 'full' or 'no_labs' ablation (default: full)"
     )
     parser.add_argument(
-        "--generator-profile", choices=["legacy", "decoupled"], default="legacy",
+        "--generator-profile", choices=["legacy", "decoupled", "physiologic"], default="legacy",
         help="Synthetic generator profile (sepsis_vitals.ml.profile_evaluation.PROFILES)",
     )
     parser.add_argument(
@@ -485,6 +491,10 @@ def main(argv: list | None = None):
         help="Training label; onset_within_horizon needs --horizon-hours (a clinical choice, no default)",
     )
     parser.add_argument("--horizon-hours", type=float, default=None)
+    parser.add_argument(
+        "--monotone", action="store_true",
+        help="Train only the physiologically constrained model (clinical_monotonic_constraints)",
+    )
     parser.add_argument(
         "--replace", action="store_true",
         help="Allow replacing a model already in --output (it is archived to <output>/archive/<sha>/ first)",
@@ -531,6 +541,7 @@ def main(argv: list | None = None):
         cv_folds=opts.cv_folds,
         skip_shap=opts.skip_shap,
         feature_set=opts.feature_set,
+        monotone=opts.monotone,
     )
 
     return result

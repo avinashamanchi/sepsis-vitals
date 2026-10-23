@@ -102,7 +102,16 @@ export function useWebSocket() {
             if (data.type === 'patient_update' || data.type === 'deterioration_alert' || data.type === 'recovery_alert') {
               // Only a complete, recorded result updates the risk; a missing
               // value is never filled in as 0% or "low".
-              if (typeof data.risk_probability === 'number' && isRiskLevel(data.risk_level)) {
+              if (data.model_output_withheld === true && isRiskLevel(data.risk_level)) {
+                // Silent mode: rule-based level only; the model output is withheld.
+                updatePatientRisk(data.patient_id, {
+                  risk_probability: null,
+                  risk_level: data.risk_level,
+                  risk_status: 'rules-only',
+                  risk_status_reason: 'model output withheld (silent mode)',
+                  last_prediction_time: Date.now() / 1000,
+                })
+              } else if (typeof data.risk_probability === 'number' && isRiskLevel(data.risk_level)) {
                 updatePatientRisk(data.patient_id, {
                   risk_probability: data.risk_probability,
                   risk_level: data.risk_level,

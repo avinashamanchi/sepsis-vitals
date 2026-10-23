@@ -37,7 +37,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from sepsis_vitals import __version__
-from sepsis_vitals.scores import compute_scores
+from sepsis_vitals.ml.decision_policy import for_display
+from sepsis_vitals.scores import UVA_REFERENCE, compute_scores, uva_score
 from sepsis_vitals.security import RateLimitExceeded, SecurityAlertTracker, sanitise_string
 
 # Shared dependencies and schemas live in their own modules so routers never
@@ -73,6 +74,7 @@ from sepsis_vitals.schemas import (  # noqa: F401
     MonitorRegisterRequest,
     PredictionResponse,
     PredictRequest,
+    ScoreInput,
     ScoreResponse,
     SimulatorReplayRequest,
     SimulatorWardRequest,
@@ -574,15 +576,23 @@ def _emit_audit_event(
     # cannot block it; a failure is logged (error class only) and counted,
     # and the structured log line above remains as the second copy.
     try:
-        from sepsis_vitals.db import AuditLog, SessionLocal, inet_or_none
+        from sepsis_vitals.db import AuditLog, SessionLocal, inet_or_none, is_uuid
         db = SessionLocal()
         try:
+            # user_id references users.id: only a real account id goes there.
+            # Labels such as "unauthenticated" (an invalid token) are kept in
+            # details; storing them as a user id broke the foreign key and the
+            # event was lost.
+            actor = user_id if user_id and is_uuid(user_id) else None
+            details = {"path": path, "status_code": status_code}
+            if user_id and actor is None:
+                details["actor"] = str(user_id)[:32]
             record = AuditLog(
-                user_id=user_id if user_id and user_id != "anonymous" else None,
+                user_id=actor,
                 action=action,
                 resource_type="patient_phi",
                 resource_id=patient_id,
-                details=json.dumps({"path": path, "status_code": status_code}),
+                details=json.dumps(details),
                 ip_address=inet_or_none(ip_address),
             )
             db.add(record)
@@ -716,7 +726,7 @@ async def health():
 
 
 @app.post("/score", response_model=ScoreResponse, dependencies=[Depends(check_rate_limit)])
-async def score_vitals(vitals: VitalsInput, user: Dict = Depends(verify_auth)):
+async def score_vitals(vitals: ScoreInput, user: Dict = Depends(verify_auth)):
     """Compute clinical sepsis scores (qSOFA, SIRS, NEWS2, Shock Index, UVA)."""
     vitals_dict = {k: v for k, v in vitals.model_dump().items() if v is not None}
     if _count_measurements(vitals_dict) < 2:
@@ -735,12 +745,16 @@ async def score_vitals(vitals: VitalsInput, user: Dict = Depends(verify_auth)):
         for name, fired in result.component_flags.items()
         if fired and name in flag_explanations
     ]
+    uva = result.uva or uva_score(vitals_dict, hiv_positive=vitals_dict.get("hiv_positive"))
     return ScoreResponse(
         qsofa=result.qsofa,
         sirs_count=result.sirs_count,
         news2_style=result.news2_style,
         shock_index=result.shock_index,
-        uva=result.uva_style,
+        uva=uva.score,
+        uva_risk_band=uva.risk_band,
+        uva_missing_inputs=uva.missing_inputs,
+        uva_reference=UVA_REFERENCE,
         risk_level=result.risk_level,
         alert_flag=result.alert_flag,
         explanations=explanations,
@@ -774,8 +788,9 @@ async def predict_sepsis(body: PredictRequest, request: Request, user: Dict = De
         vitals=vitals_dict, age_years=body.age_years, comorbidities=comorbidities,
         history=history, source="api",
     )
-    await _broadcast_alert(result)
-    return result
+    shown = for_display(result)
+    await _broadcast_alert(shown)
+    return shown
 
 
 @app.post("/predict/timeseries", response_model=PredictionResponse, dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
@@ -807,8 +822,9 @@ async def predict_timeseries(body: TimeseriesPredictRequest, request: Request, u
         vitals=current, age_years=body.age_years, comorbidities=comorbidities,
         history=observations[:-1], observed_at=observed_at, source="api-timeseries",
     )
-    await _broadcast_alert(result)
-    return result
+    shown = for_display(result)
+    await _broadcast_alert(shown)
+    return shown
 
 
 @app.post("/predict/batch", dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
@@ -857,8 +873,9 @@ async def predict_batch(body: BatchPredictRequest, request: Request, user: Dict 
             # Logged by _score_and_record (error class only, no identifiers).
             errors.append({"index": i, "error": exc.detail})
             continue
-        results.append(result)
-        await _broadcast_alert(result)
+        shown = for_display(result)
+        results.append(shown)
+        await _broadcast_alert(shown)
 
     return {"predictions": results, "count": len(results), "errors": errors,
             "request_id": _request_id(request)}
@@ -987,6 +1004,7 @@ def _include_routers():
         ("sepsis_vitals.patients.router", "patients", [Depends(check_rate_limit)]),
         ("sepsis_vitals.alerts.router", "alerts", [Depends(check_rate_limit)]),
         ("sepsis_vitals.fhir.router", "fhir", [Depends(check_rate_limit)]),
+        ("sepsis_vitals.study.router", "study", [Depends(check_rate_limit)]),
     ]
     if os.getenv("SEPSIS_ENABLE_BILLING", "false").lower() == "true":
         routers.append(("sepsis_vitals.billing.router", "billing", []))

@@ -12,11 +12,18 @@ export function ScoreLab() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+  // Used only by the published UVA score; "unknown" scores 0, as published.
+  const [hiv, setHiv] = useState<'unknown' | 'negative' | 'positive'>('unknown')
+
   const handleSubmit = async (vitals: Record<string, number>) => {
     setLoading(true)
     setError('')
+    // A new request replaces the old result; nothing stale stays on screen.
+    setResult(null)
     try {
-      const res = await api.score(vitals) as ScoreResult
+      const body: Record<string, number | boolean> = { ...vitals }
+      if (hiv !== 'unknown') body.hiv_positive = hiv === 'positive'
+      const res = await api.score(body) as ScoreResult
       setResult(res)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'An error occurred')
@@ -41,6 +48,19 @@ export function ScoreLab() {
         <div className="bg-surface border border-border rounded-lg p-5">
           <h2 className="font-heading text-sm font-semibold mb-4">{t('scoreLab.enterVitals')}</h2>
           <VitalsForm onSubmit={handleSubmit} loading={loading} submitLabel={t('scoreLab.calculateScores')} />
+          <label className="mt-3 block text-xs text-text-muted" htmlFor="score-hiv">
+            HIV status (used only by the UVA score)
+          </label>
+          <select
+            id="score-hiv"
+            value={hiv}
+            onChange={(e) => setHiv(e.target.value as 'unknown' | 'negative' | 'positive')}
+            className="mt-1 w-full bg-elevated border border-border rounded px-3 py-2 text-sm text-text-primary"
+          >
+            <option value="unknown">Unknown / not recorded</option>
+            <option value="negative">Negative</option>
+            <option value="positive">Positive</option>
+          </select>
           {error && (
             <p className="mt-3 text-sm text-danger">{error}</p>
           )}
@@ -61,7 +81,13 @@ export function ScoreLab() {
                     { label: t('scores.sirs'), value: `${result.sirs_count}/3`, desc: result.sirs_count >= 2 ? t('scores.criteriaMet') : t('scores.belowThreshold') },
                     { label: t('scores.news2'), value: `${result.news2_style}`, desc: result.news2_style >= 7 ? t('scores.highRisk') : result.news2_style >= 5 ? t('scores.mediumRisk') : t('scores.lowRisk') },
                     { label: t('scores.si'), value: result.shock_index?.toFixed(2) ?? 'N/A', desc: (result.shock_index ?? 0) >= 1.0 ? t('scores.elevated') : t('scores.normal') },
-                    { label: t('scores.uva'), value: `${result.uva}`, desc: result.uva >= 4 ? t('scores.elevated') : t('scores.normal') },
+                    {
+                      label: t('scores.uva'),
+                      value: `${result.uva}/13`,
+                      desc: result.uva_risk_band
+                        ? `${result.uva_risk_band} mortality-risk band${result.uva_missing_inputs?.length ? ` (not measured: ${result.uva_missing_inputs.join(', ')})` : ''}`
+                        : '',
+                    },
                   ].map(({ label, value, desc }) => (
                     <div key={label} className="bg-elevated rounded-lg p-3">
                       <p className="text-xs text-text-muted">{label}</p>
@@ -71,6 +97,13 @@ export function ScoreLab() {
                   ))}
                 </div>
               </div>
+
+              {result.uva_reference && (
+                <p className="text-[11px] leading-4 text-text-muted" data-testid="uva-source">
+                  UVA: {result.uva_outcome}. Source: {result.uva_reference}. A risk band is not a diagnosis;
+                  its local performance has not been checked.
+                </p>
+              )}
 
               {result.explanations.length > 0 && (
                 <div className="bg-surface border border-border rounded-lg p-5">

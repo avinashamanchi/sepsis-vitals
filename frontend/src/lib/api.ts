@@ -242,7 +242,7 @@ export const api = {
       body: JSON.stringify({}),
     }),
 
-  score: (vitals: Record<string, number>) =>
+  score: (vitals: Record<string, number | boolean>) =>
     request('/score', { method: 'POST', body: JSON.stringify(vitals) }),
 
   predict: (body: {

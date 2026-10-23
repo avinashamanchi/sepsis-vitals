@@ -351,6 +351,13 @@ SICK_NONSEPTIC_VITALS = {
 
 SICK_NONSEPTIC_TYPES = list(SICK_NONSEPTIC_VITALS.keys())
 
+# Onset-anchored septic dynamics (generator option, not clinical values):
+# fractions of the stay for the pre-onset prodrome and for progression after
+# onset, and the share of the septic shift reached by onset.
+ONSET_PRODROME = 0.15
+ONSET_PROGRESSION = 0.30
+PRODROME_BLEND = 0.35
+
 LAB_LIMITS = {
     "lactate": (0.1, 20.0),
     "wbc": (0.1, 50.0),
@@ -516,8 +523,17 @@ def generate_patient_trajectory(
     sick_type: Optional[str] = None,
     septic_blend_ceiling: Optional[float] = None,
     mimic_blend_ceiling: float = 0.9,
+    onset_anchored: bool = False,
 ) -> list:
     """Generate a temporal trajectory of vital signs for a single patient.
+
+    ``onset_anchored`` (default False, legacy behaviour) ties septic
+    deterioration to the sepsis onset: physiology stays at baseline until a
+    prodrome shortly before onset, then moves towards the septic target after
+    it. In the legacy dynamics deterioration starts at admission whatever the
+    onset, so labelled septic rows were barely abnormal while mimics reached
+    0.9 of their abnormal profile (finding N53). It draws no extra random
+    numbers, so every other value is unchanged.
 
     ``septic_blend_ceiling`` rescales septic deterioration so it reaches that
     fraction of the target physiology (legacy: ~0.70 x severity jitter);
@@ -601,7 +617,32 @@ def generate_patient_trajectory(
 
         progress = i / max(n_observations - 1, 1)
 
-        if is_septic:
+        if is_septic and onset_anchored:
+            # Baseline until the prodrome, a partial shift before onset (the
+            # window an early warning aims at), then progression after onset.
+            prodrome_start = max(sepsis_onset - ONSET_PRODROME, 0.0)
+            if progress < prodrome_start:
+                blend = 0.0
+            elif progress < sepsis_onset:
+                blend = (progress - prodrome_start) / ONSET_PRODROME * PRODROME_BLEND * severity_jitter
+            else:
+                after = min((progress - sepsis_onset) / ONSET_PROGRESSION, 1.0)
+                blend = (PRODROME_BLEND + (1.0 - PRODROME_BLEND) * after) * severity_jitter
+            if septic_blend_ceiling is not None:
+                blend *= septic_blend_ceiling
+            current_vitals: dict[str, Tuple[float, float]] = {}
+            for vital in normal_vitals:
+                normal_mean, normal_std = normal_vitals[vital]
+                target_mean, target_std = target_vitals[vital]
+                current_vitals[vital] = (normal_mean + blend * (target_mean - normal_mean),
+                                         normal_std + blend * (target_std - normal_std))
+            current_labs: dict[str, Tuple[float, float]] = {}
+            for lab in normal_labs:
+                nm, ns = normal_labs[lab]
+                tm, ts = target_labs[lab]
+                current_labs[lab] = (nm + blend * (tm - nm), ns + blend * (ts - ns))
+
+        elif is_septic:
             # Slower, more gradual deterioration.  Max blend is capped to prevent
             # the vitals from becoming unambiguously septic late in the stay.
             if progress < 0.4:
@@ -613,7 +654,7 @@ def generate_patient_trajectory(
             if septic_blend_ceiling is not None:
                 blend *= septic_blend_ceiling / 0.70
 
-            current_vitals: dict[str, Tuple[float, float]] = {}
+            current_vitals = {}
             for vital in normal_vitals:
                 normal_mean, normal_std = normal_vitals[vital]
                 target_mean, target_std = target_vitals[vital]
@@ -621,7 +662,7 @@ def generate_patient_trajectory(
                 std = normal_std + blend * (target_std - normal_std)
                 current_vitals[vital] = (mean, std)
 
-            current_labs: dict[str, Tuple[float, float]] = {}
+            current_labs = {}
             for lab in normal_labs:
                 nm, ns = normal_labs[lab]
                 tm, ts = target_labs[lab]
@@ -773,6 +814,7 @@ def generate_dataset(
     comorbidity_effect: float = 1.0,
     septic_blend_ceiling: Optional[float] = None,
     mimic_blend_ceiling: float = 0.9,
+    onset_anchored: bool = False,
     label_mode: str = "current_state",
     horizon_hours: Optional[float] = None,
     include_onset_time: bool = False,
@@ -913,6 +955,7 @@ def generate_dataset(
             sick_type=sick_type,
             septic_blend_ceiling=septic_blend_ceiling,
             mimic_blend_ceiling=mimic_blend_ceiling,
+            onset_anchored=onset_anchored,
         )
         all_rows.extend(rows)
 

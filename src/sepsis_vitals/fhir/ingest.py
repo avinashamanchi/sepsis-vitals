@@ -347,6 +347,8 @@ def process_vitals_work(bundle: FHIRBundle, user: Dict[str, Any], scores: Any) -
                 shock_index=scores.shock_index,
                 news2_style=scores.news2_style,
                 uva_style=scores.uva_style,
+                uva_score=scores.uva.score if scores.uva else None,
+                uva_risk_band=scores.uva.risk_band if scores.uva else None,
                 risk_level=scores.risk_level,
                 alert_flag=scores.alert_flag,
             ))
