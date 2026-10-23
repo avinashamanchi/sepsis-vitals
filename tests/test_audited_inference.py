@@ -603,3 +603,48 @@ def test_postgres_create_all_renders_the_trigger_ddl_verbatim():
     for statement in PG_APPEND_ONLY_DDL:
         assert "%" not in statement
         assert statement in rendered
+
+
+# -- silent mode (approved silent-mode study) --------------------------------------
+
+@pytest.mark.parametrize("mode", ["silent", "SILENT ", "typo-not-a-mode"])
+def test_silent_mode_records_everything_but_shows_only_rules(client, monkeypatch, mode):
+    import sepsis_vitals.api as api
+
+    monkeypatch.setenv("SEPSIS_MODEL_DISPLAY", mode)  # unknown values fail safe to silent
+    resp = client.post("/predict", json={"patient_id": "synthetic-silent", "vitals": VITALS, "age_years": 70})
+    assert resp.status_code == 200, resp.text
+    shown = resp.json()
+    assert shown["display_mode"] == "silent" and shown["model_output_withheld"] is True
+    assert shown["risk_probability"] is None and shown["model_risk_level"] == "withheld"
+    assert shown["risk_level"] == shown["rule_risk_level"]
+    assert shown["alert"] == shown["clinical_scores"]["alert_flag"]
+    assert shown["top_risk_factors"] == [] and "Silent mode" in shown["recommendation"]
+    message = api.ws_manager.broadcast.await_args.args[0] if api.ws_manager.broadcast.await_count else None
+    if message is not None:
+        assert message["risk_probability"] is None
+
+    record = _record(shown["audit_record_id"])  # the study still gets the full output
+    output = json.loads(record.output_scores)
+    assert isinstance(record.risk_probability, float)
+    assert output["model_risk_level"] in {"low", "moderate", "high", "critical"}
+    assert client.get("/model/status").json()["model_display"] == "silent"
+
+
+def test_research_mode_is_the_default(client, monkeypatch):
+    monkeypatch.delenv("SEPSIS_MODEL_DISPLAY", raising=False)
+    shown = client.post("/predict", json={"patient_id": "synthetic-research", "vitals": VITALS}).json()
+    assert shown["display_mode"] == "research" and shown["model_output_withheld"] is False
+    assert isinstance(shown["risk_probability"], float)
+
+
+def test_monitor_silent_mode_broadcasts_rules_only(ingester, monkeypatch):
+    monkeypatch.setenv("SEPSIS_MODEL_DISPLAY", "silent")
+    result = asyncio.run(ingester.ingest_single("synthetic-mon-silent", VITALS))
+    message = ingester.ws_manager.broadcast.await_args.args[0]
+    assert message["risk_probability"] is None and message["model_output_withheld"] is True
+    assert message["type"] in {"patient_update", "sepsis_alert"}
+    info = ingester.registry.get_patient_info("synthetic-mon-silent")
+    assert info["risk_status"] == "rules-only" and info["risk_probability"] is None
+    assert isinstance(ingester.written[0]["result"]["risk_probability"], float)  # recorded in full
+    assert result["audit_record_id"] == "record-1"

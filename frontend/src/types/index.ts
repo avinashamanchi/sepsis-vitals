@@ -58,7 +58,10 @@ export interface Prediction {
   patient_id: string
   timestamp: string
   observed_at?: string | null
-  risk_probability: number
+  /** Null in silent mode (model output recorded but withheld). */
+  risk_probability: number | null
+  display_mode?: 'research' | 'silent'
+  model_output_withheld?: boolean
   risk_level: RiskLevel
   /** Null unless the model supports a validated interval (see uncertainty). */
   confidence_interval: { lower: number; upper: number } | null
@@ -123,7 +126,7 @@ export interface MonitoredPatient {
   risk_probability: number | null
   risk_level: RiskLevel | 'unknown'
   /** 'scored' only when the latest attempt produced a recorded result. */
-  risk_status?: 'scored' | 'not-scored' | 'unavailable'
+  risk_status?: 'scored' | 'not-scored' | 'rules-only' | 'unavailable'
   risk_status_reason?: string | null
   trend_direction: 'improving' | 'stable' | 'worsening' | 'unknown'
   last_prediction_time: number

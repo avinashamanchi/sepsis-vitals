@@ -37,6 +37,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from sepsis_vitals import __version__
+from sepsis_vitals.ml.decision_policy import for_display
 from sepsis_vitals.scores import UVA_REFERENCE, compute_scores, uva_score
 from sepsis_vitals.security import RateLimitExceeded, SecurityAlertTracker, sanitise_string
 
@@ -779,8 +780,9 @@ async def predict_sepsis(body: PredictRequest, request: Request, user: Dict = De
         vitals=vitals_dict, age_years=body.age_years, comorbidities=comorbidities,
         history=history, source="api",
     )
-    await _broadcast_alert(result)
-    return result
+    shown = for_display(result)
+    await _broadcast_alert(shown)
+    return shown
 
 
 @app.post("/predict/timeseries", response_model=PredictionResponse, dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
@@ -812,8 +814,9 @@ async def predict_timeseries(body: TimeseriesPredictRequest, request: Request, u
         vitals=current, age_years=body.age_years, comorbidities=comorbidities,
         history=observations[:-1], observed_at=observed_at, source="api-timeseries",
     )
-    await _broadcast_alert(result)
-    return result
+    shown = for_display(result)
+    await _broadcast_alert(shown)
+    return shown
 
 
 @app.post("/predict/batch", dependencies=[Depends(check_rate_limit), Depends(check_ml_rate_limit)])
@@ -862,8 +865,9 @@ async def predict_batch(body: BatchPredictRequest, request: Request, user: Dict 
             # Logged by _score_and_record (error class only, no identifiers).
             errors.append({"index": i, "error": exc.detail})
             continue
-        results.append(result)
-        await _broadcast_alert(result)
+        shown = for_display(result)
+        results.append(shown)
+        await _broadcast_alert(shown)
 
     return {"predictions": results, "count": len(results), "errors": errors,
             "request_id": _request_id(request)}

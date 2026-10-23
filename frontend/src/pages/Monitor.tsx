@@ -62,9 +62,12 @@ function timeAgo(unixSeconds: number, t: (key: string, opts?: Record<string, unk
 
 /** The risk to show, or null: never a default 0% or "low" for a patient
  * whose latest attempt was not scored and recorded. */
-function currentRisk(patient: MonitoredPatient): { level: RiskLevel; probability: number } | null {
+function currentRisk(patient: MonitoredPatient): { level: RiskLevel; probability: number | null } | null {
   if (patient.risk_status === 'unavailable' || patient.risk_status === 'not-scored') return null
-  if (patient.risk_probability == null || !isRiskLevel(patient.risk_level)) return null
+  if (!isRiskLevel(patient.risk_level)) return null
+  // Silent mode: the rule-based level is shown; the model output is withheld.
+  if (patient.risk_status === 'rules-only') return { level: patient.risk_level, probability: null }
+  if (patient.risk_probability == null) return null
   return { level: patient.risk_level, probability: patient.risk_probability }
 }
 
@@ -237,7 +240,7 @@ export function Monitor() {
               {/* Risk probability + trend */}
               <div className="flex items-center justify-between mb-3">
                 <span className={clsx('text-2xl font-bold font-heading', stale && 'text-text-muted')}>
-                  {stale ? '?' : risk ? `${(risk.probability * 100).toFixed(0)}%` : '—'}
+                  {stale ? '?' : risk ? (risk.probability != null ? `${(risk.probability * 100).toFixed(0)}%` : 'rules') : '—'}
                 </span>
                 {!stale && !risk && (
                   <span className="text-[10px] text-text-muted">

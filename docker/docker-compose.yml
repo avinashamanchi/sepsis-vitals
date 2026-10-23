@@ -118,6 +118,7 @@ services:
 
   # ── Prometheus ─────────────────────────────────────────────────────────────
   prometheus:
+    profiles: [monitoring]   # optional metrics; start with --profile monitoring
     image: prom/prometheus:v2.51.0
     restart: unless-stopped
     logging: *default-logging
@@ -134,6 +135,7 @@ services:
 
   # ── Grafana ────────────────────────────────────────────────────────────────
   grafana:
+    profiles: [monitoring]   # optional dashboards; start with --profile monitoring
     image: grafana/grafana:10.4.0
     restart: unless-stopped
     logging: *default-logging
@@ -184,6 +186,7 @@ services:
   # Protects against physical device loss, theft, or fire.
   # Only starts if BACKUP_S3_BUCKET is set in .env.
   backup-offsite:
+    profiles: [offsite]   # optional cloud copy of backups; start with --profile offsite
     image: amazon/aws-cli:2.15.40
     restart: unless-stopped
     logging: *default-logging
