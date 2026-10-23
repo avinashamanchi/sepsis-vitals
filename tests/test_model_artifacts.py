@@ -12,6 +12,16 @@ from pathlib import Path
 
 import pytest
 
+
+def _model_files():
+    """Every file the committed manifest lists, plus the manifest itself."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    models = _Path(__file__).resolve().parents[1] / "models"
+    return list(_json.loads((models / "manifest.json").read_text())["artifacts"]) + ["manifest.json"]
+
+
 MODELS = Path(__file__).resolve().parents[1] / "models"
 pytestmark = pytest.mark.skipif(
     importlib.util.find_spec("sklearn") is None or not (MODELS / "manifest.json").exists(),
@@ -23,7 +33,7 @@ pytestmark = pytest.mark.skipif(
 def model_copy(tmp_path):
     dest = tmp_path / "models"
     dest.mkdir()
-    for name in ("sepsis_model.joblib", "model_metadata.json", "imputation_medians.json", "manifest.json"):
+    for name in _model_files():
         shutil.copy(MODELS / name, dest / name)
     return dest
 

@@ -1,20 +1,24 @@
 {
   "manifest_version": 1,
-  "model_id": "GradientBoosting-2.0.0",
-  "model_version": "2.0.0",
+  "model_id": "MonotoneHistGradientBoosting-3.0.0",
+  "model_version": "3.0.0",
   "pipeline_version": "2.0.0",
   "artifacts": {
     "sepsis_model.joblib": {
-      "sha256": "93dedb4ff761b6502a44c238802e9373260dd84b36aa0659cd22fcbf90412cf1",
-      "bytes": 381652
+      "sha256": "f540f9bf349ee164c91ae50383aa2166bedf6f43f1ddd0de389821e05c2c6d4c",
+      "bytes": 1129322
     },
     "model_metadata.json": {
-      "sha256": "cceaa355567136ee1580eca536254acf1dd73d8bab656a5127cfe2b6d9c7768c",
-      "bytes": 6853
+      "sha256": "0c3d1b887aaf5502aa7045b9ccf04aebdac5750a8ed89d4c5977617aed270631",
+      "bytes": 6624
     },
     "imputation_medians.json": {
-      "sha256": "32a3851f709fba7d515a2737562298ac5db61de5a3fce989096cd10f9dc52a31",
-      "bytes": 1583
+      "sha256": "46a4c8f473da76933b1b9b75edb44866cb082b104e908ba6f5236229333087a7",
+      "bytes": 1189
+    },
+    "conformal_predictor.joblib": {
+      "sha256": "76f69b14d7a95a807ebe315cd0a9808e7068dc5935ea21ccfb1856deca8c1272",
+      "bytes": 124
     }
   },
   "feature_schema": {
@@ -52,19 +56,6 @@
       "spo2_missing",
       "gcs_missing",
       "n_vitals_missing",
-      "lactate",
-      "wbc",
-      "procalcitonin",
-      "lactate_delta",
-      "wbc_delta",
-      "procalcitonin_delta",
-      "lactate_roll_mean",
-      "wbc_roll_mean",
-      "procalcitonin_roll_mean",
-      "lactate_missing",
-      "wbc_missing",
-      "procalcitonin_missing",
-      "n_labs_missing",
       "qsofa",
       "news2_computed",
       "sirs_computed",
@@ -78,7 +69,7 @@
       "obs_gap_min",
       "risk_level_numeric"
     ],
-    "sha256": "713c9d45436a26808b97c67a9df3a6da0415c445d44360ef39798b3734e1bad5"
+    "sha256": "ea55f5f12523378f9b04d74995f7001b19d3f68a29dbd5ab530e2096d90d14da"
   },
   "runtime": {
     "scikit_learn": "1.6.1"

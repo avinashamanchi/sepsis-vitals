@@ -31,6 +31,14 @@ PROFILES: Dict[str, Dict[str, Any]] = {
         "age_effect": 0.0, "comorbidity_effect": 0.0,
         "septic_blend_ceiling": 1.0, "mimic_blend_ceiling": 0.6,
     },
+    # Decoupled demographics plus onset-anchored septic dynamics: septic
+    # observations are abnormal in vital signs after onset, with a prodrome
+    # before it, and mimics still overlap (N53). Synthetic, not clinical.
+    "physiologic": {
+        "age_effect": 0.0, "comorbidity_effect": 0.0,
+        "septic_blend_ceiling": 1.0, "mimic_blend_ceiling": 0.6,
+        "onset_anchored": True,
+    },
 }
 
 

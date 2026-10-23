@@ -28,10 +28,33 @@ import pandas as pd
 LAB_COLUMNS = ("lactate", "wbc", "procalcitonin")
 DCA_THRESHOLDS = (0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60)
 
-# Thresholds at which the probes below are read. They are the SIRS criteria
-# already implemented in sepsis_vitals.scores, not new clinical cut-offs.
+# Thresholds at which the probes below are read. They are the SIRS and qSOFA
+# criteria already implemented in sepsis_vitals.scores, not new clinical
+# cut-offs. Each probe selects observations with that finding.
 FEVER_ABOVE = 38.0
 TACHYCARDIA_ABOVE = 90.0
+BEHAVIOUR_PROBES = (
+    ("temperature > 38", "temperature", lambda v: v > FEVER_ABOVE),
+    ("heart_rate > 90", "heart_rate", lambda v: v > TACHYCARDIA_ABOVE),
+    ("resp_rate >= 22", "resp_rate", lambda v: v >= 22),
+    ("sbp <= 100", "sbp", lambda v: v <= 100),
+)
+# Engineering gate (not a clinical criterion): a finding must lower the
+# model output in fewer than half of the observations that have it, and
+# raise it on average. A flat model fails (mean change 0). The committed
+# legacy model fails every probe (N53).
+MAX_SHARE_LOWERED = 0.5
+
+
+def behaviour_gate(probes: Dict[str, Any]) -> Dict[str, Any]:
+    """Pass or fail per probe, and overall."""
+    results = {
+        name: bool(p["share_where_value_lowered_output"] < MAX_SHARE_LOWERED
+                   and p["mean_change_in_output"] > 0)
+        for name, p in probes.items()
+    }
+    return {"rule": f"share lowered < {MAX_SHARE_LOWERED} and mean change > 0",
+            "results": results, "passed": bool(results) and all(results.values())}
 
 
 def _auc(y: np.ndarray, p: np.ndarray) -> Optional[float]:
@@ -140,12 +163,13 @@ def evaluate_committed_model(
     seed: int = 20261015,
     prevalence: float = 0.15,
     n_boot: int = 1000,
+    generator_profile: str = "legacy",
 ) -> Dict[str, Any]:
     import tempfile
 
     from sepsis_vitals.ml.decision_policy import model_level, threshold_policy
     from sepsis_vitals.ml.predictor import SepsisPredictor
-    from sepsis_vitals.ml.profile_evaluation import calibration
+    from sepsis_vitals.ml.profile_evaluation import PROFILES, calibration
     from sepsis_vitals.ml.provenance import dataset_fingerprint
     from sepsis_vitals.ml.synthetic_data import generate_dataset
     from sepsis_vitals.ml.uncertainty import paired_cluster_bootstrap
@@ -154,7 +178,7 @@ def evaluate_committed_model(
     predictor = SepsisPredictor(model_dir=model_dir, state_dir=tempfile.mkdtemp(prefix="eval-state-"))
     predictor.load()
     df = generate_dataset(n_patients=n_patients, sepsis_prevalence=prevalence, seed=seed,
-                          include_onset_time=True)
+                          include_onset_time=True, **PROFILES[generator_profile])
     df = df.sort_values(["patient_id", "timestamp"]).reset_index(drop=True)
 
     scored = score_frame(predictor, df)
@@ -231,27 +255,30 @@ def evaluate_committed_model(
         for name, mask in subgroup_masks.items()
     }
 
-    # Failure-mode probes: does a SIRS-range value raise the output?
+    # Behaviour probes: does an abnormal finding raise the output?
     probes = {}
-    for column, above in (("temperature", FEVER_ABOVE), ("heart_rate", TACHYCARDIA_ABOVE)):
-        mask = (data[column] > above).to_numpy()
+    for name, column, finding in BEHAVIOUR_PROBES:
+        mask = finding(data[column]).to_numpy()
         if mask.any():
             delta = p - _counterfactual(predictor, df, column)
-            probes[f"{column} > {above:g}"] = {
+            probes[name] = {
                 "rows": int(mask.sum()),
                 "share_where_value_lowered_output": _r((delta[mask] < 0).mean()),
                 "median_change_in_output": _r(float(np.median(delta[mask]))),
+                "mean_change_in_output": _r(float(np.mean(delta[mask]))),
             }
 
     return {
         "claim_scope": "synthetic engineering evidence only; not clinical performance",
         "model": {**predictor.artifact_status.provenance(), "model_name": predictor.metadata["model_name"]},
-        "cohort_generator": {"generator": "sepsis_vitals.ml.synthetic_data.generate_dataset (legacy profile)",
+        "cohort_generator": {"generator": f"sepsis_vitals.ml.synthetic_data.generate_dataset ({generator_profile} profile)",
+                             "profile_options": PROFILES[generator_profile],
                              "n_patients": n_patients, "sepsis_prevalence": prevalence, "seed": seed,
-                             "training_seed": 42,
-                             "note": "Generated independently of the training data (different seed). The "
-                                     "generator has changed since training (M4 timestamp fix), so this cohort "
-                                     "is close to, not identical with, the training distribution."},
+                             "training_seed": (predictor.metadata.get("data_provenance") or {}).get("seed"),
+                             "note": "Generated independently of the training data (different seed)."
+                                     + (" The legacy generator has changed since the committed model was trained"
+                                        " (M4 timestamp fix), so this cohort is close to, not identical with,"
+                                        " the training distribution." if generator_profile == "legacy" else "")},
         "dataset": dataset_fingerprint([df]),
         "label": "current_state: 1 for observations at or after the generated onset time. No prediction horizon.",
         "cohort": cohort,
@@ -264,4 +291,5 @@ def evaluate_committed_model(
         "alert_sources": alert_sources,
         "subgroups": subgroups,
         "failure_probes": probes,
+        "behaviour_gate": behaviour_gate(probes),
     }

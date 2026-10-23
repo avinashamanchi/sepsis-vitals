@@ -1,28 +1,35 @@
 {
   "claim_scope": "synthetic engineering evidence only; not clinical performance",
   "model": {
-    "model_id": "GradientBoosting-2.0.0",
-    "model_version": "2.0.0",
+    "model_id": "MonotoneHistGradientBoosting-3.0.0",
+    "model_version": "3.0.0",
     "validation_status": "synthetic-development",
-    "artifact_sha256": "93dedb4ff761b6502a44c238802e9373260dd84b36aa0659cd22fcbf90412cf1",
-    "feature_schema_sha256": "713c9d45436a26808b97c67a9df3a6da0415c445d44360ef39798b3734e1bad5",
+    "artifact_sha256": "f540f9bf349ee164c91ae50383aa2166bedf6f43f1ddd0de389821e05c2c6d4c",
+    "feature_schema_sha256": "ea55f5f12523378f9b04d74995f7001b19d3f68a29dbd5ab530e2096d90d14da",
     "pipeline_version": "2.0.0",
     "artifact_state": "ready",
-    "model_name": "GradientBoosting"
+    "model_name": "MonotoneHistGradientBoosting"
   },
   "cohort_generator": {
-    "generator": "sepsis_vitals.ml.synthetic_data.generate_dataset (legacy profile)",
+    "generator": "sepsis_vitals.ml.synthetic_data.generate_dataset (physiologic profile)",
+    "profile_options": {
+      "age_effect": 0.0,
+      "comorbidity_effect": 0.0,
+      "septic_blend_ceiling": 1.0,
+      "mimic_blend_ceiling": 0.6,
+      "onset_anchored": true
+    },
     "n_patients": 4000,
     "sepsis_prevalence": 0.15,
     "seed": 20261015,
     "training_seed": 42,
-    "note": "Generated independently of the training data (different seed). The generator has changed since training (M4 timestamp fix), so this cohort is close to, not identical with, the training distribution."
+    "note": "Generated independently of the training data (different seed)."
   },
   "dataset": {
-    "sha256": "5a4c94ee52b16161a9bcab486ebe2d8dc66d55aae7cea72d9aa61d0933b78087",
+    "sha256": "f4ca9dcd23d1a1608826610bdec92f1ba093beee22818dfa06a69a12e8e5dade",
     "shapes": [
       [
-        60217,
+        60302,
         23
       ]
     ],
@@ -31,29 +38,29 @@
   "label": "current_state: 1 for observations at or after the generated onset time. No prediction horizon.",
   "cohort": {
     "patients": 4000,
-    "observations": 60217,
-    "septic_patients": 1088,
-    "positive_rows": 11002,
-    "row_positive_rate": 0.1827,
+    "observations": 60302,
+    "septic_patients": 612,
+    "positive_rows": 6439,
+    "row_positive_rate": 0.1068,
     "observations_per_patient_median": 15.0,
-    "patient_days": 9362.8,
+    "patient_days": 9399.9,
     "missing_fraction": {
-      "temperature": 0.079,
-      "heart_rate": 0.08,
+      "temperature": 0.081,
+      "heart_rate": 0.078,
       "resp_rate": 0.078,
       "sbp": 0.081,
       "dbp": 0.08,
       "spo2": 0.081,
-      "gcs": 0.02,
-      "map": 0.079,
-      "lactate": 0.248,
-      "wbc": 0.25,
+      "gcs": 0.021,
+      "map": 0.08,
+      "lactate": 0.249,
+      "wbc": 0.248,
       "procalcitonin": 0.25
     },
-    "age_median": 55.0,
+    "age_median": 56.0,
     "sex": {
-      "F": 2022,
-      "M": 1978
+      "M": 2027,
+      "F": 1973
     }
   },
   "discrimination": {
@@ -65,40 +72,40 @@
     "reliable": true,
     "seed": 61015,
     "n_patients": 4000,
-    "n_rows": 60217,
-    "n_positive_rows": 11002,
-    "n_patients_with_positive_rows": 1477,
+    "n_rows": 60302,
+    "n_positive_rows": 6439,
+    "n_patients_with_positive_rows": 1072,
     "reference_arm": "model",
     "arms": {
       "model": {
         "auroc": {
-          "estimate": 0.9088,
+          "estimate": 0.6931,
           "ci": [
-            0.9026,
-            0.914
+            0.6788,
+            0.7076
           ]
         },
         "auprc": {
-          "estimate": 0.7199,
+          "estimate": 0.3158,
           "ci": [
-            0.706,
-            0.7328
+            0.2857,
+            0.3445
           ]
         }
       },
       "age_only": {
         "auroc": {
-          "estimate": 0.7812,
+          "estimate": 0.4896,
           "ci": [
-            0.7685,
-            0.7939
+            0.4667,
+            0.5116
           ]
         },
         "auprc": {
-          "estimate": 0.3975,
+          "estimate": 0.1038,
           "ci": [
-            0.3748,
-            0.4211
+            0.0939,
+            0.115
           ]
         }
       }
@@ -106,126 +113,126 @@
     "differences_vs_reference": {
       "age_only": {
         "auroc": {
-          "estimate": -0.1276,
+          "estimate": -0.2035,
           "ci": [
-            -0.138,
-            -0.1177
+            -0.2295,
+            -0.1789
           ]
         },
         "auprc": {
-          "estimate": -0.3224,
+          "estimate": -0.212,
           "ci": [
-            -0.3408,
-            -0.3029
+            -0.2385,
+            -0.1849
           ]
         }
       }
     }
   },
   "calibration": {
-    "slope": 1.002,
-    "intercept": 0.243,
-    "in_the_large": 0.0188,
-    "mean_output": 0.1639,
-    "observed_rate": 0.1827,
+    "slope": 0.993,
+    "intercept": -0.026,
+    "in_the_large": -0.001,
+    "mean_output": 0.1078,
+    "observed_rate": 0.1068,
     "reliability_by_decile": [
       {
-        "mean_output": 0.0081,
-        "observed_rate": 0.012,
-        "n_rows": 6022
+        "mean_output": 0.023,
+        "observed_rate": 0.0162,
+        "n_rows": 6031
       },
       {
-        "mean_output": 0.0153,
-        "observed_rate": 0.0153,
-        "n_rows": 6022
+        "mean_output": 0.0448,
+        "observed_rate": 0.0433,
+        "n_rows": 6030
       },
       {
-        "mean_output": 0.0193,
-        "observed_rate": 0.0179,
-        "n_rows": 6021
+        "mean_output": 0.059,
+        "observed_rate": 0.0597,
+        "n_rows": 6030
       },
       {
-        "mean_output": 0.0245,
-        "observed_rate": 0.0236,
-        "n_rows": 6022
+        "mean_output": 0.0714,
+        "observed_rate": 0.0811,
+        "n_rows": 6030
       },
       {
-        "mean_output": 0.0355,
-        "observed_rate": 0.0287,
-        "n_rows": 6022
+        "mean_output": 0.084,
+        "observed_rate": 0.0949,
+        "n_rows": 6030
       },
       {
-        "mean_output": 0.0545,
-        "observed_rate": 0.0475,
-        "n_rows": 6021
+        "mean_output": 0.098,
+        "observed_rate": 0.0995,
+        "n_rows": 6030
       },
       {
-        "mean_output": 0.0909,
-        "observed_rate": 0.1076,
-        "n_rows": 6022
+        "mean_output": 0.1135,
+        "observed_rate": 0.1247,
+        "n_rows": 6030
       },
       {
-        "mean_output": 0.1693,
-        "observed_rate": 0.2506,
-        "n_rows": 6021
+        "mean_output": 0.13,
+        "observed_rate": 0.1259,
+        "n_rows": 6030
       },
       {
-        "mean_output": 0.4207,
-        "observed_rate": 0.5433,
-        "n_rows": 6022
+        "mean_output": 0.15,
+        "observed_rate": 0.1343,
+        "n_rows": 6030
       },
       {
-        "mean_output": 0.8007,
-        "observed_rate": 0.7805,
-        "n_rows": 6022
+        "mean_output": 0.3042,
+        "observed_rate": 0.2882,
+        "n_rows": 6031
       }
     ]
   },
   "decision_curve": [
     {
       "threshold": 0.05,
-      "net_benefit_model": 0.1561,
-      "net_benefit_all": 0.1397
+      "net_benefit_model": 0.0644,
+      "net_benefit_all": 0.0598
     },
     {
       "threshold": 0.1,
-      "net_benefit_model": 0.1428,
-      "net_benefit_all": 0.0919
+      "net_benefit_model": 0.0307,
+      "net_benefit_all": 0.0075
     },
     {
       "threshold": 0.15,
-      "net_benefit_model": 0.1305,
-      "net_benefit_all": 0.0385
+      "net_benefit_model": 0.0155,
+      "net_benefit_all": -0.0508
     },
     {
       "threshold": 0.2,
-      "net_benefit_model": 0.1197,
-      "net_benefit_all": -0.0216
+      "net_benefit_model": 0.0142,
+      "net_benefit_all": -0.1165
     },
     {
       "threshold": 0.25,
-      "net_benefit_model": 0.1095,
-      "net_benefit_all": -0.0897
+      "net_benefit_model": 0.0139,
+      "net_benefit_all": -0.191
     },
     {
       "threshold": 0.3,
-      "net_benefit_model": 0.1013,
-      "net_benefit_all": -0.1676
+      "net_benefit_model": 0.0135,
+      "net_benefit_all": -0.276
     },
     {
       "threshold": 0.4,
-      "net_benefit_model": 0.0831,
-      "net_benefit_all": -0.3622
+      "net_benefit_model": 0.0128,
+      "net_benefit_all": -0.4887
     },
     {
       "threshold": 0.5,
-      "net_benefit_model": 0.0655,
-      "net_benefit_all": -0.6346
+      "net_benefit_model": 0.0122,
+      "net_benefit_all": -0.7864
     },
     {
       "threshold": 0.6,
-      "net_benefit_model": 0.0472,
-      "net_benefit_all": -1.0432
+      "net_benefit_model": 0.0111,
+      "net_benefit_all": -1.2331
     }
   ],
   "threshold_policy": {
@@ -243,157 +250,181 @@
   "alert_burden": [
     {
       "rule": "model output >= 0.25",
-      "sensitivity": 0.7211,
-      "specificity": 0.9185,
-      "ppv": 0.6641,
-      "flag_rate": 0.1984,
-      "septic_patients_flagged_at_or_after_onset": 0.9577,
-      "septic_patients_flagged_before_onset": 0.6195,
-      "non_septic_patients_ever_flagged": 0.2242,
-      "flagged_observations_per_patient_day": 1.28
+      "sensitivity": 0.1603,
+      "specificity": 0.9892,
+      "ppv": 0.6398,
+      "flag_rate": 0.0267,
+      "septic_patients_flagged_at_or_after_onset": 0.2761,
+      "septic_patients_flagged_before_onset": 0.0065,
+      "non_septic_patients_ever_flagged": 0.0885,
+      "flagged_observations_per_patient_day": 0.17
     },
     {
       "rule": "model output >= 0.5",
-      "sensitivity": 0.5329,
-      "specificity": 0.9611,
-      "ppv": 0.7537,
-      "flag_rate": 0.1292,
-      "septic_patients_flagged_at_or_after_onset": 0.8566,
-      "septic_patients_flagged_before_onset": 0.4035,
-      "non_septic_patients_ever_flagged": 0.0783,
-      "flagged_observations_per_patient_day": 0.83
+      "sensitivity": 0.1272,
+      "specificity": 0.9984,
+      "ppv": 0.907,
+      "flag_rate": 0.015,
+      "septic_patients_flagged_at_or_after_onset": 0.219,
+      "septic_patients_flagged_before_onset": 0.0016,
+      "non_septic_patients_ever_flagged": 0.0094,
+      "flagged_observations_per_patient_day": 0.1
     },
     {
       "rule": "model output >= 0.6",
-      "sensitivity": 0.4556,
-      "specificity": 0.9706,
-      "ppv": 0.7762,
-      "flag_rate": 0.1072,
-      "septic_patients_flagged_at_or_after_onset": 0.7978,
-      "septic_patients_flagged_before_onset": 0.3318,
-      "non_septic_patients_ever_flagged": 0.0484,
-      "flagged_observations_per_patient_day": 0.69
+      "sensitivity": 0.1183,
+      "specificity": 0.9989,
+      "ppv": 0.927,
+      "flag_rate": 0.0136,
+      "septic_patients_flagged_at_or_after_onset": 0.2141,
+      "septic_patients_flagged_before_onset": 0.0016,
+      "non_septic_patients_ever_flagged": 0.0047,
+      "flagged_observations_per_patient_day": 0.09
     },
     {
       "rule": "model output >= 0.75",
-      "sensitivity": 0.2999,
-      "specificity": 0.9853,
-      "ppv": 0.8199,
-      "flag_rate": 0.0668,
-      "septic_patients_flagged_at_or_after_onset": 0.67,
-      "septic_patients_flagged_before_onset": 0.2077,
-      "non_septic_patients_ever_flagged": 0.0175,
-      "flagged_observations_per_patient_day": 0.43
+      "sensitivity": 0.0991,
+      "specificity": 0.9994,
+      "ppv": 0.948,
+      "flag_rate": 0.0112,
+      "septic_patients_flagged_at_or_after_onset": 0.1912,
+      "septic_patients_flagged_before_onset": 0.0,
+      "non_septic_patients_ever_flagged": 0.0012,
+      "flagged_observations_per_patient_day": 0.07
     },
     {
       "rule": "rule-based alert alone",
-      "sensitivity": 0.2659,
-      "specificity": 0.699,
-      "ppv": 0.1649,
-      "flag_rate": 0.2946,
-      "septic_patients_flagged_at_or_after_onset": 0.7215,
-      "septic_patients_flagged_before_onset": 0.4081,
-      "non_septic_patients_ever_flagged": 0.6951,
-      "flagged_observations_per_patient_day": 1.89
+      "sensitivity": 0.3629,
+      "specificity": 0.7321,
+      "ppv": 0.1394,
+      "flag_rate": 0.2781,
+      "septic_patients_flagged_at_or_after_onset": 0.7925,
+      "septic_patients_flagged_before_onset": 0.3219,
+      "non_septic_patients_ever_flagged": 0.7069,
+      "flagged_observations_per_patient_day": 1.78
     },
     {
       "rule": "deployed alert rule (rules OR level OR cut-off)",
-      "sensitivity": 0.6233,
-      "specificity": 0.6694,
-      "ppv": 0.2965,
-      "flag_rate": 0.3841,
-      "septic_patients_flagged_at_or_after_onset": 0.9329,
-      "septic_patients_flagged_before_onset": 0.5993,
-      "non_septic_patients_ever_flagged": 0.6985,
-      "flagged_observations_per_patient_day": 2.47
+      "sensitivity": 0.3648,
+      "specificity": 0.732,
+      "ppv": 0.14,
+      "flag_rate": 0.2783,
+      "septic_patients_flagged_at_or_after_onset": 0.7925,
+      "septic_patients_flagged_before_onset": 0.3219,
+      "non_septic_patients_ever_flagged": 0.7069,
+      "flagged_observations_per_patient_day": 1.79
     }
   ],
   "alert_sources": {
-    "alerts": 23127,
-    "rules_only": 15348,
-    "model_only": 5387
+    "alerts": 16782,
+    "rules_only": 15879,
+    "model_only": 15
   },
   "subgroups": {
     "age 18-44": {
-      "rows": 22252,
-      "positive_rows": 954,
-      "auroc": 0.8007,
-      "mean_output": 0.0331,
-      "observed_rate": 0.0429
+      "rows": 21229,
+      "positive_rows": 2361,
+      "auroc": 0.6797,
+      "mean_output": 0.1119,
+      "observed_rate": 0.1112
     },
     "age 45-64": {
-      "rows": 15378,
-      "positive_rows": 1842,
-      "auroc": 0.897,
-      "mean_output": 0.0985,
-      "observed_rate": 0.1198
+      "rows": 15474,
+      "positive_rows": 1649,
+      "auroc": 0.6883,
+      "mean_output": 0.1042,
+      "observed_rate": 0.1066
     },
     "age 65+": {
-      "rows": 22587,
-      "positive_rows": 8206,
-      "auroc": 0.8619,
-      "mean_output": 0.3372,
-      "observed_rate": 0.3633
+      "rows": 23599,
+      "positive_rows": 2429,
+      "auroc": 0.7072,
+      "mean_output": 0.1064,
+      "observed_rate": 0.1029
     },
     "sex F": {
-      "rows": 30668,
-      "positive_rows": 5822,
-      "auroc": 0.9102,
-      "mean_output": 0.1676,
-      "observed_rate": 0.1898
+      "rows": 29866,
+      "positive_rows": 2979,
+      "auroc": 0.6979,
+      "mean_output": 0.1106,
+      "observed_rate": 0.0997
     },
     "sex M": {
-      "rows": 29549,
-      "positive_rows": 5180,
-      "auroc": 0.9072,
-      "mean_output": 0.1599,
-      "observed_rate": 0.1753
+      "rows": 30436,
+      "positive_rows": 3460,
+      "auroc": 0.6928,
+      "mean_output": 0.105,
+      "observed_rate": 0.1137
     },
     "labs measured in the observation": {
-      "rows": 59310,
-      "positive_rows": 10848,
-      "auroc": 0.9092,
-      "mean_output": 0.1641,
-      "observed_rate": 0.1829
+      "rows": 59396,
+      "positive_rows": 6336,
+      "auroc": 0.694,
+      "mean_output": 0.1078,
+      "observed_rate": 0.1067
     },
     "no labs in the observation": {
-      "rows": 907,
-      "positive_rows": 154,
-      "auroc": 0.8813,
-      "mean_output": 0.1459,
-      "observed_rate": 0.1698
+      "rows": 906,
+      "positive_rows": 103,
+      "auroc": 0.636,
+      "mean_output": 0.1065,
+      "observed_rate": 0.1137
     },
     "first observation of the stay": {
       "rows": 4000,
-      "positive_rows": 35,
-      "auroc": 0.4,
-      "mean_output": 0.0383,
-      "observed_rate": 0.0088
+      "positive_rows": 34,
+      "auroc": 0.4299,
+      "mean_output": 0.0209,
+      "observed_rate": 0.0085
     },
     "later observations": {
-      "rows": 56217,
-      "positive_rows": 10967,
-      "auroc": 0.9064,
-      "mean_output": 0.1728,
-      "observed_rate": 0.1951
+      "rows": 56302,
+      "positive_rows": 6405,
+      "auroc": 0.6728,
+      "mean_output": 0.114,
+      "observed_rate": 0.1138
     }
   },
   "failure_probes": {
     "temperature > 38": {
-      "rows": 2230,
-      "share_where_value_lowered_output": 0.9785,
-      "median_change_in_output": -0.0428
+      "rows": 1376,
+      "share_where_value_lowered_output": 0.2449,
+      "median_change_in_output": 0.0637,
+      "mean_change_in_output": 0.1666
     },
     "heart_rate > 90": {
-      "rows": 15934,
-      "share_where_value_lowered_output": 0.8665,
-      "median_change_in_output": -0.0179
+      "rows": 14168,
+      "share_where_value_lowered_output": 0.0088,
+      "median_change_in_output": 0.0155,
+      "mean_change_in_output": 0.024
+    },
+    "resp_rate >= 22": {
+      "rows": 11373,
+      "share_where_value_lowered_output": 0.0426,
+      "median_change_in_output": 0.0017,
+      "mean_change_in_output": 0.0078
+    },
+    "sbp <= 100": {
+      "rows": 4305,
+      "share_where_value_lowered_output": 0.0005,
+      "median_change_in_output": 0.0173,
+      "mean_change_in_output": 0.0272
     }
   },
+  "behaviour_gate": {
+    "rule": "share lowered < 0.5 and mean change > 0",
+    "results": {
+      "temperature > 38": true,
+      "heart_rate > 90": true,
+      "resp_rate >= 22": true,
+      "sbp <= 100": true
+    },
+    "passed": true
+  },
   "provenance": {
-    "generated_at": "2026-10-16T05:22:18.658318+00:00",
+    "generated_at": "2026-10-23T02:11:20.147128+00:00",
     "code": {
-      "commit": "af45686051f73d44932e3ca93c35c56bb54382a7",
+      "commit": "2dc503147898f71abab2f91a666abaa8ded42de2",
       "uncommitted_changes": true
     },
     "environment": {
@@ -416,18 +447,18 @@
       "bootstrap": 61015
     },
     "dataset": {
-      "description": "synthetic generator (legacy profile), 4,000 patients;",
-      "sha256": "5a4c94ee52b16161a9bcab486ebe2d8dc66d55aae7cea72d9aa61d0933b78087",
+      "description": "synthetic generator (physiologic profile), 4,000 patients;",
+      "sha256": "f4ca9dcd23d1a1608826610bdec92f1ba093beee22818dfa06a69a12e8e5dade",
       "shapes": [
         [
-          60217,
+          60302,
           23
         ]
       ],
       "method": "pandas row hash, ordered"
     },
     "candidate_models": "not applicable: evaluates the committed artifact",
-    "runtime_seconds": 69.8,
+    "runtime_seconds": 81.3,
     "command": "python scripts/evaluate_committed_model.py "
   }
 }

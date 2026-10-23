@@ -12,6 +12,16 @@ import uuid
 
 import pytest
 
+
+def _model_files():
+    """Every file the committed manifest lists, plus the manifest itself."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    models = _Path(__file__).resolve().parents[1] / "models"
+    return list(_json.loads((models / "manifest.json").read_text())["artifacts"]) + ["manifest.json"]
+
+
 pytest.importorskip("sklearn")
 
 
@@ -115,7 +125,7 @@ def test_inference_scales_features_exactly_once(tmp_path):
         pytest.skip("committed model artifacts unavailable")
     model_dir = tmp_path / "models"
     model_dir.mkdir()
-    for name in ("sepsis_model.joblib", "model_metadata.json", "imputation_medians.json", "manifest.json"):
+    for name in _model_files():
         shutil.copy(root / name, model_dir / name)
 
     calls = []

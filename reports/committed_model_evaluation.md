@@ -14,57 +14,57 @@ patients, supports a clinical claim, or validates a threshold.
 
 ## Model and data
 
-- Artifact: GradientBoosting 2.0.0, sha256 `93dedb4ff761b650…`, feature schema `713c9d45436a2680…`, validation status `synthetic-development`.
-- Cohort: sepsis_vitals.ml.synthetic_data.generate_dataset (legacy profile), 4,000 patients, prevalence 0.15, seed 20261015 (training used seed 42). Generated independently of the training data (different seed). The generator has changed since training (M4 timestamp fix), so this cohort is close to, not identical with, the training distribution.
-- Dataset sha256 `5a4c94ee52b16161a9bcab486ebe2d8dc66d55aae7cea72d9aa61d0933b78087`.
+- Artifact: MonotoneHistGradientBoosting 3.0.0, sha256 `f540f9bf349ee164…`, feature schema `ea55f5f12523378f…`, validation status `synthetic-development`.
+- Cohort: sepsis_vitals.ml.synthetic_data.generate_dataset (physiologic profile), 4,000 patients, prevalence 0.15, seed 20261015 (training used seed 42). Generated independently of the training data (different seed).
+- Dataset sha256 `f4ca9dcd23d1a1608826610bdec92f1ba093beee22818dfa06a69a12e8e5dade`.
 - Label: current_state: 1 for observations at or after the generated onset time. No prediction horizon.
 - Leakage: the model never saw this cohort, which was generated after training with a different seed. All rows of a patient stay together in the bootstrap.
 
 ## Cohort
 
-- 4,000 patients (1,088 septic), 60,217 observations, 9,362.8 patient-days; median 15 observations per patient.
-- Positive observations: 11,002 (18.3%). Median age 55. Sex: {'F': 2022, 'M': 1978}.
-- Missing fraction per observation: temperature 7.9%, heart_rate 8.0%, resp_rate 7.8%, sbp 8.1%, dbp 8.0%, spo2 8.1%, gcs 2.0%, map 7.9%, lactate 24.8%, wbc 25.0%, procalcitonin 25.0%.
+- 4,000 patients (612 septic), 60,302 observations, 9,399.9 patient-days; median 15 observations per patient.
+- Positive observations: 6,439 (10.7%). Median age 56. Sex: {'M': 2027, 'F': 1973}.
+- Missing fraction per observation: temperature 8.1%, heart_rate 7.8%, resp_rate 7.8%, sbp 8.1%, dbp 8.0%, spo2 8.1%, gcs 2.1%, map 8.0%, lactate 24.9%, wbc 24.8%, procalcitonin 25.0%.
 
 ## Discrimination (observation level; 95% patient-cluster bootstrap, 1,000 replicates)
 
 | Score | AUROC | AUPRC |
 | --- | ---: | ---: |
-| Model | 0.909 (0.903–0.914) | 0.720 (0.706–0.733) |
-| Age alone (no model) | 0.781 (0.768–0.794) | 0.398 (0.375–0.421) |
+| Model | 0.693 (0.679–0.708) | 0.316 (0.286–0.344) |
+| Age alone (no model) | 0.490 (0.467–0.512) | 0.104 (0.094–0.115) |
 
-Age alone minus model, AUROC: -0.128 (-0.138 to -0.118).
+Age alone minus model, AUROC: -0.203 (-0.230 to -0.179).
 
 ## Calibration
 
-- Mean output 0.164 against an observed rate of 0.183. Slope 1.00, intercept 0.24.
+- Mean output 0.108 against an observed rate of 0.107. Slope 0.99, intercept -0.03.
 
 | Output decile mean | Observed rate | Observations |
 | ---: | ---: | ---: |
-| 0.008 | 0.012 | 6,022 |
-| 0.015 | 0.015 | 6,022 |
-| 0.019 | 0.018 | 6,021 |
-| 0.025 | 0.024 | 6,022 |
-| 0.035 | 0.029 | 6,022 |
-| 0.054 | 0.048 | 6,021 |
-| 0.091 | 0.108 | 6,022 |
-| 0.169 | 0.251 | 6,021 |
-| 0.421 | 0.543 | 6,022 |
-| 0.801 | 0.780 | 6,022 |
+| 0.023 | 0.016 | 6,031 |
+| 0.045 | 0.043 | 6,030 |
+| 0.059 | 0.060 | 6,030 |
+| 0.071 | 0.081 | 6,030 |
+| 0.084 | 0.095 | 6,030 |
+| 0.098 | 0.100 | 6,030 |
+| 0.114 | 0.125 | 6,030 |
+| 0.130 | 0.126 | 6,030 |
+| 0.150 | 0.134 | 6,030 |
+| 0.304 | 0.288 | 6,031 |
 
 ## Decision curve (observation level, illustrative thresholds)
 
 | Threshold | Net benefit: model | Net benefit: act on all |
 | ---: | ---: | ---: |
-| 0.05 | 0.1561 | 0.1397 |
-| 0.10 | 0.1428 | 0.0919 |
-| 0.15 | 0.1305 | 0.0385 |
-| 0.20 | 0.1197 | -0.0216 |
-| 0.25 | 0.1095 | -0.0897 |
-| 0.30 | 0.1013 | -0.1676 |
-| 0.40 | 0.0831 | -0.3622 |
-| 0.50 | 0.0655 | -0.6346 |
-| 0.60 | 0.0472 | -1.0432 |
+| 0.05 | 0.0644 | 0.0598 |
+| 0.10 | 0.0307 | 0.0075 |
+| 0.15 | 0.0155 | -0.0508 |
+| 0.20 | 0.0142 | -0.1165 |
+| 0.25 | 0.0139 | -0.1910 |
+| 0.30 | 0.0135 | -0.2760 |
+| 0.40 | 0.0128 | -0.4887 |
+| 0.50 | 0.0122 | -0.7864 |
+| 0.60 | 0.0111 | -1.2331 |
 
 The thresholds are only points on a curve; none of them is a proposed operating point.
 
@@ -74,14 +74,14 @@ Threshold policy `placeholder-bands-v1` (engineering-placeholder: not clinically
 
 | Rule | Sens. | Spec. | PPV | Septic pts flagged at/after onset | Septic pts flagged before onset | Non-septic pts ever flagged | Flagged obs. per patient-day |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| model output >= 0.25 | 72.1% | 91.8% | 66.4% | 95.8% | 62.0% | 22.4% | 1.28 |
-| model output >= 0.5 | 53.3% | 96.1% | 75.4% | 85.7% | 40.4% | 7.8% | 0.83 |
-| model output >= 0.6 | 45.6% | 97.1% | 77.6% | 79.8% | 33.2% | 4.8% | 0.69 |
-| model output >= 0.75 | 30.0% | 98.5% | 82.0% | 67.0% | 20.8% | 1.8% | 0.43 |
-| rule-based alert alone | 26.6% | 69.9% | 16.5% | 72.2% | 40.8% | 69.5% | 1.89 |
-| deployed alert rule (rules OR level OR cut-off) | 62.3% | 66.9% | 29.6% | 93.3% | 59.9% | 69.8% | 2.47 |
+| model output >= 0.25 | 16.0% | 98.9% | 64.0% | 27.6% | 0.7% | 8.8% | 0.17 |
+| model output >= 0.5 | 12.7% | 99.8% | 90.7% | 21.9% | 0.2% | 0.9% | 0.1 |
+| model output >= 0.6 | 11.8% | 99.9% | 92.7% | 21.4% | 0.2% | 0.5% | 0.09 |
+| model output >= 0.75 | 9.9% | 99.9% | 94.8% | 19.1% | 0.0% | 0.1% | 0.07 |
+| rule-based alert alone | 36.3% | 73.2% | 13.9% | 79.2% | 32.2% | 70.7% | 1.78 |
+| deployed alert rule (rules OR level OR cut-off) | 36.5% | 73.2% | 14.0% | 79.2% | 32.2% | 70.7% | 1.79 |
 
-Of 23,127 observations that the deployed rule flags, 15,348 come from the rule-based scores alone and 5,387 from the model alone.
+Of 16,782 observations that the deployed rule flags, 15,879 come from the rule-based scores alone and 15 from the model alone.
 
 Sensitivity and specificity are per observation against the current-state label. Flags before onset count as false positives there, although they are what an early warning would aim for, so both views are shown.
 
@@ -89,38 +89,49 @@ Sensitivity and specificity are per observation against the current-state label.
 
 | Subgroup | Observations | Positive | AUROC | Mean output | Observed rate |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| age 18-44 | 22,252 | 954 | 0.8007 | 0.0331 | 0.0429 |
-| age 45-64 | 15,378 | 1,842 | 0.897 | 0.0985 | 0.1198 |
-| age 65+ | 22,587 | 8,206 | 0.8619 | 0.3372 | 0.3633 |
-| sex F | 30,668 | 5,822 | 0.9102 | 0.1676 | 0.1898 |
-| sex M | 29,549 | 5,180 | 0.9072 | 0.1599 | 0.1753 |
-| labs measured in the observation | 59,310 | 10,848 | 0.9092 | 0.1641 | 0.1829 |
-| no labs in the observation | 907 | 154 | 0.8813 | 0.1459 | 0.1698 |
-| first observation of the stay | 4,000 | 35 | 0.4 | 0.0383 | 0.0088 |
-| later observations | 56,217 | 10,967 | 0.9064 | 0.1728 | 0.1951 |
+| age 18-44 | 21,229 | 2,361 | 0.6797 | 0.1119 | 0.1112 |
+| age 45-64 | 15,474 | 1,649 | 0.6883 | 0.1042 | 0.1066 |
+| age 65+ | 23,599 | 2,429 | 0.7072 | 0.1064 | 0.1029 |
+| sex F | 29,866 | 2,979 | 0.6979 | 0.1106 | 0.0997 |
+| sex M | 30,436 | 3,460 | 0.6928 | 0.105 | 0.1137 |
+| labs measured in the observation | 59,396 | 6,336 | 0.694 | 0.1078 | 0.1067 |
+| no labs in the observation | 906 | 103 | 0.636 | 0.1065 | 0.1137 |
+| first observation of the stay | 4,000 | 34 | 0.4299 | 0.0209 | 0.0085 |
+| later observations | 56,302 | 6,405 | 0.6728 | 0.114 | 0.1138 |
 
-## Failure modes
+## Behaviour checks (does an abnormal finding raise the output?)
 
-- **temperature > 38** (2,230 observations): in 97.9% of them the recorded value *lowered* the model output compared with the training median (median change -0.043).
-- **heart_rate > 90** (15,934 observations): in 86.7% of them the recorded value *lowered* the model output compared with the training median (median change -0.018).
-- The cause is in the training data, not in the serving code. In the legacy generator, septic observations are no more abnormal in vital signs than non-septic ones: they have less fever and tachycardia, and a higher systolic pressure. What separates them is mainly procalcitonin and age (finding N53, PROJECT_REVIEW.md). The model's signal is therefore age and procalcitonin, and its response to core vital signs runs against clinical expectation.
-- Age alone reaches the AUROC shown above (M1).
-- With no labs in the observation, or on a patient's first observation, performance differs (see Subgroups). At the API, unregistered patients are always scored as first observations.
-- Rule-based scores produce most alerts. In the deployed rule, the model mostly adds alerts and cannot remove any.
+Gate: share lowered < 0.5 and mean change > 0. **Result: PASSED.** The cut-offs are the SIRS and qSOFA criteria already in `scores.py`. This is an engineering plausibility check, not clinical validation.
+
+| Finding | Observations | Share where it lowered the output | Mean change | Median change | Gate |
+| --- | ---: | ---: | ---: | ---: | --- |
+| temperature > 38 | 1,376 | 24.5% | +0.1666 | +0.0637 | pass |
+| heart_rate > 90 | 14,168 | 0.9% | +0.0240 | +0.0155 | pass |
+| resp_rate >= 22 | 11,373 | 4.3% | +0.0078 | +0.0017 | pass |
+| sbp <= 100 | 4,305 | 0.1% | +0.0272 | +0.0173 | pass |
+
+## Known limitations
+
+- Every number comes from the synthetic generator, which encodes assumptions written by hand. The cohort profile is shown above.
+- Discrimination from vital signs alone is modest. That is expected for vital-sign screening; the published UVA score reached AUC 0.77 for in-hospital mortality on real data (Moore 2017).
+- Temperature is not constrained (fever and hypothermia both matter), so its effect is learned from the generator only.
+- Unregistered patients are scored as first observations at the API, which uses less information than the trend-based training rows (see Subgroups).
+- Rule-based scores produce most alerts. The model can add an alert but never remove one.
+- History: the previous committed model (GradientBoosting 2.0.0, legacy generator, with labs) failed every behaviour check, because its training data made septic vital signs look *less* abnormal (finding N53). It is archived; see PROJECT_REVIEW.md.
 
 ## What this means
 
-The committed model is not suitable for any clinical evaluation, including silent mode, without retraining on approved real data. The serving pipeline, auditing and failure handling can be exercised with it, which is the purpose of the prototype.
+This model behaves plausibly on synthetic data and is suitable for exercising the software, for demonstrations, and for the silent-mode data-collection workflow. **It is not suitable for clinical decisions.** That requires retraining and validation on approved local data, with the clinical decisions listed in docs/pilot/clinical_requirements.md.
 
 ## Provenance
 
-- Generated: 2026-10-16T05:22:18.658318+00:00 (runtime 69.8 s)
-- Code: commit `af45686051f73d44932e3ca93c35c56bb54382a7` with uncommitted changes to tracked files
+- Generated: 2026-10-23T02:11:20.147128+00:00 (runtime 81.3 s)
+- Code: commit `2dc503147898f71abab2f91a666abaa8ded42de2` with uncommitted changes to tracked files
 - Environment: Python 3.11.15, macOS-15.7.8 (arm64)
 - Packages: scikit-learn 1.6.1, numpy 2.4.6, pandas 3.0.6, scipy 1.17.1, lightgbm 4.7.0, xgboost 3.2.0
 - Dependency lock: requirements/dev.txt (sha256 `b5894485af1d2ced…`)
 - Candidate models compared: not applicable: evaluates the committed artifact
 - Seeds: cohort 20261015, bootstrap 61015
-- Dataset: synthetic generator (legacy profile), 4,000 patients; sha256 `5a4c94ee52b16161a9bcab486ebe2d8dc66d55aae7cea72d9aa61d0933b78087`, shapes [[60217, 23]]
+- Dataset: synthetic generator (physiologic profile), 4,000 patients; sha256 `f4ca9dcd23d1a1608826610bdec92f1ba093beee22818dfa06a69a12e8e5dade`, shapes [[60302, 23]]
 - Command: `python scripts/evaluate_committed_model.py `
 

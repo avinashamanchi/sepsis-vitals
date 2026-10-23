@@ -22,6 +22,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+
+def _model_files():
+    """Every file the committed manifest lists, plus the manifest itself."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    models = _Path(__file__).resolve().parents[1] / "models"
+    return list(_json.loads((models / "manifest.json").read_text())["artifacts"]) + ["manifest.json"]
+
+
 MODELS = Path(__file__).resolve().parents[1] / "models"
 pytestmark = pytest.mark.skipif(
     importlib.util.find_spec("sklearn") is None or not (MODELS / "manifest.json").exists(),
@@ -35,7 +45,7 @@ VITALS = {"heart_rate": 118, "resp_rate": 24, "sbp": 96, "temperature": 38.6, "s
 def model_dir(tmp_path):
     dest = tmp_path / "models"
     dest.mkdir()
-    for name in ("sepsis_model.joblib", "model_metadata.json", "imputation_medians.json", "manifest.json"):
+    for name in _model_files():
         shutil.copy(MODELS / name, dest / name)
     return dest
 
@@ -119,8 +129,11 @@ def test_response_states_decision_support_and_no_invalid_interval(client):
     body = client.post("/predict", json={"patient_id": "synthetic-ds", "vitals": VITALS}).json()
     assert "not a diagnosis" in body["decision_support_notice"]
     assert body["clinical_use"] == "not-permitted"
-    assert body["confidence_interval"] is None
-    assert body["uncertainty"]["method"] == "none"
+    assert body["confidence_interval"] is None  # never an invalid "95% CI"
+    assert body["uncertainty"]["method"] in ("none", "split-conformal label set")
+    if body["uncertainty"]["method"] != "none":
+        assert "synthetic" in body["uncertainty"]["note"]
+        assert "Not an interval" in body["uncertainty"]["note"]
     assert body["explanation"]["method"].startswith("median substitution")
     assert body["threshold_policy"]["status"].startswith("engineering-placeholder")
     codes = {w["code"] for w in body["data_quality"]["warnings"]}
@@ -133,11 +146,18 @@ def test_explanation_is_per_patient(client):
         "patient_id": "synthetic-b",
         "vitals": {"heart_rate": 72, "resp_rate": 14, "sbp": 130, "lactate": 4.1}, "age_years": 30,
     }).json()
+    import sepsis_vitals.api as api
+
+    used = api._predictor.inputs_used
     features_a = {f["feature"] for f in a["top_risk_factors"]}
     features_b = {f["feature"] for f in b["top_risk_factors"]}
-    # Only inputs the patient supplied are attributed
-    assert features_a == {"heart_rate", "resp_rate", "sbp", "temperature", "spo2", "age_years"}
-    assert features_b == {"heart_rate", "resp_rate", "sbp", "lactate", "age_years"}
+    # Only inputs the patient supplied, and the model reads, are attributed
+    assert features_a == ({"heart_rate", "resp_rate", "sbp", "temperature", "spo2"} & used) | {"age_years"}
+    assert features_b == ({"heart_rate", "resp_rate", "sbp", "lactate"} & used) | {"age_years"}
+    if "lactate" not in used:  # a vitals-only model says so instead of hiding it
+        codes = {w["code"]: w["fields"] for w in b["data_quality"]["warnings"]}
+        assert codes["inputs_not_used_by_model"] == ["lactate"]
+        assert "labs_not_measured" not in codes
     for factor in a["top_risk_factors"]:
         assert set(factor) >= {"contribution", "direction", "current_value", "reference_value"}
 
