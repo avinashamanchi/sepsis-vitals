@@ -4,10 +4,10 @@ This is synthetic development evidence, not clinical validation.
 
 | Feature set | Features | Best model | Held-out AUROC (95% CI) | Held-out AUPRC (95% CI) |
 | --- | ---: | --- | ---: | ---: |
-| Full | 58 | GradientBoosting | 0.9136 (0.907-0.919) | 0.7466 (0.732-0.762) |
-| No labs | 45 | GradientBoosting | 0.8482 (0.837-0.859) | 0.5641 (0.538-0.587) |
+| Full | 58 | LightGBM | 0.9264 (0.921-0.931) | 0.7787 (0.766-0.791) |
+| No labs | 45 | LightGBM | 0.8626 (0.853-0.872) | 0.5959 (0.572-0.619) |
 
-AUROC change (no labs minus full): **-0.0654** (95% CI -0.074 to -0.058); AUPRC change -0.1825 (95% CI -0.203 to -0.163).
+AUROC change (no labs minus full): **-0.0637** (95% CI -0.071 to -0.057); AUPRC change -0.1828 (95% CI -0.203 to -0.164).
 
 ## Method
 
@@ -15,7 +15,7 @@ Both arms use identical patient-level train, validation, and held-out test split
 
 ## Honest interpretation
 
-On this hand-authored synthetic held-out set, the no-labs model achieved AUROC 0.8482. This result is useful for software-development ablation testing only; it cannot establish performance in a district hospital or any real patient population.
+On this hand-authored synthetic held-out set, the no-labs model achieved AUROC 0.8626. This result is useful for software-development ablation testing only; it cannot establish performance in a district hospital or any real patient population.
 
 ## Limitations
 
@@ -23,8 +23,7 @@ On this hand-authored synthetic held-out set, the no-labs model achieved AUROC 0
 - The result is not clinical validation and cannot establish performance in patients.
 - External retrospective and prospective validation remain required.
 - Confidence intervals cover sampling variability of the synthetic held-out set given the trained models; they exclude training variability and say nothing about patients.
-- Candidate models compared: RandomForest, GradientBoosting, LogisticRegression. Not available on this host: LightGBM, XGBoost (they need the OpenMP runtime); a run where they load may select a different model.
-- Environment: Python 3.11.15, macOS-15.7.8, scikit-learn 1.6.1, pins from requirements/dev.txt.
+- Candidate models compared: LightGBM, XGBoost, RandomForest, GradientBoosting, LogisticRegression.
 
 ## Uncertainty
 
@@ -32,31 +31,23 @@ On this hand-authored synthetic held-out set, the no-labs model achieved AUROC 0
 - Method: paired patient-level (cluster) bootstrap, percentile intervals, 95% level, 1,000 replicates (seed 42); 0 single-class replicates excluded.
 - The intervals cover sampling variability of this synthetic held-out set given the trained models. They do not include training variability and are not evidence about patients.
 
-## Provenance (recorded after generation)
+## Provenance
 
-Added on 2026-10-15. This run predates `sepsis_vitals.ml.provenance`. The
-facts below are either what the run itself recorded or what can be derived
-from the repository. Everything else is stated as unknown.
+- Generated: 2026-10-23T02:14:56.847965+00:00 (runtime 1,807.8 s)
+- Code: commit `3475fcf790d3ba29ede4d2e20bc8961d963fd40f`
+- Environment: Python 3.11.17, Linux-6.17.0-1022-azure-x86_64-with-glibc2.39 (x86_64)
+- Packages: scikit-learn 1.6.1, numpy 2.4.6, pandas 3.0.6, scipy 1.17.1, lightgbm 4.7.0, xgboost 3.2.0
+- Dependency lock: requirements/dev.txt (sha256 `b5894485af1d2ced…`)
+- Optional backends: LightGBM: available, XGBoost: available
+- Candidate models compared: {'full': ['LightGBM', 'XGBoost', 'RandomForest', 'GradientBoosting', 'LogisticRegression'], 'no_labs': ['LightGBM', 'XGBoost', 'RandomForest', 'GradientBoosting', 'LogisticRegression']}
+- Seeds: data 42, bootstrap 42, cv_split 42, model_random_state 42
+- Dataset: synthetic generator, 20,000 patients, prevalence 0.15; sha256 `4ac4d8b85fac6e6534c5f3ad467877b14a48b3581c150452b2ec8fece381bcdf`, shapes [[209034, 22], [45084, 22], [44937, 22]]
+- Command: `python scripts/run_no_labs_ablation.py --patients 20000 --bootstrap 1000 --cv-folds 5 --work-dir /home/runner/work/_temp/ablation --report-dir out`
 
-- Generated: 2026-10-10T11:55:27.692319+00:00. Runtime was not recorded.
-- Code: the working tree committed as `d7a2d00`. Its exact state at run time was not recorded.
-- Environment, as recorded by the run: Python 3.11.15, macOS-15.7.8, scikit-learn 1.6.1, `requirements/dev.txt`. Other installed package versions were not recorded. The lock's Python 3.11 pins are numpy 2.4.6, pandas 3.0.6 and scipy 1.17.1.
-- Candidate models compared: RandomForest, GradientBoosting, LogisticRegression. **This is not a candidate-complete run.** LightGBM and XGBoost were not compared because their native runtime was missing on this host. `.github/workflows/reports-candidate-complete.yml` produces a candidate-complete run on Linux.
-- Seeds: data 42, bootstrap 42, CV split 42, model `random_state` 42.
-- Dataset hash: not recorded. The data can be regenerated with the synthetic generator (20,000 patients, seed 42).
 
-### Correction: why the numbers differ from the previous report
+## Reviewer note (added 2026-10-23, after generation)
 
-The previous report (commit `a0565a6`) gave a full-feature AUROC of 0.9158 and
-a no-labs AUROC of 0.8584. This one gives 0.9136 and 0.8482. Commit `d7a2d00`
-and PROJECT_REVIEW.md §9 attributed the change to the generator timestamp fix
-(M4, `f4d6df3`). **That attribution is not supported by the records.**
-
-- The previous report recorded no code commit, environment or candidate set.
-- `f4d6df3` is not an ancestor of `a0565a6`, so the generator fix is one of
-  several differences between the two runs.
-- Both runs selected GradientBoosting. That is consistent with, but does not
-  establish, an identical candidate set.
-
-The change is consistent with the generator fix. Showing that the fix
-caused it needs both code versions run in one recorded environment.
+- This report is the candidate-complete run: workflow "Candidate-complete reports", run 39885590023, on commit `3475fcf`, all five candidate models available. It replaces the earlier macOS run, which compared only three.
+- **Synthetic development evidence only; not clinical validation.**
+- The generator used here (the default, legacy profile) ties sepsis to age and procalcitonin, and does not make septic vital signs more abnormal (finding N53). These numbers therefore describe what that generator encodes. They do not describe how vital signs or labs would perform in patients.
+- The committed model is now the constrained vital-signs model 3.0.0, trained on the `physiologic` profile. Its own evaluation is `reports/committed_model_evaluation.md`.
