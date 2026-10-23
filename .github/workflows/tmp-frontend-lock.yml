@@ -1,0 +1,33 @@
+# TEMPORARY: regenerate frontend/package-lock.json for vitest 4.1.12
+# (GHSA-qxg6-89mg-rqv8, GHSA-xp26-3454-mjgp) because npm cannot run on the
+# maintainer's workstation. Uploads the result as an artifact for review;
+# commits nothing. Removed in the commit that applies the lockfile.
+name: tmp-frontend-lock
+on:
+  pull_request:
+    paths: [.github/workflows/tmp-frontend-lock.yml]
+permissions:
+  contents: read
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install --save-dev vitest@4.1.12 --no-fund
+      - run: npm ls vitest @vitest/mocker
+      - run: npm audit
+      - run: npm test
+      - run: npm run lint
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-lock
+          path: |
+            frontend/package.json
+            frontend/package-lock.json
