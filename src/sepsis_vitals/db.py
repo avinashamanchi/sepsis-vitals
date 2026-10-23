@@ -388,6 +388,10 @@ class Score(Base):
     uva_style: Mapped[Optional[int]] = mapped_column(
         SmallInteger, nullable=True
     )
+    # Published UVA score (Moore 2017) and its band; NULL on rows scored
+    # before migration 007. uva_style above is the legacy project score.
+    uva_score: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
+    uva_risk_band: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     risk_level: Mapped[str] = mapped_column(String(16), nullable=False)
     alert_flag: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false"

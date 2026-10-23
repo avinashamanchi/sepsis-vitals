@@ -37,7 +37,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from sepsis_vitals import __version__
-from sepsis_vitals.scores import compute_scores
+from sepsis_vitals.scores import UVA_REFERENCE, compute_scores
 from sepsis_vitals.security import RateLimitExceeded, SecurityAlertTracker, sanitise_string
 
 # Shared dependencies and schemas live in their own modules so routers never
@@ -740,7 +740,10 @@ async def score_vitals(vitals: VitalsInput, user: Dict = Depends(verify_auth)):
         sirs_count=result.sirs_count,
         news2_style=result.news2_style,
         shock_index=result.shock_index,
-        uva=result.uva_style,
+        uva=result.uva.score,
+        uva_risk_band=result.uva.risk_band,
+        uva_missing_inputs=result.uva.missing_inputs,
+        uva_reference=UVA_REFERENCE,
         risk_level=result.risk_level,
         alert_flag=result.alert_flag,
         explanations=explanations,

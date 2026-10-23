@@ -38,9 +38,17 @@ class VitalsInput(BaseModel):
     spo2_scale2: Optional[bool] = Field(
         None, description="Use NEWS2 SpO2 Scale 2 (prescribed 88-92% target only)"
     )
+    hiv_positive: Optional[bool] = Field(
+        None,
+        description=(
+            "Known HIV-positive serostatus, used only by the published UVA score "
+            "(true adds 2 points; false or omitted scores as 'no/unknown'). Sensitive: "
+            "send only where local policy allows."
+        ),
+    )
 
 
-_NEWS2_FLAGS = ("on_supplemental_o2", "spo2_scale2")
+_NEWS2_FLAGS = ("on_supplemental_o2", "spo2_scale2", "hiv_positive")  # context, not measurements
 
 
 def _count_measurements(vitals: Dict[str, Any]) -> int:
@@ -225,7 +233,12 @@ class ScoreResponse(BaseModel):
     sirs_count: int
     news2_style: int
     shock_index: Optional[float]
-    uva: int
+    uva: int = Field(..., description="Published UVA score (0-13); see uva_reference")
+    uva_risk_band: str = Field(..., description="low 0-1, medium 2-4, high >4 (published bands)")
+    uva_missing_inputs: List[str] = Field(default_factory=list,
+                                          description="UVA items not measured; they added no points")
+    uva_outcome: str = "in-hospital mortality, adult inpatients, sub-Saharan Africa (derivation cohort)"
+    uva_reference: str = ""
     risk_level: str
     alert_flag: bool
     explanations: List[str]

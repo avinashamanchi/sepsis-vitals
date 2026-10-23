@@ -221,7 +221,12 @@ def news2_style(vitals: dict) -> int:
 
 
 def uva_style(vitals: dict) -> int:
-    """UVA/Kruisselbrink-style screening score. Returns total score."""
+    """Legacy project score, kept for stored records (``scores.uva_style``).
+
+    It is **not** the published UVA score: its points and items differ
+    (for example 3 points for SBP < 90, no heart rate, SpO2 or HIV). Use
+    :func:`uva_score` for the published score.
+    """
     total = 0
 
     # Respiratory rate: < 10 or > 29 -> 2
@@ -249,6 +254,61 @@ def uva_style(vitals: dict) -> int:
             total += 2
 
     return total
+
+
+# ---------------------------------------------------------------------------
+# Universal Vital Assessment (UVA) score, as published
+# ---------------------------------------------------------------------------
+# Moore CC et al. Derivation and validation of a universal vital assessment
+# (UVA) score: a tool for predicting mortality in adult hospitalised patients
+# in sub-Saharan Africa. BMJ Glob Health 2017;2:e000344.
+# doi:10.1136/bmjgh-2017-000344. Points from Table 5, risk bands from Table 7.
+# It predicts in-hospital mortality (not sepsis) and was derived on admission
+# data; local performance must be checked before any clinical use.
+
+UVA_REFERENCE = (
+    "Moore CC et al. BMJ Glob Health 2017;2:e000344 (doi:10.1136/bmjgh-2017-000344), "
+    "Table 5 (points) and Table 7 (risk bands)"
+)
+UVA_OUTCOME = "in-hospital mortality, adult inpatients, sub-Saharan Africa (derivation cohort)"
+UVA_INPUTS = ("temperature", "heart_rate", "resp_rate", "sbp", "spo2", "gcs")
+
+
+@dataclass
+class UVAResult:
+    score: int
+    risk_band: str  # low 0-1, medium 2-4, high >4 (Table 7)
+    components: dict
+    missing_inputs: list
+    hiv_status: str  # "positive", or "no/unknown" (scored 0, as published)
+
+    @property
+    def complete(self) -> bool:
+        return not self.missing_inputs
+
+
+def uva_score(vitals: dict, hiv_positive: bool | None = None) -> UVAResult:
+    """Published UVA score. A missing measurement adds no points and is listed."""
+    rules = (
+        ("temperature", lambda v: v < 36.0, 2),
+        ("heart_rate", lambda v: v >= 120, 1),
+        ("resp_rate", lambda v: v >= 30, 1),
+        ("sbp", lambda v: v < 90, 1),
+        ("spo2", lambda v: v < 92, 2),
+        ("gcs", lambda v: v < 15, 4),
+    )
+    components: dict = {}
+    missing = []
+    for name, abnormal, points in rules:
+        if not _has(vitals, name):
+            missing.append(name)
+            continue
+        components[name] = points if abnormal(vitals[name]) else 0
+    components["hiv"] = 2 if hiv_positive is True else 0
+    total = sum(components.values())
+    band = "low" if total <= 1 else "medium" if total <= 4 else "high"
+    return UVAResult(score=total, risk_band=band, components=components, missing_inputs=missing,
+                     hiv_status="positive" if hiv_positive is True else "no/unknown")
 
 
 def classify_risk(
@@ -295,6 +355,9 @@ class ScoreBundle:
     risk_level: str
     alert_flag: bool
     component_flags: dict = field(default_factory=dict)
+    # Published UVA (mortality risk). Reported alongside; it does not change
+    # risk_level or alert_flag, which would be a clinical decision (R4).
+    uva: UVAResult | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -303,6 +366,9 @@ class ScoreBundle:
             "shock_index": self.shock_index,
             "news2_style": self.news2_style,
             "uva_style": self.uva_style,
+            "uva": self.uva.score if self.uva else None,
+            "uva_risk_band": self.uva.risk_band if self.uva else None,
+            "uva_missing_inputs": list(self.uva.missing_inputs) if self.uva else None,
             "risk_level": self.risk_level,
             "alert_flag": self.alert_flag,
         }
@@ -315,6 +381,7 @@ def compute_scores(vitals: dict) -> ScoreBundle:
     si = shock_index(vitals)
     n2 = news2_style(vitals)
     uva = uva_style(vitals)
+    published_uva = uva_score(vitals, hiv_positive=vitals.get("hiv_positive"))
 
     lactate = vitals.get("lactate")
     level, alert = classify_risk(q_score, s_count, si, n2, lactate=lactate)
@@ -331,4 +398,5 @@ def compute_scores(vitals: dict) -> ScoreBundle:
         risk_level=level,
         alert_flag=alert,
         component_flags=component_flags,
+        uva=published_uva,
     )

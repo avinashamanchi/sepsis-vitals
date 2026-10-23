@@ -104,7 +104,12 @@ export interface ScoreResult {
   sirs_count: number
   news2_style: number
   shock_index: number | null
+  /** Published UVA score (Moore et al. 2017): in-hospital mortality risk, 0-13. */
   uva: number
+  uva_risk_band?: 'low' | 'medium' | 'high'
+  uva_missing_inputs?: string[]
+  uva_outcome?: string
+  uva_reference?: string
   risk_level: RiskLevel
   alert_flag: boolean
   explanations: string[]
