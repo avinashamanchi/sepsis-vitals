@@ -656,13 +656,18 @@ def test_access_audit_with_an_invalid_token_is_still_stored(client):
     import sepsis_vitals.api as api
     from sepsis_vitals.db import AuditLog, SessionLocal
 
+    import uuid
+
+    marker = f"/predict/probe-{uuid.uuid4().hex}"
     before = api._metrics["audit_log_failures_total"]
     api._emit_audit_event(action="ml_prediction", user_id="unauthenticated", ip_address="127.0.0.1",
-                          path="/predict", status_code=401)
+                          path=marker, status_code=401)
     assert api._metrics["audit_log_failures_total"] == before
     db = SessionLocal()
     try:
-        row = db.query(AuditLog).order_by(AuditLog.created_at.desc()).first()
-        assert row.user_id is None and json.loads(row.details)["actor"] == "unauthenticated"
+        rows = [json.loads(r.details) | {"_user": r.user_id} for r in db.query(AuditLog).all()
+                if marker in str(r.details)]
+        assert len(rows) == 1
+        assert rows[0]["_user"] is None and rows[0]["actor"] == "unauthenticated"
     finally:
         db.close()
