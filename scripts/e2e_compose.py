@@ -22,6 +22,7 @@ clinical use; and liveness versus readiness during a database outage.
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import subprocess
 import sys
@@ -297,7 +298,9 @@ def browser_checks() -> None:
         expect(page.get_by_test_id("clinical-use")).to_have_text("Clinical use: not permitted")
         expect(page.get_by_label("Risk level sources")).to_contain_text("Rule-based scores")
         expect(page.get_by_test_id("decision-support")).to_contain_text("not a diagnosis")
-        expect(page.get_by_test_id("uncertainty")).to_contain_text("No validated uncertainty")
+        # Model-dependent wording: "none", or a conformal label set; never a "95% CI".
+        expect(page.get_by_test_id("uncertainty")).not_to_contain_text("95% CI")
+        expect(page.get_by_test_id("uncertainty")).to_contain_text(re.compile(r"No validated uncertainty|Outcome labels"))
         expect(page.get_by_test_id("traceability")).to_contain_text("placeholder-bands-v1")
         check(True, "predict page separates rule and model levels and states clinical use is not permitted")
 

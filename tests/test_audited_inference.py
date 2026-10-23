@@ -648,3 +648,21 @@ def test_monitor_silent_mode_broadcasts_rules_only(ingester, monkeypatch):
     assert info["risk_status"] == "rules-only" and info["risk_probability"] is None
     assert isinstance(ingester.written[0]["result"]["risk_probability"], float)  # recorded in full
     assert result["audit_record_id"] == "record-1"
+
+
+def test_access_audit_with_an_invalid_token_is_still_stored(client):
+    """Regression (compose E2E): a non-UUID actor such as "unauthenticated" was
+    stored as users.id, broke the foreign key, and the audit event was lost."""
+    import sepsis_vitals.api as api
+    from sepsis_vitals.db import AuditLog, SessionLocal
+
+    before = api._metrics["audit_log_failures_total"]
+    api._emit_audit_event(action="ml_prediction", user_id="unauthenticated", ip_address="127.0.0.1",
+                          path="/predict", status_code=401)
+    assert api._metrics["audit_log_failures_total"] == before
+    db = SessionLocal()
+    try:
+        row = db.query(AuditLog).order_by(AuditLog.created_at.desc()).first()
+        assert row.user_id is None and json.loads(row.details)["actor"] == "unauthenticated"
+    finally:
+        db.close()

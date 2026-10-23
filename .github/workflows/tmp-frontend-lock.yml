@@ -1,5 +1,6 @@
 # TEMPORARY: regenerate frontend/package-lock.json for vitest 4.1.12
-# (GHSA-qxg6-89mg-rqv8, GHSA-xp26-3454-mjgp) because npm cannot run on the
+# (GHSA-qxg6-89mg-rqv8, GHSA-xp26-3454-mjgp) and a patched vite 8.x
+# (GHSA-9jrq-w75r-8gcw, GHSA-rq7h-c2jc-7f22 and the launch-editor advisories) because npm cannot run on the
 # maintainer's workstation. Uploads the result as an artifact for review;
 # commits nothing. Removed in the commit that applies the lockfile.
 name: tmp-frontend-lock
@@ -20,7 +21,8 @@ jobs:
         with:
           node-version: "20"
       - run: npm install --save-dev vitest@4.1.12 --no-fund
-      - run: npm ls vitest @vitest/mocker
+      - run: npm audit fix --no-fund
+      - run: npm ls vitest @vitest/mocker vite
       - run: npm audit
       - run: npm test
       - run: npm run lint

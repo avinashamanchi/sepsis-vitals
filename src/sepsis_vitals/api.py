@@ -576,15 +576,23 @@ def _emit_audit_event(
     # cannot block it; a failure is logged (error class only) and counted,
     # and the structured log line above remains as the second copy.
     try:
-        from sepsis_vitals.db import AuditLog, SessionLocal, inet_or_none
+        from sepsis_vitals.db import AuditLog, SessionLocal, inet_or_none, is_uuid
         db = SessionLocal()
         try:
+            # user_id references users.id: only a real account id goes there.
+            # Labels such as "unauthenticated" (an invalid token) are kept in
+            # details; storing them as a user id broke the foreign key and the
+            # event was lost.
+            actor = user_id if user_id and is_uuid(user_id) else None
+            details = {"path": path, "status_code": status_code}
+            if user_id and actor is None:
+                details["actor"] = str(user_id)[:32]
             record = AuditLog(
-                user_id=user_id if user_id and user_id != "anonymous" else None,
+                user_id=actor,
                 action=action,
                 resource_type="patient_phi",
                 resource_id=patient_id,
-                details=json.dumps({"path": path, "status_code": status_code}),
+                details=json.dumps(details),
                 ip_address=inet_or_none(ip_address),
             )
             db.add(record)
