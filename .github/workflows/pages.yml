@@ -36,7 +36,7 @@ jobs:
           VITE_DEMO_MODE: "true"
       - name: Publish guard
         run: ../scripts/check_published_site.sh dist
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v4
         with:
           path: frontend/dist
