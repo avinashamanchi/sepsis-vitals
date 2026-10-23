@@ -16,7 +16,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -33,7 +33,7 @@ jobs:
   typecheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -48,7 +48,7 @@ jobs:
   security:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -75,7 +75,7 @@ jobs:
       SEPSIS_STRICT_SKIPS: "1"
       SEPSIS_REQUIRE_ALL_BACKENDS: "1"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -103,7 +103,7 @@ jobs:
         python-version: ["3.10", "3.12"]
         extras: ["", "api", "ml", "api,ml", "ml,train", "copilot", "integrations"]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -125,7 +125,7 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -159,7 +159,7 @@ jobs:
       DATABASE_URL: postgresql://sepsis:ci-only-not-a-secret@localhost:5432/sepsis_vitals
       SEPSIS_JWT_SECRET: ci-only-jwt-secret-not-used-outside-ci-0123456789
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -233,7 +233,7 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Build API image
         run: docker build -f docker/Dockerfile -t sepsis-vitals-api:ci .
       - name: API image has the app, ML stack, Postgres driver and Alembic
@@ -316,7 +316,7 @@ jobs:
     # credentials, no plan or apply against any account.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: terraform fmt and validate (offline)
         run: |
           # Formatting is reported, not gated; validate is the gate.
@@ -333,7 +333,7 @@ jobs:
       run:
         working-directory: docker
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

@@ -50,7 +50,7 @@ jobs:
       HORIZON: ${{ github.event_name == 'workflow_dispatch' && inputs.horizon_hours || '12' }}
       PROFILE_PATIENTS: ${{ github.event_name == 'workflow_dispatch' && '4000' || '600' }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
