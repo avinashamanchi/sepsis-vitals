@@ -38,12 +38,17 @@ class VitalsInput(BaseModel):
     spo2_scale2: Optional[bool] = Field(
         None, description="Use NEWS2 SpO2 Scale 2 (prescribed 88-92% target only)"
     )
+
+
+class ScoreInput(VitalsInput):
+    """``/score`` only. HIV status is accepted here and nowhere else, so it is
+    never stored, logged or sent to the model, the audit trail or the copilot."""
+
     hiv_positive: Optional[bool] = Field(
         None,
         description=(
             "Known HIV-positive serostatus, used only by the published UVA score "
-            "(true adds 2 points; false or omitted scores as 'no/unknown'). Sensitive: "
-            "send only where local policy allows."
+            "(true adds 2 points; false or omitted scores as 'no/unknown'). Not stored."
         ),
     )
 

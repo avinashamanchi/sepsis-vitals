@@ -81,3 +81,25 @@ def test_score_endpoint_returns_the_published_uva(monkeypatch):
     assert body["uva_missing_inputs"] == ["temperature", "spo2", "gcs"]
     assert "bmjgh-2017-000344" in body["uva_reference"]
     assert "mortality" in body["uva_outcome"]
+
+
+def test_hiv_status_is_accepted_only_by_the_score_endpoint(monkeypatch):
+    """HIV status must never reach /predict, its audit record, or the copilot."""
+    from fastapi.testclient import TestClient
+
+    import sepsis_vitals.api as api
+    from sepsis_vitals.schemas import CopilotRequest, PredictRequest, VitalsInput
+
+    assert "hiv_positive" not in VitalsInput.model_fields
+    for model in (PredictRequest, CopilotRequest):
+        assert "hiv_positive" not in model.model_fields["vitals"].annotation.model_fields
+    monkeypatch.setattr("sepsis_vitals.dependencies._auth_enabled", False)
+    for dep in (api.check_rate_limit, api.check_ml_rate_limit):
+        api.app.dependency_overrides[dep] = lambda: None
+    try:
+        with TestClient(api.app) as client:
+            resp = client.post("/predict", json={"patient_id": "synthetic-hiv", "vitals": {
+                "heart_rate": 125, "resp_rate": 31, "sbp": 85, "hiv_positive": True}})
+    finally:
+        api.app.dependency_overrides.clear()
+    assert resp.status_code == 422

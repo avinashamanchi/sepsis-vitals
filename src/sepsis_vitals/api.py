@@ -37,7 +37,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from sepsis_vitals import __version__
-from sepsis_vitals.scores import UVA_REFERENCE, compute_scores
+from sepsis_vitals.scores import UVA_REFERENCE, compute_scores, uva_score
 from sepsis_vitals.security import RateLimitExceeded, SecurityAlertTracker, sanitise_string
 
 # Shared dependencies and schemas live in their own modules so routers never
@@ -73,6 +73,7 @@ from sepsis_vitals.schemas import (  # noqa: F401
     MonitorRegisterRequest,
     PredictionResponse,
     PredictRequest,
+    ScoreInput,
     ScoreResponse,
     SimulatorReplayRequest,
     SimulatorWardRequest,
@@ -716,7 +717,7 @@ async def health():
 
 
 @app.post("/score", response_model=ScoreResponse, dependencies=[Depends(check_rate_limit)])
-async def score_vitals(vitals: VitalsInput, user: Dict = Depends(verify_auth)):
+async def score_vitals(vitals: ScoreInput, user: Dict = Depends(verify_auth)):
     """Compute clinical sepsis scores (qSOFA, SIRS, NEWS2, Shock Index, UVA)."""
     vitals_dict = {k: v for k, v in vitals.model_dump().items() if v is not None}
     if _count_measurements(vitals_dict) < 2:
@@ -735,14 +736,15 @@ async def score_vitals(vitals: VitalsInput, user: Dict = Depends(verify_auth)):
         for name, fired in result.component_flags.items()
         if fired and name in flag_explanations
     ]
+    uva = result.uva or uva_score(vitals_dict, hiv_positive=vitals_dict.get("hiv_positive"))
     return ScoreResponse(
         qsofa=result.qsofa,
         sirs_count=result.sirs_count,
         news2_style=result.news2_style,
         shock_index=result.shock_index,
-        uva=result.uva.score,
-        uva_risk_band=result.uva.risk_band,
-        uva_missing_inputs=result.uva.missing_inputs,
+        uva=uva.score,
+        uva_risk_band=uva.risk_band,
+        uva_missing_inputs=uva.missing_inputs,
         uva_reference=UVA_REFERENCE,
         risk_level=result.risk_level,
         alert_flag=result.alert_flag,
