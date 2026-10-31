@@ -1,5 +1,5 @@
 # ── Stage 1: Build ───────────────────────────────────────────────────────────
-FROM python:3.11-slim AS builder
+FROM python:3.15-slim AS builder
 
 WORKDIR /build
 
@@ -20,7 +20,7 @@ RUN pip wheel --no-deps --wheel-dir /wheels . && \
 
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
-FROM python:3.11-slim AS runtime
+FROM python:3.15-slim AS runtime
 
 LABEL org.opencontainers.image.title="Sepsis Vitals API"
 LABEL org.opencontainers.image.description="Vitals-only sepsis prediction for LMIC hospitals"
